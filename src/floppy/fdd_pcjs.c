@@ -276,7 +276,7 @@ int json_parse(pcjs_t *dev)
     }
 
     /* Read and null terminate */
-    fread(buffer, sizeof(char), numbytes, dev->fp);
+    (void) !fread(buffer, sizeof(char), numbytes, dev->fp);
     buffer[numbytes] = '\0';
 
     cJSON *parsed_json = cJSON_Parse(buffer);
@@ -305,7 +305,6 @@ int json_parse(pcjs_t *dev)
 
     const cJSON *each_track = NULL;
     int total_c = 0;
-    int full_count = 0;
 
     /* The diskData array is essentially [c][h][s] */
     /* Start with the tracks in [c] */
@@ -350,7 +349,7 @@ int json_parse(pcjs_t *dev)
 
                 if (sector->data == NULL ) {
                     /* We could verify the sector size against the metadata here */
-                    sector->data = (uint8 *)calloc(1, current_length);
+                    sector->data = (uint8_t *)calloc(1, current_length);
                     if (sector->data == NULL ) {
                         pcjs_log("Failed to allocate\n");
                         pcjs_error = E_ALLOC;
@@ -422,7 +421,6 @@ int json_parse(pcjs_t *dev)
                 }
 
                 total_sectors++;
-                full_count++;
                 dev->calc_total_sectors = total_sectors;
                 /* End sectors */
             }
