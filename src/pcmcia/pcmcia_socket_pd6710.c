@@ -126,8 +126,8 @@ pd67xx_mgmt_interrupt(pcmcia_socket_pd67xx *pd67xx, int set)
         return;
     }
 
-    if (level) {
-        if (set && !!((pd67xx->management_interrupt_conf >> 4) & 0xF))
+    if (level && !!((pd67xx->management_interrupt_conf >> 4) & 0xF)) {
+        if (set)
             picintlevel(1 << (pd67xx->management_interrupt_conf >> 4), &pd67xx->mgmt_irq_state);
         else
             picintclevel(1 << (pd67xx->management_interrupt_conf >> 4), &pd67xx->mgmt_irq_state);

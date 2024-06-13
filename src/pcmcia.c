@@ -43,11 +43,11 @@ pcmcia_search_for_slots(void)
 }
 
 void
-pcmcia_socket_insert_card(pcmcia_socket_t *socket)
+pcmcia_socket_insert_card(pcmcia_socket_t *socket, void* priv)
 {
     if (!socket->card_inserted)
         fatal("No PCMCIA socket insertion function!\n");
 
-    socket->card_priv = socket->card_priv;
+    socket->card_priv = priv;
     socket->card_inserted(true, socket);
 }

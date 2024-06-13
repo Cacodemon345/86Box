@@ -60,6 +60,7 @@ typedef struct pcmcia_socket_t pcmcia_socket_t;
 
 bool pcmcia_socket_is_free(pcmcia_socket_t* socket);
 pcmcia_socket_t* pcmcia_search_for_slots(void);
-void pcmcia_socket_insert_card(pcmcia_socket_t* socket);
+/* Set up any relevant stuff to your card before calling this. */
+void pcmcia_socket_insert_card(pcmcia_socket_t* socket, void* priv);
 void pcmcia_reset(void);
 void pcmcia_register_socket(pcmcia_socket_t *socket);
