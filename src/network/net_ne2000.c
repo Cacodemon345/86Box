@@ -199,7 +199,7 @@ nic_interrupt(void *priv, int set)
     nic_t *dev = (nic_t *) priv;
 
     if (dev->pcmcia_socket) {
-        dev->pcmcia_socket->interrupt(!!set, dev->pcmcia_socket);
+        dev->pcmcia_socket->interrupt(!!set, !!(dev->pcmcia_config & (1 << 6)), dev->pcmcia_socket);
         return;
     }
 
@@ -990,10 +990,7 @@ nic_pcmcia_read(uint32_t addr, int reg, void* priv)
 static uint16_t
 nic_pcmcia_readw(uint32_t addr, int reg, void* priv)
 {
-    if ((addr & 1) && !reg)
-        return nic_pcmcia_read(addr + 1, reg, priv) << 8;
-
-    return nic_pcmcia_read(addr, reg, priv);
+    return nic_pcmcia_read(addr, reg, priv) | (nic_pcmcia_read(addr + 1, reg, priv) << 8);
 }
 
 static void
@@ -1022,7 +1019,8 @@ nic_pcmcia_write(uint32_t addr, uint8_t val, int reg, void* priv)
 static void
 nic_pcmcia_writew(uint32_t addr, uint16_t val, int reg, void* priv)
 {
-    nic_pcmcia_writew(addr, val, reg, priv);
+    nic_pcmcia_write(addr, val & 0xFF, reg, priv);
+    nic_pcmcia_write(addr + 1, (val >> 8) & 0xFF, reg, priv);
 }
 
 static void

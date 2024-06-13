@@ -135,13 +135,17 @@ pd67xx_mgmt_interrupt(pcmcia_socket_pd67xx *pd67xx, int set)
 
     if (set && !!((pd67xx->management_interrupt_conf >> 4) & 0xF))
         picint(1 << (pd67xx->management_interrupt_conf >> 4));
+    else if (!!((pd67xx->management_interrupt_conf >> 4) & 0xF)) {
+        picintc(1 << (pd67xx->management_interrupt_conf >> 4));
+    }
 }
 
 void
-pd67xx_card_interrupt(bool set, pcmcia_socket_t *socket)
+pd67xx_card_interrupt(bool set, bool level, pcmcia_socket_t *socket)
 {
     pcmcia_socket_pd67xx *pd67xx = socket->socket_priv;
-    bool                  level  = !!(pd67xx->misc_control_1 & (1 << 3));
+    if (pd67xx->misc_control_1 & (1 << 3))
+        level = false;
     if (set && !!(pd67xx->interrupt_general_control & 0xF)) {
         if (level)
             picintlevel(1 << (pd67xx->interrupt_general_control), &pd67xx->irq_state);
@@ -149,6 +153,8 @@ pd67xx_card_interrupt(bool set, pcmcia_socket_t *socket)
             picint(1 << (pd67xx->interrupt_general_control));
     } else if (!set && level)
         picintclevel(1 << (pd67xx->interrupt_general_control), &pd67xx->irq_state);
+    else
+        picintc(1 << (pd67xx->interrupt_general_control));
 }
 
 void
@@ -198,7 +204,7 @@ pd67xx_ready_changed(bool status, pcmcia_socket_t *socket)
     bool                  signal_change = false;
 
     if (pd67xx->interrupt_general_control & (1 << 5)) {
-        pd67xx_card_interrupt(!status, socket);
+        pd67xx_card_interrupt(!status, true, socket);
         return;
     }
 
@@ -827,7 +833,8 @@ pd67xx_reset(void *priv)
     pcmcia_socket_pd67xx *pd67xx = priv;
     int                   i      = 0;
 
-    pd67xx_card_interrupt(false, &pd67xx->socket);
+    pd67xx_card_interrupt(false, false, &pd67xx->socket);
+    pd67xx_card_interrupt(false, true, &pd67xx->socket);
     pd67xx_mgmt_interrupt(pd67xx, false);
 
     pd67xx->mapping_enable = 0;
@@ -881,6 +888,7 @@ pd6710_init(const device_t *info)
     pd67xx->socket.card_inserted  = pd67xx_card_inserted;
     pd67xx->socket.ready_changed  = pd67xx_ready_changed;
     pd67xx->socket.status_changed = pd67xx_status_changed;
+    pd67xx->socket.socket_priv    = pd67xx;
 
     io_sethandler(0x3e0, 2, pd67xx_port_read, NULL, NULL, pd67xx_port_write, NULL, NULL, pd67xx);
 
