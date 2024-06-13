@@ -350,6 +350,9 @@ exec386_dynarec_int(void)
                 CPU_BLOCK_END();
         }
 
+        if (cpu_init)
+            CPU_BLOCK_END();
+
         if (cpu_state.abrt)
             CPU_BLOCK_END();
         if (smi_line)
@@ -414,7 +417,8 @@ exec386_dynarec_dyn(void)
             int      byte_offset = (phys_addr >> PAGE_BYTE_MASK_SHIFT) & PAGE_BYTE_MASK_OFFSET_MASK;
             uint64_t byte_mask   = 1ULL << (PAGE_BYTE_MASK_MASK & 0x3f);
 
-            if ((page->code_present_mask & mask) || (page->byte_code_present_mask[byte_offset] & byte_mask))
+            if ((page->code_present_mask & mask) ||
+                ((page->mem != page_ff) && (page->byte_code_present_mask[byte_offset] & byte_mask)))
 #    else
             if (page->code_present_mask[(phys_addr >> PAGE_MASK_INDEX_SHIFT) & PAGE_MASK_INDEX_MASK] & mask)
 #    endif
@@ -591,6 +595,9 @@ exec386_dynarec_dyn(void)
 #    endif
                 CPU_BLOCK_END();
 
+            if (cpu_init)
+                CPU_BLOCK_END();
+
             if ((cpu_state.flags & T_FLAG) || (trap == 2))
                 CPU_BLOCK_END();
             if (smi_line)
@@ -688,6 +695,9 @@ exec386_dynarec_dyn(void)
 #    endif
                 CPU_BLOCK_END();
 
+            if (cpu_init)
+                CPU_BLOCK_END();
+
             if (cpu_state.flags & T_FLAG)
                 CPU_BLOCK_END();
             if (smi_line)
@@ -765,6 +775,11 @@ exec386_dynarec(int32_t cycs)
                 exec386_dynarec_int();
             } else {
                 exec386_dynarec_dyn();
+            }
+
+            if (cpu_init) {
+                cpu_init = 0;
+                resetx86();
             }
 
             if (cpu_state.abrt) {
