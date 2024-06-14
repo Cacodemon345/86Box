@@ -1171,6 +1171,8 @@ pc_reset_hard_init(void)
     speaker_init();
     shadowbios = 0;
 
+    device_add(&pd6710_device);
+
     /*
      * Once the machine has been initialized, all that remains
      * should be resetting all devices set up for it, to their

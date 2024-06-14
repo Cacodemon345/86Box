@@ -64,3 +64,7 @@ pcmcia_socket_t* pcmcia_search_for_slots(void);
 void pcmcia_socket_insert_card(pcmcia_socket_t* socket, void* priv);
 void pcmcia_reset(void);
 void pcmcia_register_socket(pcmcia_socket_t *socket);
+
+#ifdef EMU_DEVICE_H
+extern const device_t pd6710_device;
+#endif
