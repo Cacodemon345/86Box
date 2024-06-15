@@ -239,6 +239,7 @@ pd67xx_mem_read(uint32_t addr, void *priv)
 
     addr += (pd67xx_mem_map->offset.addr & 0x3fff) * 4096;
     addr &= 0x3FFFFFF;
+    pclog("PD67XX: Read from memory 0x%X (REG=%d)\n", addr, !(pd67xx_mem_map->offset.addr & (1 << 14)));
     return pd67xx->socket.mem_read(addr, !(pd67xx_mem_map->offset.addr & (1 << 14)), pd67xx->socket.card_priv);
 }
 
@@ -264,6 +265,7 @@ pd67xx_mem_write(uint32_t addr, uint8_t val, void *priv)
 
     addr += (pd67xx_mem_map->offset.addr & 0x3fff) * 4096;
     addr &= 0x3FFFFFF;
+    pclog("PD67XX: Write 0x%02X to memory 0x%X (REG=%d)\n", val, addr, !(pd67xx_mem_map->offset.addr & (1 << 14)));
     return pd67xx->socket.mem_write(addr, val, !(pd67xx_mem_map->offset.addr & (1 << 14)), pd67xx->socket.card_priv);
 }
 
@@ -286,6 +288,7 @@ pd67xx_mem_readw(uint32_t addr, void *priv)
 
     addr += (pd67xx_mem_map->offset.addr & 0x3fff) * 4096;
     addr &= 0x3FFFFFF;
+    pclog("PD67XX: Read word from memory 0x%X (REG=%d)\n", addr, !(pd67xx_mem_map->offset.addr & (1 << 14)));
     return pd67xx->socket.mem_readw(addr, !(pd67xx_mem_map->offset.addr & (1 << 14)), pd67xx->socket.card_priv);
 }
 
@@ -311,6 +314,7 @@ pd67xx_mem_writew(uint32_t addr, uint16_t val, void *priv)
 
     addr += (pd67xx_mem_map->offset.addr & 0x3fff) * 4096;
     addr &= 0x3FFFFFF;
+    pclog("PD67XX: Write word 0x%04X to memory 0x%X (REG=%d)\n", val, addr, !(pd67xx_mem_map->offset.addr & (1 << 14)));
     return pd67xx->socket.mem_writew(addr, val, !(pd67xx_mem_map->offset.addr & (1 << 14)), pd67xx->socket.card_priv);
 }
 
@@ -506,7 +510,8 @@ void
 pd67xx_port_write(uint16_t port, uint8_t val, void *priv)
 {
     pcmcia_socket_pd67xx *pd67xx = priv;
-
+    
+    pclog("PCIC write port 0x%04X (val 0x%04X)\n", port, val);
     if (!(port & 1))
         pd67xx->index = val;
     else {
@@ -688,6 +693,8 @@ pd67xx_port_read(uint16_t port, void *priv)
 {
     pcmcia_socket_pd67xx *pd67xx = priv;
 
+    pclog("PCIC read port 0x%04X\n", port);
+
     if (!(port & 1))
         return pd67xx->index;
     else {
@@ -695,7 +702,7 @@ pd67xx_port_read(uint16_t port, void *priv)
             case 0x00:
                 return 0b10000010;
             case 0x01:
-                return pd67xx->interface_status;
+                return pd67xx->interface_status | (pd67xx->inserted ? 0b11101111 : 0);
             case 0x02:
                 return pd67xx->power_control;
             case 0x03:
@@ -851,7 +858,7 @@ pd67xx_reset(void *priv)
     pd67xx->interrupt_general_control = 0;
     pd67xx->management_interrupt_conf = 0;
     pd67xx->io_window_control         = 0;
-    pd67xx->power_control             = 0;
+    pd67xx->power_control             = 0xF0;
 
     memset(pd67xx->regs, 0, sizeof(pd67xx->regs));
 

@@ -1062,6 +1062,8 @@ nic_init(const device_t *info)
         slot->mem_get_exec = NULL;
         dev->pcmcia_socket = slot;
         pcmcia_socket_insert_card(slot, dev);
+        slot->ready_changed(true, slot);
+        
     } else if (dev->board >= NE2K_RTL8019AS) {
         dev->base_address = 0x340;
         dev->base_irq     = 12;
