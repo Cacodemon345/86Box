@@ -1612,7 +1612,10 @@ ali5237_usb_pci_irq(void *priv, int level)
 {
     ali1543_t *dev = priv;
 
-    pci_set_mirq(PCI_MIRQ4, level, &dev->usb_irq_state);
+    if (level)
+        pci_set_mirq(PCI_MIRQ4, !(dev->pci_conf[0x77] & 0x10), &dev->usb_irq_state);
+    else
+        pci_clear_mirq(PCI_MIRQ4, !(dev->pci_conf[0x77] & 0x10), &dev->usb_irq_state);
 }
 
 static void *
