@@ -1603,6 +1603,7 @@ ali5237_usb_raise_smi(void *priv)
     ali1543_t *dev = priv;
 
     dev->pmu_conf[0x4A] |= 0x20;
+    dev->acpi->regs.gpsts |= 0x4;
     smi_raise();
 }
 
