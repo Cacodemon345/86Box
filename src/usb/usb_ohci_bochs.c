@@ -818,7 +818,7 @@ uint32_t usb_ohci_mem_read(uint32_t addr, void *priv)
     }
 
     default:
-      BX_ERROR(("unsupported read from address=0x%08X!", (Bit32u)addr));
+      BX_ERROR(("unsupported read from address=0x%08X!", (uint32_t)addr));
       break;
   }
 
@@ -838,7 +838,7 @@ uint8_t usb_ohci_mem_readb(uint32_t addr, void *priv)
 void usb_ohci_mem_write(uint32_t addr, uint32_t value, void* priv)
 {
   bx_ohci_core_t* hub = priv;
-  Bit32u offset = addr & 0xFFF;
+  uint32_t offset = addr & 0xFFF;
   int p, org_state;
 
   int name = offset >> 2;
@@ -846,7 +846,7 @@ void usb_ohci_mem_write(uint32_t addr, uint32_t value, void* priv)
     name = 25;
 
   if (addr & 3) {
-    BX_INFO(("Misaligned write at 0x%08X", (Bit32u)addr));
+    BX_INFO(("Misaligned write at 0x%08X", (uint32_t)addr));
     return;
   }
   ohci_log("OHCI: Write to addr 0x%X val 0x%X\n", addr, value);
@@ -1170,7 +1170,7 @@ void usb_ohci_mem_write(uint32_t addr, uint32_t value, void* priv)
     }
 
     default:
-      BX_ERROR(("unsupported write to address=0x%08X, val = 0x%08X!", (Bit32u)addr, value));
+      BX_ERROR(("unsupported write to address=0x%08X, val = 0x%08X!", (uint32_t)addr, value));
       break;
   }
 }
@@ -1181,7 +1181,7 @@ usb_ohci_event_handler(int event, void *ptr, void *priv, int port)
     int             ret = 0;
     USBAsync       *p;
     bx_ohci_core_t *hub = (bx_ohci_core_t *) priv;
-  Bit32u intr = 0;
+  uint32_t intr = 0;
 
   switch (event) {
     // packet events start here
@@ -1241,8 +1241,8 @@ int usb_ohci_process_td(bx_ohci_core_t* hub, struct OHCI_TD *td, struct OHCI_ED 
   unsigned pid = 0, len = 0, len1, len2;
   int ret2 = 1;
   int ilen, ret = 0;
-  Bit32u addr;
-  Bit16u maxlen = 0;
+  uint32_t addr;
+  uint16_t maxlen = 0;
   USBAsync *p;
   bool completion;
 
@@ -1418,7 +1418,7 @@ int usb_ohci_process_td(bx_ohci_core_t* hub, struct OHCI_TD *td, struct OHCI_ED 
   return ret2;
 }
 
-bool usb_ohci_process_ed(bx_ohci_core_t* hub, struct OHCI_ED *ed, const Bit32u ed_address)
+bool usb_ohci_process_ed(bx_ohci_core_t* hub, struct OHCI_ED *ed, const uint32_t ed_address)
 {
   struct OHCI_TD cur_td;
   int toggle;
@@ -1437,10 +1437,10 @@ bool usb_ohci_process_ed(bx_ohci_core_t* hub, struct OHCI_ED *ed, const Bit32u e
       ret = 1;
       while (!ED_GET_H(ed) && (ED_GET_HEADP(ed) != ED_GET_TAILP(ed))) {
         toggle = ED_GET_C(ed);
-        DEV_MEM_READ_PHYSICAL(ED_GET_HEADP(ed),      4, (Bit8u*) &cur_td.dword0);
-        DEV_MEM_READ_PHYSICAL(ED_GET_HEADP(ed) +  4, 4, (Bit8u*) &cur_td.dword1);
-        DEV_MEM_READ_PHYSICAL(ED_GET_HEADP(ed) +  8, 4, (Bit8u*) &cur_td.dword2);
-        DEV_MEM_READ_PHYSICAL(ED_GET_HEADP(ed) + 12, 4, (Bit8u*) &cur_td.dword3);
+        DEV_MEM_READ_PHYSICAL(ED_GET_HEADP(ed),      4, (uint8_t*) &cur_td.dword0);
+        DEV_MEM_READ_PHYSICAL(ED_GET_HEADP(ed) +  4, 4, (uint8_t*) &cur_td.dword1);
+        DEV_MEM_READ_PHYSICAL(ED_GET_HEADP(ed) +  8, 4, (uint8_t*) &cur_td.dword2);
+        DEV_MEM_READ_PHYSICAL(ED_GET_HEADP(ed) + 12, 4, (uint8_t*) &cur_td.dword3);
         BX_DEBUG(("Head: 0x%08X  Tail: 0x%08X  Next: 0x%08X", ED_GET_HEADP(ed), ED_GET_TAILP(ed), TD_GET_NEXTTD(&cur_td)));
         if (TD_GET_T(&cur_td) & 2)
           toggle = TD_GET_T(&cur_td) & 1;
@@ -1450,7 +1450,7 @@ bool usb_ohci_process_ed(bx_ohci_core_t* hub, struct OHCI_ED *ed, const Bit32u e
           break;
         } else if (td_ret > 0) {
           // Processed TD with no error
-          const Bit32u temp = ED_GET_HEADP(ed);
+          const uint32_t temp = ED_GET_HEADP(ed);
           if (TD_GET_CC(&cur_td) < NotAccessed) {
             ED_SET_HEADP(ed, TD_GET_NEXTTD(&cur_td));
             TD_SET_NEXTTD(&cur_td, hub->op_regs.HcDoneHead);
@@ -1459,9 +1459,9 @@ bool usb_ohci_process_ed(bx_ohci_core_t* hub, struct OHCI_ED *ed, const Bit32u e
               hub->ohci_done_count = TD_GET_DI(&cur_td);
           }
           ED_SET_C(ed, toggle ^ 1);
-          DEV_MEM_WRITE_PHYSICAL(temp,      4, (Bit8u*) &cur_td.dword0);
-          DEV_MEM_WRITE_PHYSICAL(temp +  4, 4, (Bit8u*) &cur_td.dword1);
-          DEV_MEM_WRITE_PHYSICAL(temp +  8, 4, (Bit8u*) &cur_td.dword2);
+          DEV_MEM_WRITE_PHYSICAL(temp,      4, (uint8_t*) &cur_td.dword0);
+          DEV_MEM_WRITE_PHYSICAL(temp +  4, 4, (uint8_t*) &cur_td.dword1);
+          DEV_MEM_WRITE_PHYSICAL(temp +  8, 4, (uint8_t*) &cur_td.dword2);
         } else {
           // Processed TD with error, advance the toggle anyway
           ED_SET_C(ed, toggle ^ 1);
@@ -1469,7 +1469,7 @@ bool usb_ohci_process_ed(bx_ohci_core_t* hub, struct OHCI_ED *ed, const Bit32u e
         }
       }
     }
-    DEV_MEM_WRITE_PHYSICAL(ed_address +  8, 4, (Bit8u*) &ed->dword2);
+    DEV_MEM_WRITE_PHYSICAL(ed_address +  8, 4, (uint8_t*) &ed->dword2);
   }
   return ret;
 }
@@ -1495,10 +1495,10 @@ void usb_ohci_process_lists(bx_ohci_core_t* hub)
       hub->op_regs.HcCommandStatus.clf = 0;
     }
     while (hub->op_regs.HcControlCurrentED) {
-      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcControlCurrentED,      4, (Bit8u*) &cur_ed.dword0);
-      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcControlCurrentED +  4, 4, (Bit8u*) &cur_ed.dword1);
-      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcControlCurrentED +  8, 4, (Bit8u*) &cur_ed.dword2);
-      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcControlCurrentED + 12, 4, (Bit8u*) &cur_ed.dword3);
+      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcControlCurrentED,      4, (uint8_t*) &cur_ed.dword0);
+      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcControlCurrentED +  4, 4, (uint8_t*) &cur_ed.dword1);
+      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcControlCurrentED +  8, 4, (uint8_t*) &cur_ed.dword2);
+      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcControlCurrentED + 12, 4, (uint8_t*) &cur_ed.dword3);
       usb_ohci_process_ed(hub, &cur_ed, hub->op_regs.HcControlCurrentED);
       hub->op_regs.HcControlCurrentED = ED_GET_NEXTED(&cur_ed);
       //if (get_frame_remaining() < 8000)
@@ -1517,10 +1517,10 @@ void usb_ohci_process_lists(bx_ohci_core_t* hub)
       hub->op_regs.HcCommandStatus.blf = 0;
     }
     while (hub->op_regs.HcBulkCurrentED) {
-      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcBulkCurrentED,      4, (Bit8u*) &cur_ed.dword0);
-      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcBulkCurrentED +  4, 4, (Bit8u*) &cur_ed.dword1);
-      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcBulkCurrentED +  8, 4, (Bit8u*) &cur_ed.dword2);
-      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcBulkCurrentED + 12, 4, (Bit8u*) &cur_ed.dword3);
+      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcBulkCurrentED,      4, (uint8_t*) &cur_ed.dword0);
+      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcBulkCurrentED +  4, 4, (uint8_t*) &cur_ed.dword1);
+      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcBulkCurrentED +  8, 4, (uint8_t*) &cur_ed.dword2);
+      DEV_MEM_READ_PHYSICAL(hub->op_regs.HcBulkCurrentED + 12, 4, (uint8_t*) &cur_ed.dword3);
       if (usb_ohci_process_ed(hub, &cur_ed, hub->op_regs.HcBulkCurrentED)) {
         hub->op_regs.HcCommandStatus.blf = 1;
       }
@@ -1534,8 +1534,8 @@ void usb_ohci_process_lists(bx_ohci_core_t* hub)
 void usb_ohci_timer(void* priv)
 {
   struct OHCI_ED cur_ed;
-  Bit32u address, ed_address;
-  Bit16u zero = 0;
+  uint32_t address, ed_address;
+  uint16_t zero = 0;
   bx_ohci_core_t* hub = priv;
 
   timer_on_auto(&hub->timer, 1000);
@@ -1550,8 +1550,8 @@ void usb_ohci_timer(void* priv)
     //  every time bit 15 is changed (at 0x8000 or 0x0000), fno is fired.
     hub->op_regs.HcFmNumber++;
     hub->op_regs.HcFmNumber &= 0xffff;
-    DEV_MEM_WRITE_PHYSICAL(hub->op_regs.HcHCCA + 0x80, 2, (Bit8u *) &hub->op_regs.HcFmNumber);
-    DEV_MEM_WRITE_PHYSICAL(hub->op_regs.HcHCCA + 0x82, 2, (Bit8u *) &zero);
+    DEV_MEM_WRITE_PHYSICAL(hub->op_regs.HcHCCA + 0x80, 2, (uint8_t *) &hub->op_regs.HcFmNumber);
+    DEV_MEM_WRITE_PHYSICAL(hub->op_regs.HcHCCA + 0x82, 2, (uint8_t *) &zero);
     if ((hub->op_regs.HcFmNumber == 0x8000) || (hub->op_regs.HcFmNumber == 0x0000)) {
       usb_ohci_set_interrupt(hub, OHCI_INTR_FNO);
     }
@@ -1563,11 +1563,11 @@ void usb_ohci_timer(void* priv)
     //BX_DEBUG(("done_count = %d, status.wdh = %d", hub->ohci_done_count,
     //          ((hub->op_regs.HcInterruptStatus & OHCI_INTR_WD) > 0)));
     if ((hub->ohci_done_count == 0) && ((hub->op_regs.HcInterruptStatus & OHCI_INTR_WD) == 0)) {
-      Bit32u temp = hub->op_regs.HcDoneHead;
+      uint32_t temp = hub->op_regs.HcDoneHead;
       if (hub->op_regs.HcInterruptStatus & hub->op_regs.HcInterruptEnable)
         temp |= 1;
       BX_DEBUG(("Updating the hcca.DoneHead field to 0x%08X and setting the wdh flag", temp));
-      DEV_MEM_WRITE_PHYSICAL(hub->op_regs.HcHCCA + 0x84, 4, (Bit8u *) &temp);
+      DEV_MEM_WRITE_PHYSICAL(hub->op_regs.HcHCCA + 0x84, 4, (uint8_t *) &temp);
       hub->op_regs.HcDoneHead = 0;
       hub->ohci_done_count = 7;
       usb_ohci_set_interrupt(hub, OHCI_INTR_WD);
@@ -1582,12 +1582,12 @@ void usb_ohci_timer(void* priv)
     // do the ED's in the interrupt table
     if (hub->op_regs.HcControl.ple) {
       address = hub->op_regs.HcHCCA + ((hub->op_regs.HcFmNumber & 0x1F) * 4);
-      DEV_MEM_READ_PHYSICAL(address, 4, (Bit8u*) &ed_address);
+      DEV_MEM_READ_PHYSICAL(address, 4, (uint8_t*) &ed_address);
       while (ed_address) {
-        DEV_MEM_READ_PHYSICAL(ed_address,      4, (Bit8u*) &cur_ed.dword0);
-        DEV_MEM_READ_PHYSICAL(ed_address +  4, 4, (Bit8u*) &cur_ed.dword1);
-        DEV_MEM_READ_PHYSICAL(ed_address +  8, 4, (Bit8u*) &cur_ed.dword2);
-        DEV_MEM_READ_PHYSICAL(ed_address + 12, 4, (Bit8u*) &cur_ed.dword3);
+        DEV_MEM_READ_PHYSICAL(ed_address,      4, (uint8_t*) &cur_ed.dword0);
+        DEV_MEM_READ_PHYSICAL(ed_address +  4, 4, (uint8_t*) &cur_ed.dword1);
+        DEV_MEM_READ_PHYSICAL(ed_address +  8, 4, (uint8_t*) &cur_ed.dword2);
+        DEV_MEM_READ_PHYSICAL(ed_address + 12, 4, (uint8_t*) &cur_ed.dword3);
         usb_ohci_process_ed(hub, &cur_ed, ed_address);
         ed_address = ED_GET_NEXTED(&cur_ed);
       }
