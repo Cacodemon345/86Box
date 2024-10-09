@@ -203,9 +203,27 @@ const char *usb_speed[4] = {
     "super" // USB_SPEED_SUPER = 3
 };
 
-#define BX_ERROR(x) pclog x ; pclog ("\n")
-#define BX_INFO(x)  pclog x ; pclog ("\n")
-#define BX_DEBUG(x) pclog x ; pclog ("\n")
+#ifdef ENABLE_UHCI_LOG
+int uhci_do_log = ENABLE_UHCI_LOG;
+
+static void
+uhci_log(const char *fmt, ...)
+{
+    va_list ap;
+
+    if (uhci_do_log) {
+        va_start(ap, fmt);
+        pclog_ex(fmt, ap);
+        va_end(ap);
+    }
+}
+#else
+#    define uhci_log(fmt, ...)
+#endif
+
+#define BX_ERROR(x) uhci_log x ; uhci_log ("\n")
+#define BX_INFO(x)  uhci_log x ; uhci_log ("\n")
+#define BX_DEBUG(x) uhci_log x ; uhci_log ("\n")
 #define BX_PANIC(x) fatal x ; pclog ("\n")
 
 bool usb_uhci_do_transfer(bx_uhci_core_t *hub, uint32_t address, struct TD *td);
@@ -708,6 +726,7 @@ usb_uhci_do_transfer(bx_uhci_core_t *hub, uint32_t address, struct TD *td)
         set_status(td, 0, 0, 0, 0, 0, 0, len - 1);
     } else if (ret == USB_RET_NAK) {
         set_status(td, 0, 0, 0, 1, 0, 0, len - 1); // NAK
+        td->dword1 |= (1 << 23);
     } else {
         set_status(td, 1, 0, 0, 0, 0, 0, 0x007); // stalled
     }
