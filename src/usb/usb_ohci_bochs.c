@@ -291,9 +291,9 @@ ohci_log(const char *fmt, ...)
 #    define ohci_log(fmt, ...)
 #endif
 
-#define BX_ERROR(x) ohci_log x ; pclog ("\n")
-#define BX_INFO(x)  ohci_log x ; pclog ("\n")
-#define BX_DEBUG(x) ohci_log x ; pclog ("\n")
+#define BX_ERROR(x) ohci_log x ; ohci_log ("\n")
+#define BX_INFO(x)  ohci_log x ; ohci_log ("\n")
+#define BX_DEBUG(x) ohci_log x ; ohci_log ("\n")
 #define BX_PANIC(x) fatal x ; pclog ("\n")
 
 #define DEV_MEM_WRITE_PHYSICAL(addr, size, data) dma_bm_write(addr, (uint8_t*)data, size, 4);

@@ -164,9 +164,9 @@ void usb_device_create(usb_device_c* device)
     device->handle_packet = usb_device_handle_packet;
 }
 
-#define BX_ERROR(x) pclog x
-#define BX_INFO(x) pclog x
-#define BX_DEBUG(x) pclog x
+#define BX_ERROR(x) 
+#define BX_INFO(x) 
+#define BX_DEBUG(x) 
 
 int usb_device_get_toggle(usb_device_c* device, int ep) {
   return ((ep & 0x7F) < USB_MAX_ENDPOINTS) ? device->endpoint_info[(ep & 0x7F)].toggle : 0;
