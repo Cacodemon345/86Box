@@ -18,6 +18,7 @@
  *          Copyright 2016-2020 Miran Grca.
  *          Copyright 2017-2020 Fred N. van Kempen.
  */
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -813,8 +814,6 @@ dma16_read(uint16_t addr, UNUSED(void *priv))
         case 7: /*Count registers*/
             dma_wp[1] ^= 1;
             count = dma[channel].cc/* + 1*/;
-            // if (count > dma[channel].cb)
-                // count = 0x0000;
             if (dma_wp[1])
                 ret = count & 0xff;
             else
@@ -1411,7 +1410,7 @@ dma_retreat(dma_t *dma_c)
         dma_c->page = dma_c->page_l = (dma_c->ac >> 16) & 0xff;
         dma_c->page_h               = (dma_c->ac >> 24) & 0xff;
     } else if (as == 2)
-        dma_c->ac = ((dma_c->ac & 0xfffe0000) & dma_mask) | ((dma_c->ac - as) & 0xffff);
+        dma_c->ac = ((dma_c->ac & 0xfffe0000) & dma_mask) | ((dma_c->ac - as) & 0x1ffff);
     else
         dma_c->ac = ((dma_c->ac & 0xffff0000) & dma_mask) | ((dma_c->ac - as) & 0xffff);
 }
@@ -1427,7 +1426,7 @@ dma_advance(dma_t *dma_c)
         dma_c->page = dma_c->page_l = (dma_c->ac >> 16) & 0xff;
         dma_c->page_h               = (dma_c->ac >> 24) & 0xff;
     } else if (as == 2)
-        dma_c->ac = ((dma_c->ac & 0xfffe0000) & dma_mask) | ((dma_c->ac + as) & 0xffff);
+        dma_c->ac = ((dma_c->ac & 0xfffe0000) & dma_mask) | ((dma_c->ac + as) & 0x1ffff);
     else
         dma_c->ac = ((dma_c->ac & 0xffff0000) & dma_mask) | ((dma_c->ac + as) & 0xffff);
 }

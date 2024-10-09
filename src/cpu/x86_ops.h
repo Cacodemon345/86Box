@@ -90,10 +90,10 @@ extern const OpFn dynarec_ops_winchip2_0f[1024];
 extern const OpFn dynarec_ops_pentium_0f[1024];
 extern const OpFn dynarec_ops_pentiummmx_0f[1024];
 
-#    if defined(DEV_BRANCH) && defined(USE_CYRIX_6X86)
+#    ifdef USE_CYRIX_6X86
 extern const OpFn dynarec_ops_c6x86_0f[1024];
 extern const OpFn dynarec_ops_c6x86mx_0f[1024];
-#    endif
+#    endif /* USE_CYRIX_6X86 */
 
 extern const OpFn dynarec_ops_k6_0f[1024];
 extern const OpFn dynarec_ops_k62_0f[1024];
@@ -232,10 +232,10 @@ extern const OpFn ops_winchip2_0f[1024];
 extern const OpFn ops_pentium_0f[1024];
 extern const OpFn ops_pentiummmx_0f[1024];
 
-#if defined(DEV_BRANCH) && defined(USE_CYRIX_6X86)
+#ifdef USE_CYRIX_6X86
 extern const OpFn ops_c6x86_0f[1024];
 extern const OpFn ops_c6x86mx_0f[1024];
-#endif
+#endif /* USE_CYRIX_6X86 */
 
 extern const OpFn ops_k6_0f[1024];
 extern const OpFn ops_k62_0f[1024];
@@ -434,9 +434,9 @@ extern const OpFn ops_2386_REPE[1024];
 extern const OpFn ops_2386_REPNE[1024];
 extern const OpFn ops_2386_3DNOW[256];
 
-#define C0 (1 << 8)
-#define C1 (1 << 9)
-#define C2 (1 << 10)
-#define C3 (1 << 14)
+#define FPU_SW_C3              (0x4000)  /* condition bit 3 */
+#define FPU_SW_C2              (0x0400)  /* condition bit 2 */
+#define FPU_SW_C1              (0x0200)  /* condition bit 1 */
+#define FPU_SW_C0              (0x0100)  /* condition bit 0 */
 
 #endif /*_X86_OPS_H*/

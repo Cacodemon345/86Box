@@ -97,14 +97,12 @@ device_set_context(device_context_t *c, const device_t *dev, int inst)
     if (inst) {
         sprintf(c->name, "%s #%i", dev->name, inst);
 
-        /* If this is the first instance and a numbered section is not present, but a non-numbered
-           section of the same name is, rename the non-numbered section to numbered. */
-        if (inst == 1) {
-            const void *sec        = config_find_section(c->name);
-            void *      single_sec = config_find_section((char *) dev->name);
-            if ((sec == NULL) && (single_sec != NULL))
-                config_rename_section(single_sec, c->name);
-        }
+        /* If a numbered section is not present, but a non-numbered of the same name
+           is, rename the non-numbered section to numbered. */
+        const void *sec        = config_find_section(c->name);
+        void *      single_sec = config_find_section((char *) dev->name);
+        if ((sec == NULL) && (single_sec != NULL))
+            config_rename_section(single_sec, c->name);
     } else
         sprintf(c->name, "%s", dev->name);
 }
@@ -186,7 +184,8 @@ device_add_common(const device_t *dev, void *p, void *params, int inst)
                 devices[c]     = NULL;
                 device_priv[c] = NULL;
 
-                free(init_dev);
+                if ((init_dev != NULL) && (init_dev != (device_t *) dev))
+                    free(init_dev);
 
                 return (NULL);
             }
@@ -536,7 +535,7 @@ device_get_name(const device_t *dev, int bus, char *name)
                 strcat(name, tname + strlen(sbus) + 1);
             /* Special case to not strip the "oPCI" from "Ensoniq AudioPCI" or
                the "-ISA" from "AMD PCnet-ISA". */
-            else if ((fbus == NULL) || (*(fbus - 1) == 'o') || (*(fbus - 1) == '-'))
+            else if ((fbus == NULL) || (*(fbus - 1) == 'o') || (*(fbus - 1) == '-') || (*(fbus - 2) == 'r'))
                 strcat(name, tname);
             else {
                 strncat(name, tname, fbus - tname - 1);
@@ -842,3 +841,31 @@ device_context_get_device(void)
 {
     return device_current.dev;
 }
+
+const device_t device_none = {
+    .name          = "None",
+    .internal_name = "none",
+    .flags         = 0,
+    .local         = 0,
+    .init          = NULL,
+    .close         = NULL,
+    .reset         = NULL,
+    { .available = NULL },
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = NULL
+};
+
+const device_t device_internal = {
+    .name          = "Internal",
+    .internal_name = "internal",
+    .flags         = 0,
+    .local         = 0,
+    .init          = NULL,
+    .close         = NULL,
+    .reset         = NULL,
+    { .available = NULL },
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = NULL
+};

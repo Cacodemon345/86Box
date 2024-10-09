@@ -25,6 +25,7 @@
 #define CD_STATUS_PLAYING_COMPLETED 5
 
 /* Medium changed flag. */
+#define CD_STATUS_TRANSITION     0x40
 #define CD_STATUS_MEDIUM_CHANGED 0x80
 
 #define CD_TRACK_AUDIO           0x08
@@ -226,7 +227,6 @@ typedef struct cdrom {
     uint8_t speed;
     uint8_t cur_speed;
 
-    int   is_dir;
     void *priv;
 
     char image_path[1024];
@@ -299,6 +299,7 @@ extern void cdrom_seek(cdrom_t *dev, uint32_t pos, uint8_t vendor_type);
 
 extern void cdrom_close_handler(uint8_t id);
 extern void cdrom_insert(uint8_t id);
+extern void cdrom_exit(uint8_t id);
 extern void cdrom_eject(uint8_t id);
 extern void cdrom_reload(uint8_t id);
 

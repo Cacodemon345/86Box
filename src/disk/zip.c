@@ -875,7 +875,6 @@ zip_command_common(zip_t *dev)
 static void
 zip_command_complete(zip_t *dev)
 {
-    ui_sb_update_icon(SB_ZIP | dev->id, 0);
     dev->packet_status = PHASE_COMPLETE;
     zip_command_common(dev);
 }
@@ -1135,6 +1134,8 @@ zip_blocks(zip_t *dev, int32_t *len, UNUSED(int first_batch), int out)
         if (out) {
             if (fwrite(dev->buffer + (i << 9), 1, 512, dev->drv->fp) != 512)
                 fatal("zip_blocks(): Error writing data\n");
+
+            fflush(dev->drv->fp);
         } else {
             if (fread(dev->buffer + (i << 9), 1, 512, dev->drv->fp) != 512)
                 fatal("zip_blocks(): Error reading data\n");
@@ -2126,6 +2127,8 @@ zip_phase_data_out(scsi_common_t *sc)
                 if (fwrite(dev->buffer, 1, 512, dev->drv->fp) != 512)
                     fatal("zip_phase_data_out(): Error writing data\n");
             }
+
+            fflush(dev->drv->fp);
             break;
         case GPCMD_MODE_SELECT_6:
         case GPCMD_MODE_SELECT_10:

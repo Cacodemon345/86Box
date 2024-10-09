@@ -23,6 +23,7 @@
 #include <86box/86box.h>
 #include <86box/machine.h>
 #include "cpu.h"
+#include "x86.h"
 #include <86box/io.h>
 #include <86box/pic.h>
 #include <86box/mem.h>
@@ -92,7 +93,7 @@ static int         pci_card;
 static int         pci_bus;
 static int         pci_key;
 static int         pci_trc_reg = 0;
-static uint32      pci_enable = 0x00000000;
+static uint32_t    pci_enable = 0x00000000;
 
 static void        pci_reset_regs(void);
 
@@ -420,7 +421,14 @@ pci_trc_reset(uint8_t val)
         flushmmucache();
     }
 
+#ifdef USE_DYNAREC
+    if (cpu_use_dynarec)
+        cpu_init = 1;
+    else
+        resetx86();
+#else
     resetx86();
+#endif
 }
 
 void

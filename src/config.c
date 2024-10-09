@@ -431,10 +431,17 @@ load_video(void)
                 strcpy(p, "none");
             }
             free_p = 1;
+        } else if (!strcmp(p, "c&t_69000")) {
+            p = (char *) malloc((strlen("chips_69000") + 1) * sizeof(char));
+            strcpy(p, "chips_69000");
+            free_p = 1;
         }
         gfxcard[0] = video_get_video_from_internal_name(p);
-        if (free_p)
+        if (free_p) {
             free(p);
+            p = NULL;
+            free_p = 0;
+        }
     }
 
     if (((gfxcard[0] == VID_INTERNAL) && machine_has_flags(machine, MACHINE_VIDEO_8514A)) ||
@@ -452,10 +459,13 @@ load_video(void)
     show_second_monitors             = !!ini_section_get_int(cat, "show_second_monitors", 1);
     video_fullscreen_scale_maximized = !!ini_section_get_int(cat, "video_fullscreen_scale_maximized", 0);
 
-    p = ini_section_get_string(cat, "gfxcard_2", NULL);
-    if (!p)
-        p = "none";
-    gfxcard[1] = video_get_video_from_internal_name(p);
+    // TODO
+    for (uint8_t i = 1; i < GFXCARD_MAX; i ++) {
+        p = ini_section_get_string(cat, "gfxcard_2", NULL);
+        if (!p)
+            p = "none";
+        gfxcard[i] = video_get_video_from_internal_name(p);
+    }
 }
 
 /* Load "Input Devices" section. */
@@ -551,36 +561,24 @@ load_sound(void)
     char         *p;
 
     p = ini_section_get_string(cat, "sndcard", NULL);
-    /* FIXME: Hack to not break configs with the Sound Blaster 128 PCI set. */
-    if ((p != NULL) && (!strcmp(p, "sbpci128") || !strcmp(p, "sb128pci")))
-        p = "es1371";
     if (p != NULL)
         sound_card_current[0] = sound_card_get_from_internal_name(p);
     else
         sound_card_current[0] = 0;
 
     p = ini_section_get_string(cat, "sndcard2", NULL);
-    /* FIXME: Hack to not break configs with the Sound Blaster 128 PCI set. */
-    if ((p != NULL) && (!strcmp(p, "sbpci128") || !strcmp(p, "sb128pci")))
-        p = "es1371";
     if (p != NULL)
         sound_card_current[1] = sound_card_get_from_internal_name(p);
     else
         sound_card_current[1] = 0;
 
     p = ini_section_get_string(cat, "sndcard3", NULL);
-    /* FIXME: Hack to not break configs with the Sound Blaster 128 PCI set. */
-    if ((p != NULL) && (!strcmp(p, "sbpci128") || !strcmp(p, "sb128pci")))
-        p = "es1371";
     if (p != NULL)
         sound_card_current[2] = sound_card_get_from_internal_name(p);
     else
         sound_card_current[2] = 0;
 
     p = ini_section_get_string(cat, "sndcard4", NULL);
-    /* FIXME: Hack to not break configs with the Sound Blaster 128 PCI set. */
-    if ((p != NULL) && (!strcmp(p, "sbpci128") || !strcmp(p, "sb128pci")))
-        p = "es1371";
     if (p != NULL)
         sound_card_current[3] = sound_card_get_from_internal_name(p);
     else
@@ -792,10 +790,31 @@ load_storage_controllers(void)
     }
 
     p = ini_section_get_string(cat, "fdc", NULL);
+#if 1
     if (p != NULL)
-        fdc_type = fdc_card_get_from_internal_name(p);
+        fdc_current[0] = fdc_card_get_from_internal_name(p);
     else
-        fdc_type = FDC_INTERNAL;
+        fdc_current[0] = FDC_INTERNAL;
+#else
+    if (p == NULL) {
+        if (machine_has_flags(machine, MACHINE_FDC)) {
+            p = (char *) malloc((strlen("internal") + 1) * sizeof(char));
+            strcpy(p, "internal");
+        } else {
+            p = (char *) malloc((strlen("none") + 1) * sizeof(char));
+            strcpy(p, "none");
+        }
+        free_p = 1;
+    }
+
+    fdc_current[0] = fdc_card_get_from_internal_name(p);
+
+    if (free_p) {
+        free(p);
+        p = NULL;
+        free_p = 0;
+    }
+#endif
 
     p = ini_section_get_string(cat, "hdc", NULL);
     if (p == NULL) {
@@ -810,15 +829,15 @@ load_storage_controllers(void)
     }
     /* Migrate renamed and merged cards. */
     if (!strcmp(p, "xtide_plus")) {
-        hdc_current = hdc_get_from_internal_name("xtide");
+        hdc_current[0] = hdc_get_from_internal_name("xtide");
         migration_cat = ini_find_or_create_section(config, "PC/XT XTIDE");
         ini_section_set_string(migration_cat, "bios", "xt_plus");
     } else if (!strcmp(p, "xtide_at_386")) {
-        hdc_current = hdc_get_from_internal_name("xtide_at");
+        hdc_current[0] = hdc_get_from_internal_name("xtide_at");
         migration_cat = ini_find_or_create_section(config, "PC/AT XTIDE");
         ini_section_set_string(migration_cat, "bios", "at_386");
     } else
-        hdc_current = hdc_get_from_internal_name(p);
+        hdc_current[0] = hdc_get_from_internal_name(p);
 
     if (free_p) {
         free(p);
@@ -832,6 +851,7 @@ load_storage_controllers(void)
     if (free_p) {
         free(p);
         p = NULL;
+        free_p = 0;
     }
 
     ide_ter_enabled = !!ini_section_get_int(cat, "ide_ter", 0);
@@ -841,16 +861,46 @@ load_storage_controllers(void)
         cassette_enable = !!ini_section_get_int(cat, "cassette_enabled", 0);
     else
         cassette_enable = 0;
+
     p = ini_section_get_string(cat, "cassette_file", "");
-    if (strlen(p) > 511)
-        fatal("load_storage_controllers(): strlen(p) > 511\n");
-    else
-        strncpy(cassette_fname, p, 511);
+
+    if (!strcmp(p, usr_path))
+        p[0] = 0x00;
+
+    if (p[0] != 0x00) {
+        if (path_abs(p)) {
+            if (strlen(p) > 511)
+                fatal("load_storage_controllers(): strlen(p) > 511 (cassette_fname)\n");
+            else
+                strncpy(cassette_fname, p, 511);
+        } else
+            path_append_filename(cassette_fname, usr_path, p);
+        path_normalize(cassette_fname);
+    }
+
     p = ini_section_get_string(cat, "cassette_mode", "");
     if (strlen(p) > 511)
         fatal("load_storage_controllers(): strlen(p) > 511\n");
     else
         strncpy(cassette_mode, p, 511);
+
+    for (int i = 0; i < MAX_PREV_IMAGES; i++) {
+        cassette_image_history[i] = (char *) calloc((MAX_IMAGE_PATH_LEN + 1) << 1, sizeof(char));
+        sprintf(temp, "cassette_image_history_%02i", i + 1);
+        p = ini_section_get_string(cat, temp, NULL);
+        if (p) {
+            if (path_abs(p)) {
+                if (strlen(p) > (MAX_IMAGE_PATH_LEN - 1))
+                    fatal("load_storage_controllers(): strlen(p) > 2047 "
+                          "(cassette_image_history[%i])\n", i);
+                else
+                    snprintf(cassette_image_history[i], (MAX_IMAGE_PATH_LEN - 1), "%s", p);
+            } else
+                snprintf(cassette_image_history[i], (MAX_IMAGE_PATH_LEN - 1), "%s%s%s", usr_path,
+                         path_get_slash(usr_path), p);
+            path_normalize(cassette_image_history[i]);
+        }
+    }
     cassette_pos          = ini_section_get_int(cat, "cassette_position", 0);
     cassette_srate        = ini_section_get_int(cat, "cassette_srate", 44100);
     cassette_append       = !!ini_section_get_int(cat, "cassette_append", 0);
@@ -873,6 +923,24 @@ load_storage_controllers(void)
             } else
                 path_append_filename(cart_fns[c], usr_path, p);
             path_normalize(cart_fns[c]);
+        }
+
+        for (int i = 0; i < MAX_PREV_IMAGES; i++) {
+            cart_image_history[c][i] = (char *) calloc((MAX_IMAGE_PATH_LEN + 1) << 1, sizeof(char));
+            sprintf(temp, "cartridge_%02i_image_history_%02i", c + 1, i + 1);
+            p = ini_section_get_string(cat, temp, NULL);
+            if (p) {
+                if (path_abs(p)) {
+                    if (strlen(p) > (MAX_IMAGE_PATH_LEN - 1))
+                        fatal("load_storage_controllers(): strlen(p) > 2047 "
+                              "(cart_image_history[%i][%i])\n", c, i);
+                    else
+                        snprintf(cart_image_history[c][i], (MAX_IMAGE_PATH_LEN - 1), "%s", p);
+                } else
+                    snprintf(cart_image_history[c][i], (MAX_IMAGE_PATH_LEN - 1), "%s%s%s", usr_path,
+                             path_get_slash(usr_path), p);
+                path_normalize(cart_image_history[c][i]);
+            }
         }
     }
 
@@ -1611,7 +1679,7 @@ config_load(void)
         video_fullscreen_first = 1;
         video_fullscreen_scale = 1;
         time_sync              = TIME_SYNC_ENABLED;
-        hdc_current            = hdc_get_from_internal_name("none");
+        hdc_current[0]         = hdc_get_from_internal_name("none");
 
         com_ports[0].enabled = 1;
         com_ports[1].enabled = 1;
@@ -1700,7 +1768,7 @@ save_general(void)
     char          temp[512];
     char          buffer[512] = { 0 };
 
-    const char *va_name = NULL;
+    const char *va_name;
 
     ini_section_set_int(cat, "vid_resize", vid_resize);
     if (vid_resize == 0)
@@ -1927,7 +1995,7 @@ save_machine(void)
     else
         ini_section_delete_var(cat, "cpu_override");
     if (cpu_override_interpreter)
-        ini_section_set_int(cat, "cpu_override_interpreter", cpu_override);
+        ini_section_set_int(cat, "cpu_override_interpreter", cpu_override_interpreter);
     else
         ini_section_delete_var(cat, "cpu_override_interpreter");
 
@@ -1993,10 +2061,13 @@ save_video(void)
     else
         ini_section_set_int(cat, "xga", xga_standalone_enabled);
 
-    if (gfxcard[1] == 0)
-        ini_section_delete_var(cat, "gfxcard_2");
-    else
-        ini_section_set_string(cat, "gfxcard_2", video_get_internal_name(gfxcard[1]));
+    // TODO
+    for (uint8_t i = 1; i < GFXCARD_MAX; i ++) {
+        if (gfxcard[i] == 0)
+            ini_section_delete_var(cat, "gfxcard_2");
+        else
+            ini_section_set_string(cat, "gfxcard_2", video_get_internal_name(gfxcard[i]));
+    }
 
     if (show_second_monitors == 1)
         ini_section_delete_var(cat, "show_second_monitors");
@@ -2273,14 +2344,14 @@ save_storage_controllers(void)
                                    scsi_card_get_internal_name(scsi_card_current[c]));
     }
 
-    if (fdc_type == FDC_INTERNAL)
+    if (fdc_current[0] == FDC_INTERNAL)
         ini_section_delete_var(cat, "fdc");
     else
         ini_section_set_string(cat, "fdc",
-                               fdc_card_get_internal_name(fdc_type));
+                               fdc_card_get_internal_name(fdc_current[0]));
 
     ini_section_set_string(cat, "hdc",
-                           hdc_get_internal_name(hdc_current));
+                           hdc_get_internal_name(hdc_current[0]));
 
     if (cdrom_interface_current == 0)
         ini_section_delete_var(cat, "cdrom_interface");
@@ -2307,13 +2378,31 @@ save_storage_controllers(void)
 
     if (strlen(cassette_fname) == 0)
         ini_section_delete_var(cat, "cassette_file");
-    else
-        ini_section_set_string(cat, "cassette_file", cassette_fname);
+    else {
+        path_normalize(cassette_fname);
+        if (!strnicmp(cassette_fname, usr_path, strlen(usr_path)))
+            ini_section_set_string(cat, "cassette_file", &cassette_fname[strlen(usr_path)]);
+        else
+            ini_section_set_string(cat, "cassette_file", cassette_fname);
+    }
 
     if (strlen(cassette_mode) == 0)
         ini_section_delete_var(cat, "cassette_mode");
     else
         ini_section_set_string(cat, "cassette_mode", cassette_mode);
+
+    for (int i = 0; i < MAX_PREV_IMAGES; i++) {
+        sprintf(temp, "cassette_image_history_%02i", i + 1);
+        if ((cassette_image_history[i] == 0) || strlen(cassette_image_history[i]) == 0)
+            ini_section_delete_var(cat, temp);
+        else {
+            path_normalize(cassette_image_history[i]);
+            if (!strnicmp(cassette_image_history[i], usr_path, strlen(usr_path)))
+                ini_section_set_string(cat, temp, &cassette_image_history[i][strlen(usr_path)]);
+            else
+                ini_section_set_string(cat, temp, cassette_image_history[i]);
+        }
+    }
 
     if (cassette_pos == 0)
         ini_section_delete_var(cat, "cassette_position");
@@ -2342,10 +2431,29 @@ save_storage_controllers(void)
 
     for (c = 0; c < 2; c++) {
         sprintf(temp, "cartridge_%02i_fn", c + 1);
+
         if (strlen(cart_fns[c]) == 0)
             ini_section_delete_var(cat, temp);
-        else
-            ini_section_set_string(cat, temp, cart_fns[c]);
+        else {
+            path_normalize(cart_fns[c]);
+            if (!strnicmp(cart_fns[c], usr_path, strlen(usr_path)))
+                ini_section_set_string(cat, temp, &cart_fns[c][strlen(usr_path)]);
+            else
+                ini_section_set_string(cat, temp, cart_fns[c]);
+        }
+
+        for (int i = 0; i < MAX_PREV_IMAGES; i++) {
+            sprintf(temp, "cartridge_%02i_image_history_%02i", c + 1, i + 1);
+            if ((cart_image_history[c][i] == 0) || strlen(cart_image_history[c][i]) == 0)
+                ini_section_delete_var(cat, temp);
+            else {
+                path_normalize(cart_image_history[c][i]);
+                if (!strnicmp(cart_image_history[c][i], usr_path, strlen(usr_path)))
+                    ini_section_set_string(cat, temp, &cart_image_history[c][i][strlen(usr_path)]);
+                else
+                    ini_section_set_string(cat, temp, cart_image_history[c][i]);
+            }
+        }
     }
 
     if (lba_enhancer_enabled == 0)

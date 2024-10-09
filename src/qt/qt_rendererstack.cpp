@@ -114,7 +114,8 @@ RendererStack::RendererStack(QWidget *parent, int monitor_index)
 
 RendererStack::~RendererStack()
 {
-    QApplication::restoreOverrideCursor();
+    while (QApplication::overrideCursor()) 
+        QApplication::restoreOverrideCursor();
     delete ui;
 }
 
@@ -123,7 +124,7 @@ qt_mouse_capture(int on)
 {
     if (!on) {
         mouse_capture = 0;
-        if (QApplication::overrideCursor()) QApplication::restoreOverrideCursor();
+        while (QApplication::overrideCursor()) QApplication::restoreOverrideCursor();
 #ifdef __APPLE__
         CGAssociateMouseAndMouseCursorPosition(true);
 #endif
@@ -199,7 +200,11 @@ RendererStack::mousePressEvent(QMouseEvent *event)
 void
 RendererStack::wheelEvent(QWheelEvent *event)
 {
-    mouse_set_z(event->pixelDelta().y());
+    double numSteps = (double) event->angleDelta().y() / 120.0;
+
+    mouse_set_z((int) numSteps);
+
+    event->accept();
 }
 
 void
@@ -247,10 +252,12 @@ RendererStack::enterEvent(QEnterEvent *event)
 RendererStack::enterEvent(QEvent *event)
 #endif
 {
-    mousedata.mouse_tablet_in_proximity = 1;
+    mousedata.mouse_tablet_in_proximity = m_monitor_index + 1;
 
     if (mouse_input_mode == 1)
         QApplication::setOverrideCursor(Qt::BlankCursor);
+    else if (mouse_input_mode == 2)
+        QApplication::setOverrideCursor(Qt::CrossCursor);
 }
 
 void
@@ -258,8 +265,10 @@ RendererStack::leaveEvent(QEvent *event)
 {
     mousedata.mouse_tablet_in_proximity = 0;
 
-    if (mouse_input_mode == 1 && QApplication::overrideCursor())
-        QApplication::restoreOverrideCursor();
+    if (mouse_input_mode == 1 && QApplication::overrideCursor()) {
+        while (QApplication::overrideCursor())
+            QApplication::restoreOverrideCursor();
+    }
     if (QApplication::platformName().contains("wayland")) {
         event->accept();
         return;

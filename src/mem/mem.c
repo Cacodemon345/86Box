@@ -164,46 +164,6 @@ mem_log(const char *fmt, ...)
 #    define mem_log(fmt, ...)
 #endif
 
-#ifdef USE_DEBUG_REGS_486
-/* As below, 1 = exec, 4 = read. */
-int    read_type = 4;
-
-/* Set trap for data address breakpoints - 1 = exec, 2 = write, 4 = read. */
-void
-mem_debug_check_addr(uint32_t addr, int flags)
-{
-    uint32_t bp_addr;
-    uint32_t bp_mask;
-    uint32_t len_type_pair;
-    int bp_enabled;
-    uint8_t match_flags[4] = { 0, 2, 0, 6 };
-
-    if (cpu_state.abrt || ((flags == 1) && (cpu_state.eflags & RF_FLAG)))
-        return;
-
-    if (dr[7] & 0x000000ff)  for (uint8_t i = 0; i < 4; i++) {
-        bp_addr = dr[i];
-        bp_enabled = (dr[7] >> (i << 1)) & 0x03;
-        len_type_pair = (dr[7] >> (16 + (i << 2))) & 0x0f;
-        bp_mask = ~((len_type_pair >> 2) & 0x03);
-
-        if ((flags & match_flags[len_type_pair & 0x03]) && ((bp_addr & bp_mask) == (addr & bp_mask))) {
-            /*
-               From the Intel i386 documemntation:
-
-               (Note that the processor sets Bn regardless of whether Gn or
-               Ln is set. If more than one breakpoint condition occurs at one time and if
-               the breakpoint trap occurs due to an enabled condition other than n, Bn may
-               be set, even though neither Gn nor Ln is set.)
-             */
-            dr[6] |= (1 << i);
-            if (bp_enabled)
-                trap |= (read_type == 1) ? 8 : 4;
-        }
-    }
-}
-#endif
-
 int
 mem_addr_is_ram(uint32_t addr)
 {
@@ -255,6 +215,19 @@ flushmmucache(void)
             writelookup[c]               = 0xffffffff;
         }
     }
+    mmuflush++;
+
+    pccache  = (uint32_t) 0xffffffff;
+    pccache2 = (uint8_t *) 0xffffffff;
+
+#ifdef USE_DYNAREC
+    codegen_flush();
+#endif
+}
+
+void
+flushmmucache_pc(void)
+{
     mmuflush++;
 
     pccache  = (uint32_t) 0xffffffff;
@@ -347,7 +320,7 @@ mmutranslatereal_normal(uint32_t addr, int rw)
 
     if ((temp & 0x80) && (cr4 & CR4_PSE)) {
         /*4MB page*/
-        if (((CPL == 3) && !(temp & 4) && !cpl_override) || (rw && !(temp & 2) && (((CPL == 3) && !cpl_override) || ((is486 || isibm486) && (cr0 & WP_FLAG))))) {
+        if (((CPL == 3) && !(temp & 4) && !cpl_override) || (rw && !cpl_override && !(temp & 2) && (((CPL == 3) && !cpl_override) || ((is486 || isibm486) && (cr0 & WP_FLAG))))) {
             cr2 = addr;
             temp &= 1;
             if (CPL == 3)
@@ -368,7 +341,7 @@ mmutranslatereal_normal(uint32_t addr, int rw)
 
     temp  = rammap((temp & ~0xfff) + ((addr >> 10) & 0xffc));
     temp3 = temp & temp2;
-    if (!(temp & 1) || ((CPL == 3) && !(temp3 & 4) && !cpl_override) || (rw && !(temp3 & 2) && (((CPL == 3) && !cpl_override) || ((is486 || isibm486) && (cr0 & WP_FLAG))))) {
+    if (!(temp & 1) || ((CPL == 3) && !(temp3 & 4) && !cpl_override) || (rw && !cpl_override && !(temp3 & 2) && (((CPL == 3) && !cpl_override) || ((is486 || isibm486) && (cr0 & WP_FLAG))))) {
         cr2 = addr;
         temp &= 1;
         if (CPL == 3)
@@ -432,7 +405,7 @@ mmutranslatereal_pae(uint32_t addr, int rw)
 
     if (temp & 0x80) {
         /*2MB page*/
-        if (((CPL == 3) && !(temp & 4) && !cpl_override) || (rw && !(temp & 2) && (((CPL == 3) && !cpl_override) || (cr0 & WP_FLAG)))) {
+        if (((CPL == 3) && !(temp & 4) && !cpl_override) || (rw && !cpl_override && !(temp & 2) && (((CPL == 3) && !cpl_override) || (cr0 & WP_FLAG)))) {
             cr2 = addr;
             temp &= 1;
             if (CPL == 3)
@@ -453,7 +426,7 @@ mmutranslatereal_pae(uint32_t addr, int rw)
     addr4 = (temp & ~0xfffULL) + ((addr >> 9) & 0xff8);
     temp  = rammap64(addr4) & 0x000000ffffffffffULL;
     temp3 = temp & temp4;
-    if (!(temp & 1) || ((CPL == 3) && !(temp3 & 4) && !cpl_override) || (rw && !(temp3 & 2) && (((CPL == 3) && !cpl_override) || (cr0 & WP_FLAG)))) {
+    if (!(temp & 1) || ((CPL == 3) && !(temp3 & 4) && !cpl_override) || (rw && !cpl_override && !(temp3 & 2) && (((CPL == 3) && !cpl_override) || (cr0 & WP_FLAG)))) {
         cr2 = addr;
         temp &= 1;
         if (CPL == 3)
@@ -515,7 +488,7 @@ mmutranslate_noabrt_normal(uint32_t addr, int rw)
 
     if ((temp & 0x80) && (cr4 & CR4_PSE)) {
         /*4MB page*/
-        if (((CPL == 3) && !(temp & 4) && !cpl_override) || (rw && !(temp & 2) && ((CPL == 3) || (cr0 & WP_FLAG))))
+        if (((CPL == 3) && !(temp & 4) && !cpl_override) || (rw && !cpl_override && !(temp & 2) && ((CPL == 3) || (cr0 & WP_FLAG))))
             return 0xffffffffffffffffULL;
 
         return (temp & ~0x3fffff) + (addr & 0x3fffff);
@@ -524,7 +497,7 @@ mmutranslate_noabrt_normal(uint32_t addr, int rw)
     temp  = rammap((temp & ~0xfff) + ((addr >> 10) & 0xffc));
     temp3 = temp & temp2;
 
-    if (!(temp & 1) || ((CPL == 3) && !(temp3 & 4) && !cpl_override) || (rw && !(temp3 & 2) && ((CPL == 3) || (cr0 & WP_FLAG))))
+    if (!(temp & 1) || ((CPL == 3) && !(temp3 & 4) && !cpl_override) || (rw && !cpl_override && !(temp3 & 2) && ((CPL == 3) || (cr0 & WP_FLAG))))
         return 0xffffffffffffffffULL;
 
     return (uint64_t) ((temp & ~0xfff) + (addr & 0xfff));
@@ -559,7 +532,7 @@ mmutranslate_noabrt_pae(uint32_t addr, int rw)
 
     if (temp & 0x80) {
         /*2MB page*/
-        if (((CPL == 3) && !(temp & 4) && !cpl_override) || (rw && !(temp & 2) && ((CPL == 3) || (cr0 & WP_FLAG))))
+        if (((CPL == 3) && !(temp & 4) && !cpl_override) || (rw && !cpl_override && !(temp & 2) && ((CPL == 3) || (cr0 & WP_FLAG))))
             return 0xffffffffffffffffULL;
 
         return ((temp & ~0x1fffffULL) + (addr & 0x1fffff)) & 0x000000ffffffffffULL;
@@ -570,7 +543,7 @@ mmutranslate_noabrt_pae(uint32_t addr, int rw)
 
     temp3 = temp & temp4;
 
-    if (!(temp & 1) || ((CPL == 3) && !(temp3 & 4) && !cpl_override) || (rw && !(temp3 & 2) && ((CPL == 3) || (cr0 & WP_FLAG))))
+    if (!(temp & 1) || ((CPL == 3) && !(temp3 & 4) && !cpl_override) || (rw && !cpl_override && !(temp3 & 2) && ((CPL == 3) || (cr0 & WP_FLAG))))
         return 0xffffffffffffffffULL;
 
     return ((temp & ~0xfffULL) + ((uint64_t) (addr & 0xfff))) & 0x000000ffffffffffULL;
@@ -2597,6 +2570,19 @@ mem_mapping_set_handler(mem_mapping_t *map,
 }
 
 void
+mem_mapping_set_write_handler(mem_mapping_t *map,
+                              void (*write_b)(uint32_t addr, uint8_t val, void *priv),
+                              void (*write_w)(uint32_t addr, uint16_t val, void *priv),
+                              void (*write_l)(uint32_t addr, uint32_t val, void *priv))
+{
+    map->write_b = write_b;
+    map->write_w = write_w;
+    map->write_l = write_l;
+
+    mem_mapping_recalc(map->base, map->size);
+}
+
+void
 mem_mapping_set_addr(mem_mapping_t *map, uint32_t base, uint32_t size)
 {
     /* Remove old mapping. */
@@ -2833,8 +2819,8 @@ mem_reset(void)
      */
     if (is286) {
         if (cpu_16bitbus) {
-            /* 80286/386SX; maximum address space is 16MB. */
-            m = 4096;
+            /* 80286/386SX; maximum address space is 16MB + 16 MB for EMS. */
+            m = 8192;
             /* ALi M6117; maximum address space is 64MB. */
             if (is6117)
                 m <<= 2;
@@ -3008,10 +2994,9 @@ umc_smram_recalc(uint32_t start, int set)
 }
 
 void
-mem_remap_top(int kb)
+mem_remap_top_ex(int kb, uint32_t start)
 {
     uint32_t   c;
-    uint32_t   start = (mem_size >= 1024) ? mem_size : 1024;
     int        offset;
     int        size = mem_size - 640;
     int        set        = 1;
@@ -3135,6 +3120,12 @@ mem_remap_top(int kb)
     }
 
     flushmmucache();
+}
+
+void
+mem_remap_top(int kb)
+{
+    mem_remap_top_ex(kb, (mem_size >= 1024) ? mem_size : 1024);
 }
 
 void

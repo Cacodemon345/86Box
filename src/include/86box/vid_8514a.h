@@ -42,9 +42,11 @@ typedef union {
 typedef struct ibm8514_t {
     rom_t bios_rom;
     rom_t bios_rom2;
+    rom_t bios_rom3;
     hwcursor8514_t hwcursor;
     hwcursor8514_t hwcursor_latch;
     uint8_t        pos_regs[8];
+    char *rom_path;
 
     int force_old_addr;
     int type;
@@ -56,6 +58,7 @@ typedef struct ibm8514_t {
     uint32_t vram_size;
     uint32_t vram_mask;
     uint32_t pallook[512];
+    uint32_t bios_addr;
 
     PALETTE   vgapal;
     uint8_t   hwcursor_oddeven;

@@ -823,7 +823,7 @@ pas16_in(uint16_t port, void *priv)
                -   2 = FM (1 = stereo, 0 = mono);
                -   3 = Code (1 = 16-bit, 0 = 8-bit).
              */
-            ret = pas16->type ? pas16->type : 0x06;
+            ret = pas16->type ? pas16->type : 0x07;
             break;
 
         case 0xf000:
@@ -1020,7 +1020,7 @@ pas16_nsc_mixer_reset(nsc_mixer_t *mixer)
     mixer->lmc1982_regs[LMC1982_REG_ISELECT] = 0x01;
     mixer->lmc1982_regs[LMC1982_REG_LES]     = 0x00;
     mixer->lmc1982_regs[LMC1982_REG_BASS]    = mixer->lmc1982_regs[LMC1982_REG_TREBLE]  = 0x06;
-    mixer->lmc1982_regs[LMC1982_REG_VOL_L]   = mixer->lmc1982_regs[LMC1982_REG_VOL_R]   = 0x28;
+    mixer->lmc1982_regs[LMC1982_REG_VOL_L]   = mixer->lmc1982_regs[LMC1982_REG_VOL_R]   = 0x00; /*0x28*/ /*Note by TC1995: otherwise the volume gets lowered too much*/
     mixer->lmc1982_regs[LMC1982_REG_MODE]    = 0x05;
 
     lmc1982_recalc(mixer);
@@ -1504,7 +1504,8 @@ pas16_out(uint16_t port, uint8_t val, void *priv)
                 pas16->timeout_count = val;
                 if (timer_is_enabled(&pas16->scsi_timer))
                     timer_disable(&pas16->scsi_timer);
-                timer_set_delay_u64(&pas16->scsi_timer, (val & 0x3f) * PASSCSICONST);
+                if ((val & 0x3f) > 0x00)
+                    timer_set_delay_u64(&pas16->scsi_timer, (val & 0x3f) * PASSCSICONST);
             }
             break;
 

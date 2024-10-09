@@ -443,7 +443,8 @@ machine_at_epc2102_init(const machine_t *model)
     if (bios_only || !ret)
         return ret;
 
-    machine_at_common_init(model);
+    machine_at_common_init_ex(model, 2);
+    device_add_params(&at_nvr_device, (void *) 0x20);
 
     pci_init(PCI_CONFIG_TYPE_1);
     pci_register_slot(0x00, PCI_CARD_NORTHBRIDGE, 0, 0, 0, 0);
@@ -454,9 +455,9 @@ machine_at_epc2102_init(const machine_t *model)
     pci_register_slot(0x07, PCI_CARD_SOUTHBRIDGE, 0, 0, 0, 0);
     device_add(&i430hx_device);
     device_add(&piix3_device);
-    device_add(&keyboard_ps2_pci_device);
+    device_add(&keyboard_ps2_intel_ami_pci_device);
     device_add(&i82091aa_device);
-    device_add(&intel_flash_bxt_device);
+    device_add(&sst_flash_39sf010_device);
 
     return ret;
 }
@@ -869,13 +870,17 @@ machine_at_nupro592_init(const machine_t *model)
 
     pci_init(PCI_CONFIG_TYPE_1);
     pci_register_slot(0x00, PCI_CARD_NORTHBRIDGE, 0, 0, 0, 0);
+    pci_register_slot(0x0B, PCI_CARD_VIDEO,       3, 4, 1, 2); /* C&T B69000 */
+    pci_register_slot(0x0C, PCI_CARD_NETWORK,     4, 1, 2, 3); /* Intel 82559 */
     pci_register_slot(0x11, PCI_CARD_NORMAL,      1, 2, 3, 4);
     pci_register_slot(0x12, PCI_CARD_NORMAL,      4, 1, 2, 3);
     pci_register_slot(0x13, PCI_CARD_NORMAL,      3, 4, 1, 2);
     pci_register_slot(0x14, PCI_CARD_NORMAL,      2, 3, 4, 1);
-    pci_register_slot(0x0B, PCI_CARD_NORMAL,      3, 4, 1, 2); /*Strongly suspect these are on-board slots*/
-    pci_register_slot(0x0C, PCI_CARD_NORMAL,      4, 1, 2, 3);
     pci_register_slot(0x07, PCI_CARD_SOUTHBRIDGE, 0, 0, 0, 4); /* PIIX4 */
+
+    if (gfxcard[0] == VID_INTERNAL)
+        device_add(machine_get_vid_device(machine));
+
     device_add(&i430tx_device);
     device_add(&piix4_device);
     device_add(&keyboard_ps2_ami_pci_device);
@@ -930,7 +935,7 @@ machine_at_tx97_init(const machine_t *model)
     return ret;
 }
 
-#if defined(DEV_BRANCH) && defined(USE_AN430TX)
+#ifdef USE_AN430TX
 int
 machine_at_an430tx_init(const machine_t *model)
 {
@@ -974,7 +979,7 @@ machine_at_an430tx_init(const machine_t *model)
 
     return ret;
 }
-#endif
+#endif /* USE_AN430TX */
 
 int
 machine_at_ym430tx_init(const machine_t *model)

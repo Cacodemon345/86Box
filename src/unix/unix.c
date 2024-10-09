@@ -266,6 +266,10 @@ plat_get_string(int i)
             return L"Make sure libpcap is installed and that you are on a libpcap-compatible network connection.";
         case STRING_GHOSTSCRIPT_ERROR_TITLE:
             return L"Unable to initialize Ghostscript";
+        case STRING_GHOSTPCL_ERROR_TITLE:
+            return L"Unable to initialize GhostPCL";
+        case STRING_GHOSTPCL_ERROR_DESC:
+            return L"libgpcl6 is required for automatic conversion of PCL files to PDF.\n\nAny documents sent to the generic PCL printer will be saved as Printer Command Language (.pcl) files.";
         case STRING_HW_NOT_AVAILABLE_MACHINE:
             return L"Machine \"%hs\" is not available due to missing ROMs in the roms/machines directory. Switching to an available machine.";
         case STRING_HW_NOT_AVAILABLE_VIDEO:
@@ -636,8 +640,12 @@ ui_msgbox_header(int flags, void *header, void *message)
     SDL_MessageBoxData       msgdata;
     SDL_MessageBoxButtonData msgbtn;
 
-    if (!header)
-        header = (void *) ((flags & MBX_ANSI) ? "86Box" : L"86Box");
+    if (!header) {
+        if (flags & MBX_ANSI)
+            header = (void *) "86Box";
+        else
+            header = (void *) L"86Box";
+    }
 
     msgbtn.buttonid = 1;
     msgbtn.text     = "OK";
@@ -1164,7 +1172,7 @@ monitor_thread(void *param)
 #endif
 }
 
-extern int gfxcard[2];
+extern int gfxcard[GFXCARD_MAX];
 int
 main(int argc, char **argv)
 {
@@ -1182,7 +1190,8 @@ main(int argc, char **argv)
         return 6;
     }
 
-    gfxcard[1]  = 0;
+    for (uint8_t i = 1; i < GFXCARD_MAX; i++)
+        gfxcard[i]  = 0;
     eventthread = SDL_ThreadID();
     blitmtx     = SDL_CreateMutex();
     if (!blitmtx) {
