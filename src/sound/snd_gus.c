@@ -1491,7 +1491,7 @@ static const device_config_t gus_config[] = {
     },
     {
         .name = "gus_ram",
-        "Onboard RAM",
+        "Memory size",
         .type = CONFIG_SELECTION,
         .default_string = "",
         .default_int = 0,
@@ -1515,7 +1515,7 @@ static const device_config_t gus_config[] = {
     },
     {
         .name = "receive_input",
-        .description = "Receive input (SB MIDI)",
+        .description = "Receive MIDI input",
         .type = CONFIG_BINARY,
         .default_string = "",
         .default_int = 1
