@@ -12,6 +12,12 @@
  *
  *          Copyright 2024 Miran Grca.
  */
+
+/* TODOs:
+    - SiS 5582 and 5572 OHCI handoff emulation.
+    - MSI MS-5172 BIOS SMI code is finicky as heck, so only OwnershipChange requests are honoured for now.
+      Deal with it later after everything settles down.
+*/
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -83,9 +89,13 @@ sis_5572_usb_smi_raise(void* priv)
 {
     sis_5572_usb_t *dev = (sis_5572_usb_t *) priv;
     
-    if (dev->sis->usb_enabled && (dev->sis->test_mode_reg & 0x10)) {
-        dev->sis->test_mode_reg |= 0x8;
-        smi_raise();
+    if (dev->sis->usb_enabled && dev->rev == 0x11) {
+        dev->sis->acpi->regs.leg_sts |= 0x40;
+        if (dev->sis->acpi->regs.leg_en & 0x40) {
+            acpi_sis5595_smi_raise(dev->sis->acpi);
+            if (dev->sis->acpi->regs.leg_en & 0x20)
+                pclog("5595: SMI#\n");
+        }
     }
 }
 
@@ -96,9 +106,9 @@ sis_5572_usb_pci_irq(void *priv, int level)
     
     if (dev->sis->usb_enabled) {
         if (level)
-            pci_set_mirq(PCI_MIRQ3, level, &dev->irq_state);
+            pci_set_mirq(PCI_MIRQ3, 0, &dev->irq_state);
         else
-            pci_clear_mirq(PCI_MIRQ3, level, &dev->irq_state);
+            pci_clear_mirq(PCI_MIRQ3, 0, &dev->irq_state);
     }
 }
 
@@ -301,8 +311,8 @@ sis_5572_usb_init(UNUSED(const device_t *info))
     usb_param.pci_conf = dev->pci_conf;
     usb_param.pci_dev  = dev->sis->sb_southbridge_slot;
     usb_param.priv     = dev;
-    usb_param.do_smi_raise = sis_5572_usb_smi_raise;
-    usb_param.do_smi_ocr_raise = NULL;
+    usb_param.do_smi_raise = NULL;
+    usb_param.do_smi_ocr_raise = sis_5572_usb_smi_raise;
     usb_param.do_pci_irq = sis_5572_usb_pci_irq;
     dev->usb = device_add_params(&usb_device, &usb_param);
     ohci_register_usb(dev->usb);

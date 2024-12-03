@@ -329,8 +329,9 @@ void usb_ohci_update_irq(bx_ohci_core_t* hub)
   if (hub->op_regs.HcControl.ir && level) {
     if (hub->do_smi_raise && hub->card_priv)
       hub->do_smi_raise(hub->card_priv);
-    else        
-      smi_raise();
+      /* Commented out; this causes problems in MSI MS-5172 BIOS. */
+    //else        
+    //  smi_raise();
   }
   else if (!hub->op_regs.HcControl.ir) {
     if (hub->do_pci_irq)
