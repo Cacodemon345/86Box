@@ -242,6 +242,8 @@ typedef struct {
   void (*do_smi_ocr_raise)(void *priv);
   void (*do_pci_irq)(void *priv, int level);
   void* card_priv;
+
+  uint8_t* test_reg_enable;
 } bx_ohci_core_t;
 
 const char *usb_ohci_port_name[] = {
@@ -887,7 +889,13 @@ void usb_ohci_mem_write(uint32_t addr, uint32_t value, void* priv)
         hub->op_regs.HcInterruptStatus |= 0x40000000;
         if ((hub->op_regs.HcInterruptEnable & 0xC0000000) == 0xC0000000) {
           ohci_log("Assert SMI#\n");
-          if (hub->do_smi_ocr_raise && hub->card_priv)
+          /* At least one SiS BIOS leave InterruptRouting on but disable USB SMI# requests.
+             Turn it off in that case. */
+          if (hub->test_reg_enable && !(*hub->test_reg_enable & 0x10) && hub->op_regs.HcControl.ir) {
+            hub->op_regs.HcControl.ir = false;
+            pclog("SiS quirk\n");
+          }
+          else if (hub->do_smi_ocr_raise && hub->card_priv)
             hub->do_smi_ocr_raise(hub->card_priv);
           else if (hub->do_smi_raise && hub->card_priv)
             hub->do_smi_raise(hub->card_priv);
@@ -1672,6 +1680,7 @@ usb_ohci_init(UNUSED(const device_t *info))
       hub->do_smi_ocr_raise = usb_params->do_smi_ocr_raise;
       hub->card_priv = usb_params->priv;
       hub->do_pci_irq = usb_params->do_pci_irq;
+      hub->test_reg_enable = usb_params->test_reg_enable;
     }
     timer_add(&hub->timer, usb_ohci_timer, hub, 0);
     timer_on_auto(&hub->timer, 1000);

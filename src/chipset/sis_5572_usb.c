@@ -93,8 +93,11 @@ sis_5572_usb_smi_raise(void* priv)
         dev->sis->acpi->regs.leg_sts |= 0x40;
         if (dev->sis->acpi->regs.leg_en & 0x40) {
             acpi_sis5595_smi_raise(dev->sis->acpi);
-            if (dev->sis->acpi->regs.leg_en & 0x20)
-                pclog("5595: SMI#\n");
+        }
+    } else if (dev->sis->usb_enabled && dev->rev == 0xe0) {
+        if (dev->sis->test_mode_reg & 0x10) {
+            dev->sis->test_mode_reg |= 0x8;
+            smi_raise();
         }
     }
 }
@@ -308,12 +311,13 @@ sis_5572_usb_init(UNUSED(const device_t *info))
     dev->sis = device_get_common_priv();
 
     /* USB */
-    usb_param.pci_conf = dev->pci_conf;
-    usb_param.pci_dev  = dev->sis->sb_southbridge_slot;
-    usb_param.priv     = dev;
-    usb_param.do_smi_raise = NULL;
+    usb_param.pci_conf         = dev->pci_conf;
+    usb_param.pci_dev          = dev->sis->sb_southbridge_slot;
+    usb_param.priv             = dev;
+    usb_param.do_smi_raise     = NULL;
     usb_param.do_smi_ocr_raise = sis_5572_usb_smi_raise;
-    usb_param.do_pci_irq = sis_5572_usb_pci_irq;
+    usb_param.do_pci_irq       = sis_5572_usb_pci_irq;
+    usb_param.test_reg_enable  = &dev->sis->test_mode_reg;
     dev->usb = device_add_params(&usb_device, &usb_param);
     ohci_register_usb(dev->usb);
 

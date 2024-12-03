@@ -38,6 +38,8 @@ typedef struct usb_params_t {
     void (*do_smi_ocr_raise)(void* priv);
     /* Asserts PCI interrupt. */
     void (*do_pci_irq)(void* priv, int level);
+
+    uint8_t* test_reg_enable;
 } usb_params_t;
 
 typedef struct usb_t {
