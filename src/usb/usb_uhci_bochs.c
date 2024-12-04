@@ -237,7 +237,7 @@ usb_uhci_update_irq(bx_uhci_core_t *hub)
         level = 1;
     }
 
-    if (hub->pci_conf[0xc1] & (1 << 5))
+    if ((hub->pci_conf[0xc1] & (1 << 5)) && !(hub->pci_conf[0xc0] & (1 << 4)))
         pci_irq(PCI_IIRQ_BASE | PCI_INTD, 0, 0, level, &hub->irq_state);
     else
         pci_irq(PCI_IIRQ_BASE | PCI_INTD, 0, 0, 0, &hub->irq_state);
