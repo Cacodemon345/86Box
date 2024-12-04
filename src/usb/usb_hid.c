@@ -89,11 +89,8 @@ typedef enum {
     hid_mouse_2x2x8 = 0,     // 2-button, 2-coords: X and Y coords, 8-bit
     hid_mouse_3x3x8,         // 3-button, 3-coords: X, Y, and Wheel coords, 8-bit (default)
     hid_mouse_3x3x12,        // 3-button, 3-coords: X, Y, and Wheel coords, 12-bit
-    hid_mouse_3x3xDebug,     // 3-button, 3-coords: X, Y, and Wheel coords (debug)
     hid_mouse_3x3x16,        // 3-button, 3-coords: X, Y, and Wheel coords, 16-bit
                              // mice (w/ physical descriptor)
-    hid_mouse_3x3x8phy = 10, // 3-button, 3-coords: X, Y, and Wheel coords, 8-bit, Physical Descriptor included
-
     // keyboards
 
     // keypads
@@ -290,83 +287,6 @@ static const uint8_t bx_mouse_hid_report_descriptor_338[] = {
     0xC0,                 // End Collection
 };
 
-// this model is deliberately irregular by design, so that a Guest can test its HID Report Descriptor Parser.
-//  - the button fields are not consecutive and are at arbitrary positions in the report.
-//  - the coords fields are not byte aligned or consecutively spaced.
-//  - the coords fields are of an irregular size, each a different size.
-//  - there are padding fields between entries that *do not* align the next field on a byte boundary.
-//  - this also uses he push/pop mechanism to test the function of your parser.
-// (Again, this is deliberate. A correctly written parser will extract the neccessary fields no matter the irregularity)
-// hid_mouse_3x3xDebug
-// 3-button, 5-byte X, Y, and Wheel coords (debug model)
-// YYYYYYY0 - 10 bit Y displacement
-// WWWW0YYY - 8 bit W displacement
-// 0B00WWWW - bit 6 is Button #2 (right button)
-// XXXXX0B0 - 9 bit X displacement, bit 1 is Button #1 (left button)
-// 0B00XXXX - bit 6 is Button #3 (middle button)
-static const uint8_t bx_mouse_hid_report_descriptor_33debug[] = {
-    0x05, 0x01,       // Usage Page (Generic Desktop Ctrls)
-    0x09, 0x02,       // Usage (Mouse)
-    0xA1, 0x01,       // Collection (Application)
-    0x09, 0x01,       //   Usage (Pointer)
-    0xA1, 0x00,       //   Collection (Physical)
-    0x95, 0x01,       //     Report Count (1)
-    0x75, 0x01,       //     Report Size (1)
-    0x15, 0x00,       //     Logical Minimum (0)
-    0x25, 0x00,       //     Logical Maximum (0)
-    0x81, 0x01,       //     Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x09, 0x31,       //     Usage (Y)
-    0x75, 0x0A,       //     Report Size (10)
-    0x16, 0x00, 0xFE, //     Logical Minimum (-512)
-    0x26, 0xFF, 0x01, //     Logical Maximum (511)
-    0x81, 0x06,       //     Input (Data,Var,Rel,No Wrap,Linear,Preferred State,No Null Position)
-    0x75, 0x01,       //     Report Size (1)
-    0x81, 0x01,       //     Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x09, 0x38,       //     Usage (Wheel)
-    0x75, 0x08,       //     Report Size (8)
-    0x15, 0x80,       //     Logical Minimum (-128)
-    0x25, 0x7F,       //     Logical Maximum (127)
-    0x81, 0x06,       //     Input (Data,Var,Rel,No Wrap,Linear,Preferred State,No Null Position)
-    0xA4,             //     Push
-    0x75, 0x01,       //       Report Size (1)
-    0x95, 0x02,       //       Report Count (2)
-    0xA4,             //       Push
-    0x81, 0x01,       //         Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x05, 0x09,       //         Usage Page (Button)
-    0x15, 0x00,       //         Logical Minimum (0)
-    0x25, 0x01,       //         Logical Maximum (1)
-    0x09, 0x02,       //         Usage (0x02)
-    0x95, 0x01,       //         Report Count (1)
-    0x81, 0x02,       //         Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0xB4,             //       Pop
-    0x81, 0x01,       //       Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x05, 0x09,       //       Usage Page (Button)
-    0x09, 0x01,       //       Usage (0x01)
-    0x95, 0x01,       //       Report Count (1)
-    0x15, 0x00,       //       Logical Minimum (0)
-    0x25, 0x01,       //       Logical Maximum (1)
-    0x81, 0x02,       //       Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x81, 0x01,       //       Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0xB4,             //     Pop
-    0x09, 0x30,       //     Usage (X)
-    0x75, 0x09,       //     Report Size (9)
-    0x16, 0x00, 0xFF, //     Logical Minimum (-256)
-    0x26, 0xFF, 0x00, //     Logical Maximum (255)
-    0x81, 0x06,       //     Input (Data,Var,Rel,No Wrap,Linear,Preferred State,No Null Position)
-    0x95, 0x02,       //     Report Count (2)
-    0x75, 0x01,       //     Report Size (1)
-    0x81, 0x01,       //     Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x05, 0x09,       //     Usage Page (Button)
-    0x09, 0x03,       //     Usage (0x03)
-    0x95, 0x01,       //     Report Count (1)
-    0x15, 0x00,       //     Logical Minimum (0)
-    0x25, 0x01,       //     Logical Maximum (1)
-    0x81, 0x02,       //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x81, 0x01,       //     Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0xC0,             //   End Collection
-    0xC0,             // End Collection
-};
-
 // hid_mouse_3x3x12
 // 3-button, 5-byte X, Y, and Wheel coords, 12-bit
 // 00000BBB
@@ -452,48 +372,6 @@ static const uint8_t bx_mouse_hid_report_descriptor_3316[] = {
     0xC0,             // End Collection
 };
 
-// This Report Descriptor uses Designator values to point to an entry in the
-//  HID Physical Descriptor. WinXP doesn't like the Designator entries, so
-//  don't use this model when using a WinXP guest.
-// hid_mouse_3x3x8phy
-// 3-button, 3-byte X, Y, and Wheel coords, 8-bit
-// 00000BBB
-// XXXXXXXX
-// YYYYYYYY
-// WWWWWWWW
-static const uint8_t bx_mouse_hid_report_descriptor_338phy[] = {
-    0x05, 0x01,           // Usage Page (Generic Desktop Ctrls)
-    0x09, 0x02,           // Usage (Mouse)
-    0xA1, 0x01,           // Collection (Application)
-    0x09, 0x01,           //   Usage (Pointer)
-    0x89, HID_CLASS_STR4, // Starting String Index (4)
-    0x99, HID_CLASS_STR5, // Ending String Index (5)
-    0xA1, 0x00,           //   Collection (Physical)
-    0x05, 0x09,           //     Usage Page (Button)
-    0x15, 0x00,           //     Logical Minimum (0)
-    0x25, 0x01,           //     Logical Maximum (1)
-    0x19, 0x01,           //     Usage Minimum (0x01)
-    0x29, 0x03,           //     Usage Maximum (0x03)
-    0x95, 0x03,           //     Report Count (3)
-    0x75, 0x01,           //     Report Size (1)
-    0x49, 0x01,           //     Designator Minimum (1)
-    0x59, 0x03,           //     Designator Maximum (3)
-    0x81, 0x02,           //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x95, 0x01,           //     Report Count (1)
-    0x75, 0x05,           //     Report Size (5)
-    0x81, 0x01,           //     Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x05, 0x01,           //     Usage Page (Generic Desktop Ctrls)
-    0x09, 0x30,           //     Usage (X)
-    0x09, 0x31,           //     Usage (Y)
-    0x09, 0x38,           //     Usage (Wheel)
-    0x95, 0x03,           //     Report Count (3)
-    0x15, 0x81,           //     Logical Minimum (-127)
-    0x25, 0x7F,           //     Logical Maximum (127)
-    0x75, 0x08,           //     Report Size (8)
-    0x81, 0x06,           //     Input (Data,Var,Rel,No Wrap,Linear,Preferred State,No Null Position)
-    0xC0,                 //   End Collection
-    0xC0,                 // End Collection
-};
 
 // standard low-, full-speed configuration (w/o physical descriptor)
 // (this define must be the zero based byte offset of the HID length field below)
@@ -1066,27 +944,11 @@ usb_device_hid_create_mouse_packet(usb_device_hid *hid, uint8_t *buf)
                 // YYYYYYYY
                 // WWWWWWWW
                 case hid_mouse_3x3x8:
-                case hid_mouse_3x3x8phy:
                     *buf++ = hid->s.b_state & 7;
                     *buf++ = (int8_t) hid->s.mouse_x;
                     *buf++ = (int8_t) hid->s.mouse_y;
                     *buf++ = (int8_t) hid->s.mouse_z;
                     l += 4;
-                    break;
-
-                // 3-button, 5-byte X, Y, and Wheel coords (debug model)
-                // YYYYYYY0 - 10 bit Y displacement
-                // WWWW0YYY - 8 bit W displacement
-                // 0B00WWWW - bit 6 is Button #2 (right button)
-                // XXXXX0B0 - 9 bit X displacement, bit 1 is Button #1 (left button)
-                // 0B00XXXX - bit 6 is Button #3 (middle button)
-                case hid_mouse_3x3xDebug:
-                    *buf++ = (uint8_t) (((uint16_t) hid->s.mouse_y & 0x7F) << 1);
-                    *buf++ = (uint8_t) ((((uint16_t) hid->s.mouse_y >> 7) & 0x07) | (((uint16_t) hid->s.mouse_z & 0x0F) << 4));
-                    *buf++ = (uint8_t) ((((uint16_t) hid->s.mouse_z >> 4) & 0x0F) | (((hid->s.b_state & 2) >> 1) << 6));
-                    *buf++ = (uint8_t) ((((hid->s.b_state & 1) >> 0) << 1) | (((uint16_t) hid->s.mouse_x & 0x1F) << 3));
-                    *buf++ = (uint8_t) ((((uint16_t) hid->s.mouse_x >> 5) & 0x0F) | (((hid->s.b_state & 4) >> 2) << 6));
-                    l += 5;
                     break;
 
                 // 3-button, X, Y, and Wheel coords, 12-bit
@@ -1332,15 +1194,9 @@ usb_device_hid_handle_control(usb_device_c *device, int request, int value, int 
                         BX_ERROR(("USB_REQ_GET_DESCRIPTOR: The Descriptor Index must be zero for this request."));
                     }
                     if (device->type == USB_HID_TYPE_MOUSE) {
-                        if (hid->s.model >= hid_mouse_3x3x8phy) {
-                            memcpy(data, bx_mouse_hid_descriptor1,
-                                   sizeof(bx_mouse_hid_descriptor1));
-                            ret = sizeof(bx_mouse_hid_descriptor1);
-                        } else {
-                            memcpy(data, bx_mouse_hid_descriptor0,
-                                   sizeof(bx_mouse_hid_descriptor0));
-                            ret = sizeof(bx_mouse_hid_descriptor0);
-                        }
+                        memcpy(data, bx_mouse_hid_descriptor0,
+                               sizeof(bx_mouse_hid_descriptor0));
+                        ret = sizeof(bx_mouse_hid_descriptor0);
                     } else if (device->type == USB_HID_TYPE_TABLET) {
                         memcpy(data, bx_tablet_hid_descriptor,
                                sizeof(bx_tablet_hid_descriptor));
@@ -1550,13 +1406,8 @@ usb_hid_device_init(usb_device_c* device)
                 hid->device.config_descriptor = bx_mouse_config_descriptor2;
                 hid->device.config_desc_size  = sizeof(bx_mouse_config_descriptor2);
             } else {
-                if (hid->s.model >= hid_mouse_3x3x8phy) {
-                    hid->device.config_descriptor = bx_mouse_config_descriptor1;
-                    hid->device.config_desc_size  = sizeof(bx_mouse_config_descriptor1);
-                } else {
-                    hid->device.config_descriptor = bx_mouse_config_descriptor0;
-                    hid->device.config_desc_size  = sizeof(bx_mouse_config_descriptor0);
-                }
+                hid->device.config_descriptor = bx_mouse_config_descriptor0;
+                hid->device.config_desc_size  = sizeof(bx_mouse_config_descriptor0);
             }
         } else {
             // Tablet
@@ -1575,18 +1426,12 @@ usb_hid_device_init(usb_device_c* device)
         } else if (hid->s.model == hid_mouse_3x3x8) {
             hid->s.bx_mouse_hid_report_descriptor     = bx_mouse_hid_report_descriptor_338;
             hid->s.bx_mouse_hid_report_descriptor_len = sizeof(bx_mouse_hid_report_descriptor_338);
-        } else if (hid->s.model == hid_mouse_3x3xDebug) {
-            hid->s.bx_mouse_hid_report_descriptor     = bx_mouse_hid_report_descriptor_33debug;
-            hid->s.bx_mouse_hid_report_descriptor_len = sizeof(bx_mouse_hid_report_descriptor_33debug);
         } else if (hid->s.model == hid_mouse_3x3x12) {
             hid->s.bx_mouse_hid_report_descriptor     = bx_mouse_hid_report_descriptor_3312;
             hid->s.bx_mouse_hid_report_descriptor_len = sizeof(bx_mouse_hid_report_descriptor_3312);
         } else if (hid->s.model == hid_mouse_3x3x16) {
             hid->s.bx_mouse_hid_report_descriptor     = bx_mouse_hid_report_descriptor_3316;
             hid->s.bx_mouse_hid_report_descriptor_len = sizeof(bx_mouse_hid_report_descriptor_3316);
-        } else if (hid->s.model == hid_mouse_3x3x8phy) {
-            hid->s.bx_mouse_hid_report_descriptor     = bx_mouse_hid_report_descriptor_338phy;
-            hid->s.bx_mouse_hid_report_descriptor_len = sizeof(bx_mouse_hid_report_descriptor_338phy);
         }
         // update the hid descriptor length fields
         *(uint16_t *) &bx_mouse_config_descriptor0[BX_Mouse_Config_Descriptor0_pos] = *(uint16_t *) &bx_mouse_config_descriptor1[BX_Mouse_Config_Descriptor1_pos] = *(uint16_t *) &bx_mouse_config_descriptor2[BX_Mouse_Config_Descriptor2_pos] = *(uint16_t *) &bx_mouse_hid_descriptor0[BX_Mouse_Hid_Descriptor0] = *(uint16_t *) &bx_mouse_hid_descriptor1[BX_Mouse_Hid_Descriptor1] = hid->s.bx_mouse_hid_report_descriptor_len;
@@ -1602,7 +1447,6 @@ usb_hid_handle_reset(usb_device_c *device)
 {
     usb_device_hid *hid = (usb_device_hid *) device;
     memset((void *) &hid->s, 0, offsetof(struct HID_STATE, model));
-    BX_DEBUG(("Reset"));
 
     // HID 1.11, section 7.2.6, page 54(64):
     //  "When initialized, all devices default to report protocol."
