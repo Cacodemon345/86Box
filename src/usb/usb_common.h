@@ -130,7 +130,9 @@ typedef struct USBPacket USBPacket;
 
 // set this to 1 to monitor the TD's toggle bit
 // setting to 0 will speed up the emualtion slightly
-#define HANDLE_TOGGLE_CONTROL 1
+
+/* Toggling monitoring disabled for now; this causes problems with UHCI emulation under Windows 98 SE. */
+#define HANDLE_TOGGLE_CONTROL 0
 
 #define USB_MAX_ENDPOINTS   5   // we currently don't use more than 5 endpoints (ep0, ep1, ep2, ep3, and ep4)
 
@@ -146,9 +148,9 @@ struct USBPacket {
   /* Target USB device endpoint. */
   uint8_t devep;
   uint8_t speed;           // packet's speed definition
-#if HANDLE_TOGGLE_CONTROL
+
   int   toggle;          // packet's toggle bit (0, 1, or -1 for xHCI)
-#endif
+//#endif
   /* Packet data. */
   uint8_t *data;
   /* Packet length. */
@@ -182,9 +184,9 @@ typedef struct USBAsync {
 typedef struct USBEndPoint {
   int  max_packet_size;  // endpoint max packet size
   int  max_burst_size;   // endpoint max burst size (super-speed endpoint companion only)
-#if HANDLE_TOGGLE_CONTROL
+//#if HANDLE_TOGGLE_CONTROL
   int  toggle;           // the current toggle for the endpoint (0, 1, or -1 for xHCI)
-#endif
+//#endif
   bool halted;           // is the current ep halted?
 } USBEndPoint;
 
