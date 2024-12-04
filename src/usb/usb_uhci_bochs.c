@@ -683,8 +683,8 @@ usb_uhci_do_transfer(bx_uhci_core_t *hub, uint32_t address, struct TD *td)
 #if HANDLE_TOGGLE_CONTROL
         p->packet.toggle = (td->dword2 & (1 << 19)) > 0;
 #endif
-        // p->packet.complete_cb = uhci_event_handler;
-        // p->packet.complete_dev = this;
+        p->packet.complete_cb = usb_uhci_event_handler;
+        p->packet.complete_dev = hub;
         switch (pid) {
             case USB_TOKEN_OUT:
             case USB_TOKEN_SETUP:
