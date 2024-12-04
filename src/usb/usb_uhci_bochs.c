@@ -920,21 +920,6 @@ usb_uhci_write(uint16_t address, uint8_t value, void *priv)
     if (hub->usb_command.reset && ((offset != 0) || (value & 0x04)))
         return;
 
-    /* Windows 98 SE's drivers for the VIA UHCI controller byte-writes to the port registers. */
-    if (offset >= 0x10) {
-        uint16_t val = usb_uhci_read(address & ~1, priv) | (usb_uhci_read((address & ~1) + 1, priv) << 8);
-
-        if (offset & 1) {
-            val &= 0x00FA;
-            val |= value << 8;
-        } else {
-            val &= 0xFF00;
-            val |= value;
-        }
-
-        usb_uhci_writew(address & ~1, val, priv);
-        return;
-    }
 
     // BX_DEBUG(("register write to  address 0x%04X:  0x%08X (%2i bits)", (unsigned) address, (unsigned) value, io_len * 8));
 
