@@ -15,6 +15,7 @@
 #include <86box/pci.h>
 #include <86box/plat_unused.h>
 #include <86box/timer.h>
+#include <86box/machine.h>
 
 #include "usb_common.h"
 
@@ -329,6 +330,9 @@ void usb_ohci_update_irq(bx_ohci_core_t* hub)
       level = 1;
   }
   if (hub->op_regs.HcControl.ir && level) {
+    /* Machine in question freezes itself when triggering USB SMI#. */
+    if (!stricmp(machine_get_internal_name(), "p6f99"))
+      return;
     if (hub->do_smi_raise && hub->card_priv)
       hub->do_smi_raise(hub->card_priv);
       /* Commented out; this causes problems in MSI MS-5172 BIOS. */
@@ -893,7 +897,11 @@ void usb_ohci_mem_write(uint32_t addr, uint32_t value, void* priv)
              Turn it off in that case. */
           if (hub->test_reg_enable && !(*hub->test_reg_enable & 0x10) && hub->op_regs.HcControl.ir) {
             hub->op_regs.HcControl.ir = false;
-            pclog("SiS quirk\n");
+          }
+          /* FIXME: Figure out how is USB handed off from SMI on SiS 5600 chipsets. ACPI can be disabled on some of those as well */
+          else if (!stricmp(machine_get_internal_name(), "p6f99"))
+          {
+            /* Do nothing for now*/
           }
           else if (hub->do_smi_ocr_raise && hub->card_priv)
             hub->do_smi_ocr_raise(hub->card_priv);
