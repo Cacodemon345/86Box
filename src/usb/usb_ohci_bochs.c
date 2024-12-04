@@ -331,7 +331,7 @@ void usb_ohci_update_irq(bx_ohci_core_t* hub)
   }
   if (hub->op_regs.HcControl.ir && level) {
     /* Machine in question freezes itself when triggering USB SMI#. */
-    if (!stricmp(machine_get_internal_name(), "p6f99"))
+    if (!strcmp(machine_get_internal_name(), "p6f99"))
       return;
     if (hub->do_smi_raise && hub->card_priv)
       hub->do_smi_raise(hub->card_priv);
@@ -899,7 +899,7 @@ void usb_ohci_mem_write(uint32_t addr, uint32_t value, void* priv)
             hub->op_regs.HcControl.ir = false;
           }
           /* FIXME: Figure out how is USB handed off from SMI on SiS 5600 chipsets. ACPI can be disabled on some of those as well */
-          else if (!stricmp(machine_get_internal_name(), "p6f99"))
+          else if (!strcmp(machine_get_internal_name(), "p6f99"))
           {
             /* Do nothing for now*/
           }
