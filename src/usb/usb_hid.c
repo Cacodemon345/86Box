@@ -1361,7 +1361,7 @@ usb_device_hid_handle_data(usb_device_c *device, USBPacket *p)
             if (p->devep == 1) {
                 if ((device->type == USB_HID_TYPE_MOUSE) || (device->type == USB_HID_TYPE_TABLET)) {
                     //pclog("USB MOUSE POLLING\n");
-                    ret = usb_mouse_poll((usb_device_hid *) device, p->data, 0);
+                    ret = usb_mouse_poll((usb_device_hid *) device, p->data, 1);
                 } else {
                     goto fail;
                 }
