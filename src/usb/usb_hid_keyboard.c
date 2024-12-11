@@ -18,7 +18,7 @@
 #include "cpu.h"
 #include <86box/pci.h>
 #include <86box/timer.h>
-#include <86box/mouse.h>
+#include <86box/keyboard.h>
 
 #include "usb_common.h"
 
@@ -734,7 +734,7 @@ usb_device_hid_kb_handle_control(usb_device_c *device, int request, int value, i
             if ((value >> 8) == 1) { // Input report
                 if ((value & 0xFF) == hid->s.report_id) {
                     if ((device->type == USB_HID_TYPE_KEYBOARD)) {
-                        ret = USB_RET_NAK;
+                        ret = usb_device_hid_keyboard_poll(hid, data, 1);
                         if (ret > length)
                             ret = length;
                     } else {
@@ -751,9 +751,25 @@ usb_device_hid_kb_handle_control(usb_device_c *device, int request, int value, i
             break;
         case InterfaceOutClassRequest | SET_REPORT:
             BX_DEBUG(("HID: SET_REPORT:"));
-            {
-                goto fail;
-            }
+            if (value == 0x0200) { // 0x02 = Report Type: Output, 0x00 = ID (our keyboard/keypad use an ID of zero)
+                uint8_t modchange = (data[0] ^ hid->s.indicators);
+                if (modchange != 0) {
+                if (modchange & 0x01) {
+                    //DEV_kbd_set_indicator(1, BX_KBD_LED_NUM, data[0] & 0x01);
+                    BX_DEBUG(("NUM_LOCK %s", (data[0] & 0x01) ? "on" : "off"));
+                } else if (hid->device.type == USB_HID_TYPE_KEYBOARD) {
+                    if (modchange & 0x02) {
+                    //DEV_kbd_set_indicator(1, BX_KBD_LED_CAPS, data[0] & 0x02);
+                    BX_DEBUG(("CAPS_LOCK %s", (data[0] & 0x02) ? "on" : "off"));
+                    } else if (modchange & 0x04) {
+                    //DEV_kbd_set_indicator(1, BX_KBD_LED_SCRL, data[0] & 0x04);
+                    BX_DEBUG(("SCRL_LOCK %s", (data[0] & 0x04) ? "on" : "off"));
+                    }
+                }
+                hid->s.indicators = data[0];
+                }
+                ret = 0;
+            } 
             break;
         case InterfaceInClassRequest | GET_IDLE:
             BX_DEBUG(("HID: GET_IDLE:"));
