@@ -127,11 +127,6 @@ struct usb_device_hid {
         uint8_t  mouse_event_count;
         uint8_t  mouse_event_buf[BX_KBD_ELEMENTS][BX_M_ELEMENTS_SIZE];
         int    mouse_event_buf_len[BX_KBD_ELEMENTS];
-        uint8_t  kbd_packet[8];
-        int    kbd_packet_indx;
-        uint8_t  indicators;
-        uint8_t  kbd_event_count;
-        uint32_t kbd_event_buf[BX_KBD_ELEMENTS];
         // the remaining does not get cleared on a handle_reset()
         HID_MODEL    model;
         uint8_t        report_use_id; // id that we will use as soon as the HID report has been requested
@@ -1262,8 +1257,6 @@ usb_hid_handle_reset(usb_device_c *device)
     // HID 1.11, section 7.2.6, page 54(64):
     //  "When initialized, all devices default to report protocol."
     hid->s.boot_protocol = PROTOCOL_REPORT;
-    // next will be byte 2 in the 8 byte packet
-    hid->s.kbd_packet_indx = 1;
 }
 
 void *
@@ -1294,8 +1287,6 @@ usb_hid_device_create(const device_t *info)
     hid->s.report_id     = 0;
     if (hid->device.type == USB_HID_TYPE_MOUSE)
         hid->s.model = hid_mouse_3x3x8; // default model
-    // next will be byte 2 in the 8 byte packet
-    hid->s.kbd_packet_indx = 1;
 
     hid->device.handle_data    = usb_device_hid_handle_data;
     hid->device.handle_control = usb_device_hid_handle_control;
