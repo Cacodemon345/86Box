@@ -1,3 +1,7 @@
+/*  TODO: Investigate properly what the SGI 320 firmware expects after receiving a NAK.
+    Maybe wakeup interrupts? In that case it'd require changing polling to be emulator-driven.
+*/
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>

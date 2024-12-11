@@ -295,5 +295,7 @@ bool usb_device_get_halted(usb_device_c* device, int ep);
 int usb_set_usb_string(uint8_t *buf, const char *str);
 /* Get maximum packet size the device can handle for an endpoint. */
 int usb_device_get_mps(usb_device_c* device, const int ep);
+/* Events to send to the host controller. */
+extern int usb_device_hc_event(usb_device_c* host, int event, usb_device_c *device);
 
 #endif

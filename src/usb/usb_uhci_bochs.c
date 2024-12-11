@@ -1,8 +1,3 @@
-/*  TODO: Investigate NAK behaviour on real PIIX hardware.
-    SGI Visual Workstation 320's firmware expects some very weird unknown behaviour on NAKs
-    that the UHCI spec doesn't clearly specify.
-*/
-
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>
