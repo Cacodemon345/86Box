@@ -913,6 +913,7 @@ usb_hid_kb_device_create(const device_t *info)
 {
     usb_device_hid *hid = calloc(1, sizeof(usb_device_hid));
     usb_port_t* port = usb_search_for_ports();
+    memset(down_keys, 0, sizeof(down_keys));
 
     if (!port) {
         free(hid);
@@ -960,6 +961,7 @@ static void usb_hid_kb_device_close(void* priv)
 {
     free(priv);
     usb_keyboard = NULL;
+    memset(down_keys, 0, sizeof(down_keys));
 }
 
 const device_t usb_keyboard_device = {
