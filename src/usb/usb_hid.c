@@ -91,7 +91,9 @@ typedef enum {
 typedef enum {
     // mice (w/o physical descriptor)
     hid_mouse_2x2x8 = 0,     // 2-button, 2-coords: X and Y coords, 8-bit
-    hid_mouse_3x3x8,         // 3-button, 3-coords: X, Y, and Wheel coords, 8-bit (default)
+    hid_mouse_3x2x8,         // 3-button, 2-coords: X and Y coords, 8-bit
+    hid_mouse_3x3x8,         // 3-button, 3-coords: X, Y, and Wheel coords, 8-bit
+    hid_mouse_5x3x8,         // 5-button, 3-coords: X, Y, and Wheel coords, 8-bit
 
     // keyboards
 
@@ -226,6 +228,44 @@ static const uint8_t bx_mouse_hid_report_descriptor_228[] = {
     0xC0                  // End Collection
 };
 
+// hid_mouse_3x2x8
+// default 3-button, 3-byte, X and Y coords, 8-bit (+ report id)
+// 00000001 (report id)
+// 00000BBB
+// XXXXXXXX
+// YYYYYYYY
+static const uint8_t bx_mouse_hid_report_descriptor_328[] = {
+    0x05, 0x01,           // Usage Page (Generic Desktop Ctrls)
+    0x09, 0x02,           // Usage (Mouse)
+    0xA1, 0x01,           // Collection (Application)
+    0x09, 0x01,           //   Usage (Pointer)
+    0x85, HID_REPORT_ID,  //   Report ID (HID_REPORT_ID)
+    0x89, HID_CLASS_STR4, // Starting String Index (4)
+    0x99, HID_CLASS_STR5, // Ending String Index (5)
+    0xA1, 0x00,           //   Collection (Physical)
+    0x05, 0x09,           //     Usage Page (Button)
+    0x19, 0x01,           //     Usage Minimum (0x01)
+    0x29, 0x02,           //     Usage Maximum (0x03)
+    0x15, 0x00,           //     Logical Minimum (0)
+    0x25, 0x01,           //     Logical Maximum (1)
+    0x95, 0x03,           //     Report Count (3)
+    0x75, 0x01,           //     Report Size (1)
+    0x81, 0x02,           //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x95, 0x01,           //     Report Count (1)
+    0x75, 0x05,           //     Report Size (5)
+    0x81, 0x01,           //     Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x05, 0x01,           //     Usage Page (Generic Desktop Ctrls)
+    0x09, 0x30,           //     Usage (X)
+    0x09, 0x31,           //     Usage (Y)
+    0x95, 0x02,           //     Report Count (2)
+    0x15, 0x80,           //     Logical Minimum (-128)
+    0x25, 0x7F,           //     Logical Maximum (127)
+    0x75, 0x08,           //     Report Size (8)
+    0x81, 0x06,           //     Input (Data,Var,Rel,No Wrap,Linear,Preferred State,No Null Position)
+    0xC0,                 //   End Collection
+    0xC0                  // End Collection
+};
+
 // hid_mouse_3x3x8
 // 3-button, 4-byte X, Y, and Wheel coords, 8-bit
 // 00000BBB
@@ -250,6 +290,44 @@ static const uint8_t bx_mouse_hid_report_descriptor_338[] = {
     0x81, 0x02,           //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
     0x95, 0x01,           //     Report Count (1)
     0x75, 0x05,           //     Report Size (5)
+    0x81, 0x01,           //     Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x05, 0x01,           //     Usage Page (Generic Desktop Ctrls)
+    0x09, 0x30,           //     Usage (X)
+    0x09, 0x31,           //     Usage (Y)
+    0x09, 0x38,           //     Usage (Wheel)
+    0x95, 0x03,           //     Report Count (3)
+    0x15, 0x80,           //     Logical Minimum (-128)
+    0x25, 0x7F,           //     Logical Maximum (127)
+    0x75, 0x08,           //     Report Size (8)
+    0x81, 0x06,           //     Input (Data,Var,Rel,No Wrap,Linear,Preferred State,No Null Position)
+    0xC0,                 //   End Collection
+    0xC0,                 // End Collection
+};
+
+// hid_mouse_5x3x8
+// 5-button, 4-byte X, Y, and Wheel coords, 8-bit
+// 000BBBBB
+// XXXXXXXX
+// YYYYYYYY
+// WWWWWWWW
+static const uint8_t bx_mouse_hid_report_descriptor_538[] = {
+    0x05, 0x01,           // Usage Page (Generic Desktop Ctrls)
+    0x09, 0x02,           // Usage (Mouse)
+    0xA1, 0x01,           // Collection (Application)
+    0x09, 0x01,           //   Usage (Pointer)
+    0x89, HID_CLASS_STR4, // Starting String Index (4)
+    0x99, HID_CLASS_STR5, // Ending String Index (5)
+    0xA1, 0x00,           //   Collection (Physical)
+    0x05, 0x09,           //     Usage Page (Button)
+    0x15, 0x00,           //     Logical Minimum (0)
+    0x25, 0x01,           //     Logical Maximum (1)
+    0x19, 0x01,           //     Usage Minimum (0x01)
+    0x29, 0x05,           //     Usage Maximum (0x05)
+    0x95, 0x05,           //     Report Count (5)
+    0x75, 0x01,           //     Report Size (1)
+    0x81, 0x02,           //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x95, 0x01,           //     Report Count (1)
+    0x75, 0x03,           //     Report Size (3)
     0x81, 0x01,           //     Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
     0x05, 0x01,           //     Usage Page (Generic Desktop Ctrls)
     0x09, 0x30,           //     Usage (X)
@@ -568,7 +646,7 @@ usb_device_hid_create_mouse_packet(usb_device_hid *hid, uint8_t *buf)
 
     // The HID Boot Protocol report is only three bytes long
     if (hid->s.boot_protocol == PROTOCOL_BOOT) {
-        buf[0] = (uint8_t) hid->s.b_state;
+        buf[0] = (uint8_t) hid->s.b_state & 7;
         buf[1] = (int8_t) hid->s.mouse_x;
         buf[2] = (int8_t) hid->s.mouse_y;
         l      = 3;
@@ -581,7 +659,7 @@ usb_device_hid_create_mouse_packet(usb_device_hid *hid, uint8_t *buf)
         }
 
         if (hid->device.type == USB_HID_TYPE_TABLET) {
-            *buf++ = (uint8_t) hid->s.b_state;
+            *buf++ = (uint8_t) hid->s.b_state & 7;
             *buf++ = (uint8_t) (hid->s.mouse_x & 0xff);
             *buf++ = (uint8_t) (hid->s.mouse_x >> 8);
             *buf++ = (uint8_t) (hid->s.mouse_y & 0xff);
@@ -602,6 +680,19 @@ usb_device_hid_create_mouse_packet(usb_device_hid *hid, uint8_t *buf)
                     l += 3;
                     break;
 
+                // 3-button, X and Y, 8-bit
+                // 00000BBB
+                // XXXXXXXX
+                // YYYYYYYY
+                // WWWWWWWW
+                case hid_mouse_3x2x8:
+                    *buf++ = hid->s.b_state & 7;
+                    *buf++ = (int8_t) hid->s.mouse_x;
+                    *buf++ = (int8_t) hid->s.mouse_y;
+                    l += 3;
+                    break;
+
+
                 // 3-button, X, Y, and Wheel coords, 8-bit
                 // 00000BBB
                 // XXXXXXXX
@@ -609,6 +700,19 @@ usb_device_hid_create_mouse_packet(usb_device_hid *hid, uint8_t *buf)
                 // WWWWWWWW
                 case hid_mouse_3x3x8:
                     *buf++ = hid->s.b_state & 7;
+                    *buf++ = (int8_t) hid->s.mouse_x;
+                    *buf++ = (int8_t) hid->s.mouse_y;
+                    *buf++ = (int8_t) hid->s.mouse_z;
+                    l += 4;
+                    break;
+                
+                // 5-button, X, Y, and Wheel coords, 8-bit
+                // 000BBBBB
+                // XXXXXXXX
+                // YYYYYYYY
+                // WWWWWWWW
+                case hid_mouse_5x3x8:
+                    *buf++ = hid->s.b_state & 0x1f;
                     *buf++ = (int8_t) hid->s.mouse_x;
                     *buf++ = (int8_t) hid->s.mouse_y;
                     *buf++ = (int8_t) hid->s.mouse_z;
@@ -1027,6 +1131,12 @@ usb_hid_device_init(usb_device_c* device)
         } else if (hid->s.model == hid_mouse_3x3x8) {
             hid->s.bx_mouse_hid_report_descriptor     = bx_mouse_hid_report_descriptor_338;
             hid->s.bx_mouse_hid_report_descriptor_len = sizeof(bx_mouse_hid_report_descriptor_338);
+        } else if (hid->s.model == hid_mouse_3x2x8) {
+            hid->s.bx_mouse_hid_report_descriptor     = bx_mouse_hid_report_descriptor_328;
+            hid->s.bx_mouse_hid_report_descriptor_len = sizeof(bx_mouse_hid_report_descriptor_328);
+        } else if (hid->s.model == hid_mouse_5x3x8) {
+            hid->s.bx_mouse_hid_report_descriptor     = bx_mouse_hid_report_descriptor_538;
+            hid->s.bx_mouse_hid_report_descriptor_len = sizeof(bx_mouse_hid_report_descriptor_538);
         }
         // update the hid descriptor length fields
         *(uint16_t *) &bx_mouse_config_descriptor0[BX_Mouse_Config_Descriptor0_pos] = *(uint16_t *) &bx_mouse_config_descriptor1[BX_Mouse_Config_Descriptor1_pos] = *(uint16_t *) &bx_mouse_hid_descriptor0[BX_Mouse_Hid_Descriptor0] = *(uint16_t *) &bx_mouse_hid_descriptor1[BX_Mouse_Hid_Descriptor1] = hid->s.bx_mouse_hid_report_descriptor_len;
@@ -1074,8 +1184,9 @@ usb_hid_device_create(const device_t *info)
     //  "When initialized, all devices default to report protocol."
     hid->s.boot_protocol = PROTOCOL_REPORT;
     hid->s.report_id     = 0;
-    if (hid->device.type == USB_HID_TYPE_MOUSE)
-        hid->s.model = hid_mouse_3x3x8; // default model
+    if (hid->device.type == USB_HID_TYPE_MOUSE) {
+        hid->s.model = (HID_MODEL)device_get_config_int("buttons"); // default model
+    }
 
     hid->device.handle_data    = usb_device_hid_handle_data;
     hid->device.handle_control = usb_device_hid_handle_control;
@@ -1085,7 +1196,7 @@ usb_hid_device_create(const device_t *info)
     timer_add(&hid->idle_timer, usb_device_hid_idle_timer, hid, 0);
 
     mouse_set_poll(usb_hid_poll_wrapper, hid);
-    mouse_set_buttons(4);
+    mouse_set_buttons((hid->s.model == hid_mouse_2x2x8) ? 2 : ((hid->s.model == hid_mouse_3x2x8) ? 3 : ((hid->s.model == hid_mouse_3x3x8) ? 4 : ((hid->s.model == hid_mouse_5x3x8) ? 5 : 4))));
     mouse_set_sample_rate(-1);
 
     if (!port->connect(port, &hid->device)) {
@@ -1101,6 +1212,30 @@ static void usb_hid_device_close(void* priv)
     free(priv);
 }
 
+static const device_config_t usb_mouse_config[] = {
+  // clang-format off
+    {
+        .name = "buttons",
+        .description = "Buttons",
+        .type = CONFIG_SELECTION,
+        .default_string = "",
+        .default_int = hid_mouse_3x3x8,
+        .file_filter = "",
+        .spinner = { 0 },
+        .selection = {
+            { .description = "Two",          .value = hid_mouse_2x2x8 },
+            { .description = "Three",        .value = hid_mouse_3x2x8 },
+            { .description = "Wheel",        .value = hid_mouse_3x3x8 },
+            { .description = "Five + Wheel", .value = hid_mouse_5x3x8 },
+            { .description = ""                                       }
+        }
+    },
+    {
+        .name = "", .description = "", .type = CONFIG_END
+    }
+  // clang-format on
+};
+
 const device_t mouse_usb_mouse_device = {
     .name          = "USB Mouse",
     .internal_name = "usb_mouse",
@@ -1112,5 +1247,5 @@ const device_t mouse_usb_mouse_device = {
     { .available = NULL },
     .speed_changed = NULL,
     .force_redraw  = NULL,
-    .config        = NULL
+    .config        = usb_mouse_config
 };
