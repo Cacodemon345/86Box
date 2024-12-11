@@ -29,12 +29,9 @@ enum {
 #define USB_RET_IOERROR (-5)
 #define USB_RET_ASYNC   (-6)
 
-// these must remain in this order, 0 -> 3
 enum {
   USB_SPEED_LOW   = 0,
   USB_SPEED_FULL  = 1,
-  USB_SPEED_HIGH  = 2,
-  USB_SPEED_SUPER = 3
 };
 
 enum {

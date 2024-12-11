@@ -257,10 +257,6 @@ usb_uhci_set_connect_status(bx_uhci_core_t *hub, uint8_t port, bool connected)
                 case USB_SPEED_FULL:
                     hub->usb_port[port].low_speed = 0;
                     break;
-                case USB_SPEED_HIGH:
-                case USB_SPEED_SUPER:
-                    BX_ERROR(("HC ignores device with unsupported speed"));
-                    return 0;
                 default:
                     BX_PANIC(("USB device returned invalid speed value"));
                     return 0;

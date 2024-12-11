@@ -490,11 +490,7 @@ int usb_device_handle_packet(usb_device_c* device, USBPacket *p)
           mps = 8;
           break;
         case USB_SPEED_FULL:
-        case USB_SPEED_HIGH:
           mps = 64;
-          break;
-        case USB_SPEED_SUPER:
-          mps = 512;
           break;
       }
       if (!device->first8 && ((device->setup_len != mps) || (device->setup_buf[0] != (USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_DEVICE)) || 

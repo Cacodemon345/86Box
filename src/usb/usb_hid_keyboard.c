@@ -922,7 +922,7 @@ usb_hid_kb_device_create(const device_t *info)
     usb_device_create(&hid->device);
     hid->device.type     = USB_HID_TYPE_KEYBOARD;
     hid->device.minspeed = USB_SPEED_LOW;
-    hid->device.maxspeed = USB_SPEED_HIGH;
+    hid->device.maxspeed = USB_SPEED_FULL;
     hid->device.speed    = hid->device.minspeed;
 
     hid->device.vendor_desc  = "86Box";

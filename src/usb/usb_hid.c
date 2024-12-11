@@ -92,9 +92,7 @@ typedef enum {
     // mice (w/o physical descriptor)
     hid_mouse_2x2x8 = 0,     // 2-button, 2-coords: X and Y coords, 8-bit
     hid_mouse_3x3x8,         // 3-button, 3-coords: X, Y, and Wheel coords, 8-bit (default)
-    hid_mouse_3x3x12,        // 3-button, 3-coords: X, Y, and Wheel coords, 12-bit
-    hid_mouse_3x3x16,        // 3-button, 3-coords: X, Y, and Wheel coords, 16-bit
-                             // mice (w/ physical descriptor)
+
     // keyboards
 
     // keypads
@@ -187,26 +185,6 @@ static const uint8_t bx_mouse_dev_descriptor[] = {
     0x01  /*  u8  bNumConfigurations; */
 };
 
-static const uint8_t bx_mouse_dev_descriptor2[] = {
-    0x12,       /*  u8 bLength; */
-    0x01,       /*  u8 bDescriptorType; Device */
-    0x00, 0x02, /*  u16 bcdUSB; v2.0 */
-
-    0x00, /*  u8  bDeviceClass; */
-    0x00, /*  u8  bDeviceSubClass; */
-    0x00, /*  u8  bDeviceProtocol; */
-    0x40, /*  u8  bMaxPacketSize; 64 Bytes */
-
-    0x27, 0x06, /*  u16 idVendor; */
-    0x01, 0x00, /*  u16 idProduct; */
-    0x00, 0x00, /*  u16 bcdDevice */
-
-    0x01, /*  u8  iManufacturer; */
-    0x02, /*  u8  iProduct; */
-    0x03, /*  u8  iSerialNumber; */
-    0x01  /*  u8  bNumConfigurations; */
-};
-
 // The following hid report descriptors are for the mouse/tablet
 //  depending on the model given.
 
@@ -285,92 +263,6 @@ static const uint8_t bx_mouse_hid_report_descriptor_338[] = {
     0xC0,                 //   End Collection
     0xC0,                 // End Collection
 };
-
-// hid_mouse_3x3x12
-// 3-button, 5-byte X, Y, and Wheel coords, 12-bit
-// 00000BBB
-// XXXXXXXX (lsb)
-// YYYYXXXX (lsb of y, msb of x)
-// YYYYYYYY (msb)
-// WWWWWWWW
-static const uint8_t bx_mouse_hid_report_descriptor_3312[] = {
-    0x05, 0x01,       // Usage Page (Generic Desktop Ctrls)
-    0x09, 0x02,       // Usage (Mouse)
-    0xA1, 0x01,       // Collection (Application)
-    0x09, 0x01,       //   Usage (Pointer)
-    0xA1, 0x00,       //   Collection (Physical)
-    0x05, 0x09,       //     Usage Page (Button)
-    0x19, 0x01,       //     Usage Minimum (0x01)
-    0x29, 0x03,       //     Usage Maximum (0x03)
-    0x15, 0x00,       //     Logical Minimum (0)
-    0x25, 0x01,       //     Logical Maximum (1)
-    0x95, 0x03,       //     Report Count (3)
-    0x75, 0x01,       //     Report Size (1)
-    0x81, 0x02,       //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x95, 0x01,       //     Report Count (1)
-    0x75, 0x05,       //     Report Size (5)
-    0x81, 0x01,       //     Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x05, 0x01,       //     Usage Page (Generic Desktop Ctrls)
-    0x09, 0x30,       //     Usage (X)
-    0x09, 0x31,       //     Usage (Y)
-    0x95, 0x02,       //     Report Count (2)
-    0x16, 0x00, 0xF8, //     Logical Minimum (-2048)
-    0x26, 0xFF, 0x07, //     Logical Maximum (2047)
-    0x75, 0x0C,       //     Report Size (12)
-    0x81, 0x06,       //     Input (Data,Var,Rel,No Wrap,Linear,Preferred State,No Null Position)
-    0x09, 0x38,       //     Usage (Wheel)
-    0x95, 0x01,       //     Report Count (1)
-    0x15, 0x80,       //     Logical Minimum (-128)
-    0x25, 0x7F,       //     Logical Maximum (127)
-    0x75, 0x08,       //     Report Size (8)
-    0x81, 0x06,       //     Input (Data,Var,Rel,No Wrap,Linear,Preferred State,No Null Position)
-    0xC0,             //   End Collection
-    0xC0,             // End Collection
-};
-
-// hid_mouse_3x3x16
-// 3-button, 6-byte X, Y, and Wheel coords, 16-bit
-// 00000BBB
-// XXXXXXXX  (lsb)
-// XXXXXXXX  (msb)
-// YYYYYYYY  (lsb)
-// YYYYYYYY  (msb)
-// WWWWWWWW
-static const uint8_t bx_mouse_hid_report_descriptor_3316[] = {
-    0x05, 0x01,       // Usage Page (Generic Desktop Ctrls)
-    0x09, 0x02,       // Usage (Mouse)
-    0xA1, 0x01,       // Collection (Application)
-    0x09, 0x01,       //   Usage (Pointer)
-    0xA1, 0x00,       //   Collection (Physical)
-    0x05, 0x09,       //     Usage Page (Button)
-    0x19, 0x01,       //     Usage Minimum (0x01)
-    0x29, 0x03,       //     Usage Maximum (0x03)
-    0x15, 0x00,       //     Logical Minimum (0)
-    0x25, 0x01,       //     Logical Maximum (1)
-    0x95, 0x03,       //     Report Count (3)
-    0x75, 0x01,       //     Report Size (1)
-    0x81, 0x02,       //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x95, 0x01,       //     Report Count (1)
-    0x75, 0x05,       //     Report Size (5)
-    0x81, 0x01,       //     Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x05, 0x01,       //     Usage Page (Generic Desktop Ctrls)
-    0x09, 0x30,       //     Usage (X)
-    0x09, 0x31,       //     Usage (Y)
-    0x95, 0x02,       //     Report Count (2)
-    0x16, 0x00, 0x80, //     Logical Minimum (-32768)
-    0x26, 0xFF, 0x7F, //     Logical Maximum (32767)
-    0x75, 0x10,       //     Report Size (16)
-    0x81, 0x06,       //     Input (Data,Var,Rel,No Wrap,Linear,Preferred State,No Null Position)
-    0x09, 0x38,       //     Usage (Wheel)
-    0x95, 0x01,       //     Report Count (1)
-    0x15, 0x80,       //     Logical Minimum (-128)
-    0x25, 0x7F,       //     Logical Maximum (127)
-    0x75, 0x08,       //     Report Size (8)
-    0x81, 0x06,       //     Input (Data,Var,Rel,No Wrap,Linear,Preferred State,No Null Position)
-    0xC0,             //   End Collection
-    0xC0,             // End Collection
-};
-
 
 // standard low-, full-speed configuration (w/o physical descriptor)
 // (this define must be the zero based byte offset of the HID length field below)
@@ -488,53 +380,6 @@ static uint8_t bx_mouse_config_descriptor1[] = {
     0x03,       /*  u8  ep_bmAttributes; Interrupt */
     0x08, 0x00, /*  u16 ep_wMaxPacketSize; */
     0x0a,       /*  u8  ep_bInterval; (0 - 255ms -- usb 2.0 spec) */
-};
-
-// standard high-speed configuration (w/o physical descriptor)
-// (this define must be the zero based byte offset of the HID length field below)
-#define BX_Mouse_Config_Descriptor2_pos 25
-static uint8_t bx_mouse_config_descriptor2[] = {
-    /* one configuration */
-    0x09,       /*  u8  bLength; */
-    0x02,       /*  u8  bDescriptorType; Configuration */
-    0x25, 0x00, /*  u16 wTotalLength; */
-    0x01,       /*  u8  bNumInterfaces; (1) */
-    0x01,       /*  u8  bConfigurationValue; */
-    0x04,       /*  u8  iConfiguration; */
-    0xa0,       /*  u8  bmAttributes;
-                           Bit 7: must be set,
-                               6: Self-powered,
-                               5: Remote wakeup,
-                               4..0: resvd */
-    50,         /*  u8  MaxPower; */
-
-    /* one interface */
-    0x09, /*  u8  if_bLength; */
-    0x04, /*  u8  if_bDescriptorType; Interface */
-    0x00, /*  u8  if_bInterfaceNumber; */
-    0x00, /*  u8  if_bAlternateSetting; */
-    0x01, /*  u8  if_bNumEndpoints; */
-    0x03, /*  u8  if_bInterfaceClass; */
-    0x01, /*  u8  if_bInterfaceSubClass; */
-    0x02, /*  u8  if_bInterfaceProtocol; */
-    0x05, /*  u8  if_iInterface; */
-
-    /* HID descriptor */
-    0x09,       /*  u8  bLength; */
-    0x21,       /*  u8 bDescriptorType; */
-    0x01, 0x01, /*  u16 HID_class (0x0101) */
-    0x00,       /*  u8 country_code */
-    0x01,       /*  u8 num_descriptors */
-    0x22,       /*  u8 type; Report */
-    0x00, 0x00, /*  u16 len (updated on the fly) */
-
-    /* one endpoint */
-    0x07,       /*  u8  ep_bLength; */
-    0x05,       /*  u8  ep_bDescriptorType; Endpoint */
-    0x81,       /*  u8  ep_bEndpointAddress; IN Endpoint 1 */
-    0x03,       /*  u8  ep_bmAttributes; Interrupt */
-    0x08, 0x00, /*  u16 ep_wMaxPacketSize; */
-    0x07,       /*  u8  ep_bInterval; (2 ^ (8-1) * 125 usecs = 8 ms) */
 };
 
 // standard hid descriptor (w/o physical descriptor)
@@ -770,37 +615,6 @@ usb_device_hid_create_mouse_packet(usb_device_hid *hid, uint8_t *buf)
                     l += 4;
                     break;
 
-                // 3-button, X, Y, and Wheel coords, 12-bit
-                // 00000BBB
-                // XXXXXXXX (lsb)
-                // YYYYXXXX (lsb of y, msb of x)
-                // YYYYYYYY (msb)
-                // WWWWWWWW
-                case hid_mouse_3x3x12:
-                    *buf++ = hid->s.b_state & 7;
-                    *buf++ = (uint8_t) ((uint16_t) hid->s.mouse_x & 0xFF);
-                    *buf++ = (uint8_t) ((((uint16_t) hid->s.mouse_x >> 8) & 0x0F) | (((uint16_t) hid->s.mouse_y & 0x0F) << 4));
-                    *buf++ = (uint8_t) (((uint16_t) hid->s.mouse_y >> 4) & 0xFF);
-                    *buf++ = (int8_t) hid->s.mouse_z;
-                    l += 5;
-                    break;
-
-                // 3-button, X, Y, and Wheel coords, 16-bit
-                // 00000BBB
-                // XXXXXXXX  (lsb)
-                // XXXXXXXX  (msb)
-                // YYYYYYYY  (lsb)
-                // YYYYYYYY  (msb)
-                // WWWWWWWW
-                case hid_mouse_3x3x16:
-                    *buf++ = hid->s.b_state & 7;
-                    *buf++ = (uint8_t) ((uint16_t) hid->s.mouse_x & 0xFF);
-                    *buf++ = (uint8_t) ((uint16_t) hid->s.mouse_x >> 8) & 0xFF;
-                    *buf++ = (uint8_t) ((uint16_t) hid->s.mouse_y & 0xFF);
-                    *buf++ = (uint8_t) ((uint16_t) hid->s.mouse_y >> 8) & 0xFF;
-                    *buf++ = (int8_t) hid->s.mouse_z;
-                    l += 6;
-                    break;
             }
             hid->s.mouse_x = 0;
             hid->s.mouse_y = 0;
@@ -1191,38 +1005,20 @@ usb_hid_device_init(usb_device_c* device)
 {
     usb_device_hid *hid = (usb_device_hid *) device;
     if ((hid->device.type == USB_HID_TYPE_MOUSE) || (hid->device.type == USB_HID_TYPE_TABLET)) {
-        if (hid->device.speed == USB_SPEED_HIGH) {
-            hid->device.dev_descriptor                                = bx_mouse_dev_descriptor2;
-            hid->device.device_desc_size                              = sizeof(bx_mouse_dev_descriptor2);
-            hid->device.endpoint_info[USB_CONTROL_EP].max_packet_size = 64; // Control ep0
-            hid->device.endpoint_info[USB_CONTROL_EP].max_burst_size  = 0;
-            hid->device.endpoint_info[1].max_packet_size              = 8; // In ep1
-            hid->device.endpoint_info[1].max_burst_size               = 0;
-        } else {
-            hid->device.dev_descriptor                                = bx_mouse_dev_descriptor;
-            hid->device.device_desc_size                              = sizeof(bx_mouse_dev_descriptor);
-            hid->device.endpoint_info[USB_CONTROL_EP].max_packet_size = 8; // Control ep0
-            hid->device.endpoint_info[USB_CONTROL_EP].max_burst_size  = 0;
-            hid->device.endpoint_info[1].max_packet_size              = 8; // In ep1
-            hid->device.endpoint_info[1].max_burst_size               = 0;
-        }
+        hid->device.dev_descriptor                                = bx_mouse_dev_descriptor;
+        hid->device.device_desc_size                              = sizeof(bx_mouse_dev_descriptor);
+        hid->device.endpoint_info[USB_CONTROL_EP].max_packet_size = 8; // Control ep0
+        hid->device.endpoint_info[USB_CONTROL_EP].max_burst_size  = 0;
+        hid->device.endpoint_info[1].max_packet_size              = 8; // In ep1
+        hid->device.endpoint_info[1].max_burst_size               = 0;
+        
         if (hid->device.type == USB_HID_TYPE_MOUSE) {
-            if (hid->device.speed == USB_SPEED_HIGH) {
-                hid->device.config_descriptor = bx_mouse_config_descriptor2;
-                hid->device.config_desc_size  = sizeof(bx_mouse_config_descriptor2);
-            } else {
-                hid->device.config_descriptor = bx_mouse_config_descriptor0;
-                hid->device.config_desc_size  = sizeof(bx_mouse_config_descriptor0);
-            }
+            hid->device.config_descriptor = bx_mouse_config_descriptor0;
+            hid->device.config_desc_size  = sizeof(bx_mouse_config_descriptor0);
         } else {
             // Tablet
-            if (hid->device.speed == USB_SPEED_HIGH) {
-                hid->device.config_descriptor = bx_tablet_config_descriptor2;
-                hid->device.config_desc_size  = sizeof(bx_tablet_config_descriptor2);
-            } else {
-                hid->device.config_descriptor = bx_tablet_config_descriptor;
-                hid->device.config_desc_size  = sizeof(bx_tablet_config_descriptor);
-            }
+            hid->device.config_descriptor = bx_tablet_config_descriptor;
+            hid->device.config_desc_size  = sizeof(bx_tablet_config_descriptor);
         }
         // initialize the correct hid descriptor
         if (hid->s.model == hid_mouse_2x2x8) {
@@ -1231,15 +1027,9 @@ usb_hid_device_init(usb_device_c* device)
         } else if (hid->s.model == hid_mouse_3x3x8) {
             hid->s.bx_mouse_hid_report_descriptor     = bx_mouse_hid_report_descriptor_338;
             hid->s.bx_mouse_hid_report_descriptor_len = sizeof(bx_mouse_hid_report_descriptor_338);
-        } else if (hid->s.model == hid_mouse_3x3x12) {
-            hid->s.bx_mouse_hid_report_descriptor     = bx_mouse_hid_report_descriptor_3312;
-            hid->s.bx_mouse_hid_report_descriptor_len = sizeof(bx_mouse_hid_report_descriptor_3312);
-        } else if (hid->s.model == hid_mouse_3x3x16) {
-            hid->s.bx_mouse_hid_report_descriptor     = bx_mouse_hid_report_descriptor_3316;
-            hid->s.bx_mouse_hid_report_descriptor_len = sizeof(bx_mouse_hid_report_descriptor_3316);
         }
         // update the hid descriptor length fields
-        *(uint16_t *) &bx_mouse_config_descriptor0[BX_Mouse_Config_Descriptor0_pos] = *(uint16_t *) &bx_mouse_config_descriptor1[BX_Mouse_Config_Descriptor1_pos] = *(uint16_t *) &bx_mouse_config_descriptor2[BX_Mouse_Config_Descriptor2_pos] = *(uint16_t *) &bx_mouse_hid_descriptor0[BX_Mouse_Hid_Descriptor0] = *(uint16_t *) &bx_mouse_hid_descriptor1[BX_Mouse_Hid_Descriptor1] = hid->s.bx_mouse_hid_report_descriptor_len;
+        *(uint16_t *) &bx_mouse_config_descriptor0[BX_Mouse_Config_Descriptor0_pos] = *(uint16_t *) &bx_mouse_config_descriptor1[BX_Mouse_Config_Descriptor1_pos] = *(uint16_t *) &bx_mouse_hid_descriptor0[BX_Mouse_Hid_Descriptor0] = *(uint16_t *) &bx_mouse_hid_descriptor1[BX_Mouse_Hid_Descriptor1] = hid->s.bx_mouse_hid_report_descriptor_len;
     }
 
     hid->device.connected     = 1;
@@ -1272,7 +1062,7 @@ usb_hid_device_create(const device_t *info)
     usb_device_create(&hid->device);
     hid->device.type     = USB_HID_TYPE_MOUSE;
     hid->device.minspeed = USB_SPEED_LOW;
-    hid->device.maxspeed = USB_SPEED_HIGH;
+    hid->device.maxspeed = USB_SPEED_FULL;
     hid->device.speed    = hid->device.minspeed;
 
     hid->device.vendor_desc  = "86Box";
