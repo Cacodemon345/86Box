@@ -416,8 +416,7 @@ static uint8_t bx_mouse_config_descriptor0[] = {
     0x81,       /*  u8  ep_bEndpointAddress; IN Endpoint 1 */
     0x03,       /*  u8  ep_bmAttributes; Interrupt */
     0x08, 0x00, /*  u16 ep_wMaxPacketSize; */
-    0x0A,       /*  u8  ep_bInterval; (10 - 255ms -- usb 2.0 spec, 5.7.4) */
-                /*           however: (11 - 255ms -- usb 2.0 compliance 1.2.84, pg 11 */
+    0x04,       /*  u8  ep_bInterval; */
 };
 
 #define HID_PHYS_DESC_SET_LEN 7
