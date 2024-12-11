@@ -621,9 +621,8 @@ int usb_device_hid_keyboard_poll(usb_device_hid *hid, uint8_t *buf, bool force)
         }
       }
       memcpy(buf, hid->s.kbd_packet, 8);
-      pclog("Keyboard buffer (hex): %02X %02X %02X %02X %02X %02X %02X %02X\n", hid->s.kbd_packet[0], hid->s.kbd_packet[1], hid->s.kbd_packet[2], hid->s.kbd_packet[3],
-                                                                                hid->s.kbd_packet[4], hid->s.kbd_packet[5], hid->s.kbd_packet[6], hid->s.kbd_packet[7]);
       usb_device_hid_kb_start_timer(hid);
+      hid->s.has_events = 0;
       return 8;
     }
   }
@@ -797,6 +796,8 @@ usb_device_hid_kb_handle_control(usb_device_c *device, int request, int value, i
             }
             if ((value & 0xFF) == hid->s.report_id) {
                 hid->s.idle = (value >> 8);
+                if (hid->s.idle == 0)
+                    pclog("Idle disabled\n");
                 usb_device_hid_kb_start_timer(hid);
                 ret = 0;
             } else {
@@ -847,6 +848,7 @@ int
 usb_device_hid_kb_handle_data(usb_device_c *device, USBPacket *p)
 {
     int ret = 0;
+    usb_device_hid *hid = (usb_device_hid *) device;
 
     // check that the length is <= the max packet size of the device
     if (p->len > usb_device_get_mps(device, p->devep)) {
@@ -858,7 +860,7 @@ usb_device_hid_kb_handle_data(usb_device_c *device, USBPacket *p)
             if (p->devep == 1) {
                 if (device->type == USB_HID_TYPE_KEYBOARD) {
                     //ret = usb_mouse_poll((usb_device_hid *) device, p->data, 1);
-                    ret = usb_device_hid_keyboard_poll((usb_device_hid *) device, p->data, 1);
+                    ret = usb_device_hid_keyboard_poll((usb_device_hid *) device, p->data, (hid->s.kbd_event_read != hid->s.kbd_event_write) || (hid->s.kbd_event_count) || (hid->s.has_events));
                 } else {
                     goto fail;
                 }
