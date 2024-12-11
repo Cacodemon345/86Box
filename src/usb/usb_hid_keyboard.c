@@ -64,8 +64,6 @@ typedef struct usb_device_hid usb_device_hid;
 static usb_device_hid* usb_keyboard;
 
 /* supported HID device types */
-#define USB_HID_TYPE_MOUSE    0
-#define USB_HID_TYPE_TABLET   1
 #define USB_HID_TYPE_KEYPAD   2
 #define USB_HID_TYPE_KEYBOARD 3
 
@@ -607,14 +605,13 @@ int usb_device_hid_keyboard_poll(usb_device_hid *hid, uint8_t *buf, bool force)
   if ((hid->device.type == USB_HID_TYPE_KEYPAD) ||
       (hid->device.type == USB_HID_TYPE_KEYBOARD)) {
     if (hid->s.has_events || force) {
-      memcpy(buf, hid->s.kbd_packet, 8);
-      l = 8;
-      hid->s.has_events = 0;
-      while (hid->s.kbd_event_read != hid->s.kbd_event_write) {
-        if (hid->s.kbd_event_count >= 255)
-            break;
-        hid->s.kbd_event_buf[hid->s.kbd_event_count++] = hid->s.kbd_events[hid->s.kbd_event_read & 0xFF];
-        hid->s.kbd_event_read++;
+      if (hid->s.kbd_event_read != hid->s.kbd_event_write) {
+        while (hid->s.kbd_event_read != hid->s.kbd_event_write) {
+            if (hid->s.kbd_event_count >= 255)
+                break;
+            hid->s.kbd_event_buf[hid->s.kbd_event_count++] = hid->s.kbd_events[hid->s.kbd_event_read & 0xFF];
+            hid->s.kbd_event_read++;
+        }
       }
       if (hid->s.kbd_event_count > 0) {
         usb_device_keyboard_gen_scancode(hid, hid->s.kbd_event_buf[0]);
@@ -623,7 +620,11 @@ int usb_device_hid_keyboard_poll(usb_device_hid *hid, uint8_t *buf, bool force)
           hid->s.kbd_event_buf[i] = hid->s.kbd_event_buf[i + 1];
         }
       }
+      memcpy(buf, hid->s.kbd_packet, 8);
+      pclog("Keyboard buffer (hex): %02X %02X %02X %02X %02X %02X %02X %02X\n", hid->s.kbd_packet[0], hid->s.kbd_packet[1], hid->s.kbd_packet[2], hid->s.kbd_packet[3],
+                                                                                hid->s.kbd_packet[4], hid->s.kbd_packet[5], hid->s.kbd_packet[6], hid->s.kbd_packet[7]);
       usb_device_hid_kb_start_timer(hid);
+      return 8;
     }
   }
 
@@ -855,10 +856,9 @@ usb_device_hid_kb_handle_data(usb_device_c *device, USBPacket *p)
     switch (p->pid) {
         case USB_TOKEN_IN:
             if (p->devep == 1) {
-                if ((device->type == USB_HID_TYPE_MOUSE) || (device->type == USB_HID_TYPE_TABLET)) {
-                    //pclog("USB MOUSE POLLING\n");
+                if (device->type == USB_HID_TYPE_KEYBOARD) {
                     //ret = usb_mouse_poll((usb_device_hid *) device, p->data, 1);
-                    ret = usb_device_hid_keyboard_poll((usb_device_hid *) device, p->data, 0);
+                    ret = usb_device_hid_keyboard_poll((usb_device_hid *) device, p->data, 1);
                 } else {
                     goto fail;
                 }
