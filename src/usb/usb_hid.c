@@ -718,185 +718,6 @@ static const uint8_t bx_tablet_hid_descriptor[] = {
     0x00, /*  u16 len */
 };
 
-////////////////////////////////////////////////
-// keyboard/keypad
-static const uint8_t bx_keypad_hid_report_descriptor[] = {
-    0x05, 0x01,       // Usage Page (Generic Desktop Ctrls)
-    0x09, 0x06,       // Usage (Keyboard)
-    0xA1, 0x01,       // Collection (Application)
-    0x05, 0x07,       //   Usage Page (Kbrd/Keypad)
-    0x19, 0xE0,       //   Usage Minimum (Keyboard Left Control)
-    0x29, 0xE7,       //   Usage Maximum (Keyboard Right GUI)
-    0x15, 0x00,       //   Logical Minimum (0)
-    0x25, 0x01,       //   Logical Maximum (1)
-    0x75, 0x01,       //   Report Size (1)
-    0x95, 0x08,       //   Report Count (8)
-    0x81, 0x02,       //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x95, 0x01,       //   Report Count (1)
-    0x75, 0x08,       //   Report Size (8)
-    0x81, 0x01,       //   Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x95, 0x03,       //   Report Count (3)
-    0x75, 0x01,       //   Report Size (1)
-    0x05, 0x08,       //   Usage Page (LEDs)
-    0x19, 0x01,       //   Usage Minimum (Num Lock)
-    0x29, 0x03,       //   Usage Maximum (Scroll Lock)
-    0x91, 0x02,       //   Output (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position,Non-volatile)
-    0x95, 0x05,       //   Report Count (5)
-    0x75, 0x01,       //   Report Size (1)
-    0x91, 0x01,       //   Output (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position,Non-volatile)
-    0x95, 0x06,       //   Report Count (6)
-    0x75, 0x08,       //   Report Size (8)
-    0x15, 0x00,       //   Logical Minimum (0)
-    0x26, 0xFF, 0x00, //   Logical Maximum (255)
-    0x05, 0x07,       //   Usage Page (Kbrd/Keypad)
-    0x19, 0x00,       //   Usage Minimum (0)
-    0x29, 0xE7,       //   Usage Maximum (Keyboard Right GUI)
-    0x81, 0x00,       //   Input (Data,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0xC0,             // End Collection
-};
-
-static const uint8_t bx_keypad_dev_descriptor[] = {
-    0x12,       /*  u8 bLength; */
-    0x01,       /*  u8 bDescriptorType; Device */
-    0x01, 0x01, /*  u16 bcdUSB; v1.1 */
-
-    0x00, /*  u8  bDeviceClass; */
-    0x00, /*  u8  bDeviceSubClass; */
-    0x00, /*  u8  bDeviceProtocol; */
-    0x08, /*  u8  bMaxPacketSize; 8 Bytes */
-
-    0xB4, 0x04, /*  u16 idVendor; */
-    0x01, 0x01, /*  u16 idProduct; */
-    0x01, 0x00, /*  u16 bcdDevice */
-
-    0x01, /*  u8  iManufacturer; */
-    0x02, /*  u8  iProduct; */
-    0x03, /*  u8  iSerialNumber; */
-    0x01  /*  u8  bNumConfigurations; */
-};
-
-static const uint8_t bx_keypad_dev_descriptor2[] = {
-    0x12,       /*  u8 bLength; */
-    0x01,       /*  u8 bDescriptorType; Device */
-    0x00, 0x02, /*  u16 bcdUSB; v2.0 */
-
-    0x00, /*  u8  bDeviceClass; */
-    0x00, /*  u8  bDeviceSubClass; */
-    0x00, /*  u8  bDeviceProtocol; */
-    0x40, /*  u8  bMaxPacketSize; 64 Bytes */
-
-    0xB4, 0x04, /*  u16 idVendor; */
-    0x01, 0x01, /*  u16 idProduct; */
-    0x01, 0x00, /*  u16 bcdDevice */
-
-    0x01, /*  u8  iManufacturer; */
-    0x02, /*  u8  iProduct; */
-    0x03, /*  u8  iSerialNumber; */
-    0x01  /*  u8  bNumConfigurations; */
-};
-
-static const uint8_t bx_keypad_config_descriptor[] = {
-    /* one configuration */
-    0x09,       /*  u8  bLength; */
-    0x02,       /*  u8  bDescriptorType; Configuration */
-    0x22, 0x00, /*  u16 wTotalLength; */
-    0x01,       /*  u8  bNumInterfaces; (1) */
-    0x01,       /*  u8  bConfigurationValue; */
-    0x04,       /*  u8  iConfiguration; */
-    0xa0,       /*  u8  bmAttributes;
-                           Bit 7: must be set,
-                               6: Self-powered,
-                               5: Remote wakeup,
-                               4..0: resvd */
-    50,         /*  u8  MaxPower; */
-
-    /* one interface */
-    0x09, /*  u8  if_bLength; */
-    0x04, /*  u8  if_bDescriptorType; Interface */
-    0x00, /*  u8  if_bInterfaceNumber; */
-    0x00, /*  u8  if_bAlternateSetting; */
-    0x01, /*  u8  if_bNumEndpoints; */
-    0x03, /*  u8  if_bInterfaceClass; */
-    0x01, /*  u8  if_bInterfaceSubClass; */
-    0x01, /*  u8  if_bInterfaceProtocol; */
-    0x05, /*  u8  if_iInterface; */
-
-    /* HID descriptor */
-    0x09,       /*  u8  bLength; */
-    0x21,       /*  u8 bDescriptorType; */
-    0x01, 0x01, /*  u16 HID_class (0x0101) */
-    0x00,       /*  u8 country_code */
-    0x01,       /*  u8 num_descriptors */
-    0x22,       /*  u8 type; Report */
-    sizeof(bx_keypad_hid_report_descriptor),
-    0x00, /*  u16 len */
-
-    /* one endpoint (status change endpoint) */
-    0x07,       /*  u8  ep_bLength; */
-    0x05,       /*  u8  ep_bDescriptorType; Endpoint */
-    0x81,       /*  u8  ep_bEndpointAddress; IN Endpoint 1 */
-    0x03,       /*  u8  ep_bmAttributes; Interrupt */
-    0x08, 0x00, /*  u16 ep_wMaxPacketSize; */
-    0x0a,       /*  u8  ep_bInterval; (255ms -- usb 2.0 spec) */
-};
-
-static const uint8_t bx_keypad_config_descriptor2[] = {
-    /* one configuration */
-    0x09,       /*  u8  bLength; */
-    0x02,       /*  u8  bDescriptorType; Configuration */
-    0x22, 0x00, /*  u16 wTotalLength; */
-    0x01,       /*  u8  bNumInterfaces; (1) */
-    0x01,       /*  u8  bConfigurationValue; */
-    0x04,       /*  u8  iConfiguration; */
-    0xa0,       /*  u8  bmAttributes;
-                           Bit 7: must be set,
-                               6: Self-powered,
-                               5: Remote wakeup,
-                               4..0: resvd */
-    50,         /*  u8  MaxPower; */
-
-    /* one interface */
-    0x09, /*  u8  if_bLength; */
-    0x04, /*  u8  if_bDescriptorType; Interface */
-    0x00, /*  u8  if_bInterfaceNumber; */
-    0x00, /*  u8  if_bAlternateSetting; */
-    0x01, /*  u8  if_bNumEndpoints; */
-    0x03, /*  u8  if_bInterfaceClass; */
-    0x01, /*  u8  if_bInterfaceSubClass; */
-    0x01, /*  u8  if_bInterfaceProtocol; */
-    0x05, /*  u8  if_iInterface; */
-
-    /* HID descriptor */
-    0x09,       /*  u8  bLength; */
-    0x21,       /*  u8 bDescriptorType; */
-    0x01, 0x01, /*  u16 HID_class (0x0101) */
-    0x00,       /*  u8 country_code */
-    0x01,       /*  u8 num_descriptors */
-    0x22,       /*  u8 type; Report */
-    sizeof(bx_keypad_hid_report_descriptor),
-    0x00, /*  u16 len */
-
-    /* one endpoint (status change endpoint) */
-    0x07,       /*  u8  ep_bLength; */
-    0x05,       /*  u8  ep_bDescriptorType; Endpoint */
-    0x81,       /*  u8  ep_bEndpointAddress; IN Endpoint 1 */
-    0x03,       /*  u8  ep_bmAttributes; Interrupt */
-    0x08, 0x00, /*  u16 ep_wMaxPacketSize; */
-    0x07,       /*  u8  ep_bInterval; (2 ^ (8-1) * 125 usecs = 8 ms) */
-};
-
-static const uint8_t bx_keypad_hid_descriptor[] = {
-    /* HID descriptor */
-    0x09,       /*  u8  bLength; */
-    0x21,       /*  u8 bDescriptorType; */
-    0x01, 0x01, /*  u16 HID_class (0x0101) */
-    0x00,       /*  u8 country_code */
-    0x01,       /*  u8 num_descriptors */
-    0x22,       /*  u8 type; Report */
-    sizeof(bx_keypad_hid_report_descriptor),
-    0x00, /*  u16 len */
-};
-
 #define BX_ERROR(x) pclog x; pclog ("\n")
 #define BX_INFO(x)  pclog x; pclog ("\n")
 #define BX_DEBUG(x) pclog x; pclog ("\n")
@@ -1205,10 +1026,6 @@ usb_device_hid_handle_control(usb_device_c *device, int request, int value, int 
                         memcpy(data, bx_tablet_hid_descriptor,
                                sizeof(bx_tablet_hid_descriptor));
                         ret = sizeof(bx_tablet_hid_descriptor);
-                    } else if ((device->type == USB_HID_TYPE_KEYPAD) || (device->type == USB_HID_TYPE_KEYBOARD)) {
-                        memcpy(data, bx_keypad_hid_descriptor,
-                               sizeof(bx_keypad_hid_descriptor));
-                        ret = sizeof(bx_keypad_hid_descriptor);
                     } else {
                         goto fail;
                     }
@@ -1224,10 +1041,6 @@ usb_device_hid_handle_control(usb_device_c *device, int request, int value, int 
                         memcpy(data, bx_tablet_hid_report_descriptor,
                                sizeof(bx_tablet_hid_report_descriptor));
                         ret = sizeof(bx_tablet_hid_report_descriptor);
-                    } else if ((device->type == USB_HID_TYPE_KEYPAD) || (device->type == USB_HID_TYPE_KEYBOARD)) {
-                        memcpy(data, bx_keypad_hid_report_descriptor,
-                               sizeof(bx_keypad_hid_report_descriptor));
-                        ret = sizeof(bx_keypad_hid_report_descriptor);
                     } else {
                         goto fail;
                     }
