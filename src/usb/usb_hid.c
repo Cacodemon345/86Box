@@ -823,12 +823,6 @@ mouse_enq(usb_device_hid *hid, int delta_x, int delta_y, int delta_z, unsigned b
     int16_t prev_x, prev_y;
 
     if (hid->device.type == USB_HID_TYPE_MOUSE) {
-        // scale down the motion
-        if ((delta_x < -1) || (delta_x > 1))
-            delta_x /= 2;
-        if ((delta_y < -1) || (delta_y > 1))
-            delta_y /= 2;
-
         if (delta_x > 127)
             delta_x = 127;
         if (delta_y > 127)

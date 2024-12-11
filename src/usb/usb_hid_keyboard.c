@@ -22,9 +22,6 @@
 
 #include "usb_common.h"
 
-int
-usb_device_hid_handle_data(usb_device_c *device, USBPacket *p);
-
 // one (or more) of our models uses the Report ID field. This is the ID value used.
 #define HID_REPORT_ID 1
 
