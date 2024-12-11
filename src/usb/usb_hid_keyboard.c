@@ -733,7 +733,7 @@ usb_device_hid_kb_handle_control(usb_device_c *device, int request, int value, i
             BX_DEBUG(("HID: GET_REPORT:"));
             if ((value >> 8) == 1) { // Input report
                 if ((value & 0xFF) == hid->s.report_id) {
-                    if ((device->type == USB_HID_TYPE_KEYBOARD)) {
+                    if (device->type == USB_HID_TYPE_KEYBOARD) {
                         ret = usb_device_hid_keyboard_poll(hid, data, 1);
                         if (ret > length)
                             ret = length;
@@ -954,11 +954,14 @@ usb_hid_kb_device_create(const device_t *info)
     timer_on_auto(&hid->poll_timer, 1000.);
 
     usb_keyboard = hid;
+    keyboard_send_usb = usb_device_hid_kb_keyboard_input;
+    pclog("USBK\n");
     return hid;
 }
 
 static void usb_hid_kb_device_close(void* priv)
 {
+    keyboard_send_usb = NULL;
     free(priv);
     usb_keyboard = NULL;
     memset(down_keys, 0, sizeof(down_keys));

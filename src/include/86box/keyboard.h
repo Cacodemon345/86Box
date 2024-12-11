@@ -198,6 +198,7 @@ extern uint8_t keyboard_mode;
 extern int     keyboard_scan;
 
 extern void (*keyboard_send)(uint16_t val);
+extern void (*keyboard_send_usb)(int down, uint16_t val);
 extern void kbd_adddata_process(uint16_t val, void (*adddata)(uint16_t val));
 
 extern const scancode scancode_xt[512];

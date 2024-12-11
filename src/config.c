@@ -121,6 +121,8 @@ load_general(void)
     if (!strcmp(p, "default"))
         ini_section_delete_var(cat, "vid_api");
 
+    usb_keyboard_enabled = ini_section_get_int(cat, "usb_keyboard", 0);
+
     video_fullscreen_scale = ini_section_get_int(cat, "video_fullscreen_scale", 1);
 
     video_fullscreen_first = ini_section_get_int(cat, "video_fullscreen_first", 1);
@@ -1817,6 +1819,10 @@ save_general(void)
     char          buffer[512] = { 0 };
 
     const char *va_name;
+
+    ini_section_set_int(cat, "usb_keyboard", !!usb_keyboard_enabled);
+    if (!usb_keyboard_enabled)
+        ini_section_delete_var(cat, "usb_keyboard");
 
     ini_section_set_int(cat, "vid_resize", vid_resize);
     if (vid_resize == 0)

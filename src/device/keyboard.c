@@ -50,6 +50,7 @@ uint16_t key_uncapture_2 = 0x14f;    /* End */
 #endif
 
 void (*keyboard_send)(uint16_t val);
+void (*keyboard_send_usb)(int down, uint16_t val);
 
 static int recv_key[512] = { 0 }; /* keyboard input buffer */
 static int recv_key_ui[512] = { 0 }; /* keyboard input buffer */
@@ -110,6 +111,11 @@ key_process(uint16_t scan, int down)
 {
     const scancode *codes = scan_table;
     int             c;
+
+    if (keyboard_send_usb) {
+        keyboard_send_usb(down, scan);
+        return;
+    }
 
     if (!codes)
         return;

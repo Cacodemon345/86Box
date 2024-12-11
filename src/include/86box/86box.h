@@ -107,6 +107,7 @@ extern uint64_t instru_run_ms;
 #define window_y monitor_settings[0].mon_window_y
 #define window_w monitor_settings[0].mon_window_w
 #define window_h monitor_settings[0].mon_window_h
+extern int      usb_keyboard_enabled;       /* (C) enable USB keyboard */
 extern int      window_remember;
 extern int      vid_resize;                 /* (C) allow resizing */
 extern int      invert_display;             /* (C) invert the display */
