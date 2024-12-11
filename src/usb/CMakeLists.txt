@@ -1,1 +1,1 @@
-add_library(usb usb_hid.c usb_hid_keyboard.c usb_uhci_bochs.c usb_ohci_bochs.c usb_common.c)
+add_library(usb OBJECT usb_hid_mouse.c usb_hid_keyboard.c usb_uhci_bochs.c usb_ohci_bochs.c usb_common.c)
