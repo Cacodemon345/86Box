@@ -648,11 +648,6 @@ usb_uhci_do_transfer(bx_uhci_core_t *hub, uint32_t address, struct TD *td)
                   (td->dword1 & (0x7F << 16)) >> 16));
     }
 
-    // we don't support ISO transfers, so if the IOS bit is set, give an error
-    if (td->dword1 & (1 << 25)) {
-        BX_ERROR(("UHCI Core: ISO bit is set..."));
-    }
-
     // the reserved bit in the Link Pointer should be zero
     if (td->dword0 & (1 << 3)) {
         BX_INFO(("UHCI Core: Reserved bit in the Link Pointer is not zero."));
@@ -722,7 +717,8 @@ usb_uhci_do_transfer(bx_uhci_core_t *hub, uint32_t address, struct TD *td)
         set_status(td, 0, 0, 0, 0, 0, 0, len - 1);
     } else if (ret == USB_RET_NAK) {
         set_status(td, 0, 0, 0, 1, 0, 0, len - 1); // NAK
-        td->dword1 |= (1 << 23);
+        if (!(td->dword1 & (1 << 25)))
+            td->dword1 |= (1 << 23);
     } else {
         set_status(td, 1, 0, 0, 0, 0, 0, 0x007); // stalled
     }

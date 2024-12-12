@@ -118,16 +118,24 @@ struct OHCI_TD {
 #define ISO_TD_GET_PSW6(x)     ((x)->dword7 & 0x0000FFFF)
 #define ISO_TD_GET_PSW7(x)    (((x)->dword7 & 0xFFFF0000) >> 16)
 
+#pragma pack(push, 2)
 struct OHCI_ISO_TD {
   uint32_t   dword0;
   uint32_t   dword1;
   uint32_t   dword2;
   uint32_t   dword3;
-  uint32_t   dword4;
-  uint32_t   dword5;
-  uint32_t   dword6;
-  uint32_t   dword7;
+  union
+  {
+  struct {
+    uint32_t   dword4;
+    uint32_t   dword5;
+    uint32_t   dword6;
+    uint32_t   dword7;
+  };
+  uint16_t offset[8];
+  };
 };
+#pragma pack(pop)
 
 
 typedef struct {
@@ -1249,6 +1257,211 @@ int usb_ohci_broadcast_packet(bx_ohci_core_t* hub, USBPacket *p)
   return ret;
 }
 
+/* Read/Write the contents of an ISO TD from/to main memory.  */
+static int ohci_copy_iso_td(uint32_t start_addr, uint32_t end_addr,
+                            uint8_t *buf, int len, bool read)
+{
+    uint32_t ptr, n;
+
+    ptr = start_addr;
+    n = 0x1000 - (ptr & 0xfff);
+    if (n > len) {
+        n = len;
+    }
+    if (read)
+      dma_bm_read(ptr, buf, n, 4);
+    else
+      dma_bm_write(ptr, buf, n, 4);
+
+    if (n == len) {
+        return 0;
+    }
+    ptr = end_addr & ~0xfffu;
+    buf += n;
+    if (read)
+      dma_bm_read(ptr, buf, len - n, 4);
+    else
+      dma_bm_write(ptr, buf, len - n, 4);
+
+    return 0;
+}
+
+
+#define OHCI_PAGE_MASK    0xfffff000
+#define OHCI_OFFSET_MASK  0xfff
+int usb_ohci_process_iso_td(bx_ohci_core_t* hub, struct OHCI_ISO_TD *td, struct OHCI_ED *ed)
+{
+  unsigned pid = 0, len = 0;
+  int ret2 = 1;
+  uint8_t buf[8192];
+  int ilen, ret = 0;
+  uint32_t addr;
+  USBAsync *p;
+  bool completion;
+  uint16_t starting_frame;
+  int16_t relative_frame_number;
+  int frame_count;
+  uint32_t start_offset, next_offset, end_offset = 0;
+  uint32_t start_addr, end_addr;
+
+  addr = ED_GET_HEADP(ed);
+
+  if (addr == 0)
+    return 1;
+
+  p = find_async_packet(&hub->packets, addr);
+  completion = (p != NULL);
+  if (completion && !p->done) {
+    return 0;
+  }
+
+  starting_frame = ISO_TD_GET_SF(td);
+  frame_count = ISO_TD_GET_FC(td);
+  relative_frame_number = (int16_t)((uint16_t)(hub->op_regs.HcFmNumber) - (uint16_t)(starting_frame));
+
+  if (relative_frame_number < 0)
+    return 1;
+  else if (relative_frame_number > frame_count) {
+    const uint32_t temp = ED_GET_HEADP(ed);
+    if (ISO_TD_GET_CC(td) == DataOverrun)
+      return 1;
+    else {
+      TD_SET_CC(td, DataOverrun);
+      ED_SET_HEADP(ed, ISO_TD_GET_NEXTTD(td));
+      TD_SET_NEXTTD(td, hub->op_regs.HcDoneHead);
+      hub->op_regs.HcDoneHead = temp;
+      if (ISO_TD_GET_DI(td) < hub->ohci_done_count)
+        hub->ohci_done_count = ISO_TD_GET_DI(td);
+      return 0;
+    }
+  }
+
+  if (ED_GET_D(ed) == 1)
+    pid = USB_TOKEN_OUT;
+  else if (ED_GET_D(ed) == 2)
+    pid = USB_TOKEN_IN;
+  else if (ED_GET_D(ed) == 0)
+    pid = USB_TOKEN_SETUP;
+  else
+    return 1;
+  
+  if (ISO_TD_GET_BE(td) == 0 || ISO_TD_GET_BP0(td) == 0)
+    return 1;
+  
+  start_offset = td->offset[relative_frame_number];
+  if (relative_frame_number < frame_count) {
+      next_offset = td->offset[relative_frame_number + 1];
+  } else {
+      next_offset = ISO_TD_GET_BE(td);
+  }
+  
+  if (!((start_offset >> 12) & 0xe) ||
+      ((relative_frame_number < frame_count) &&
+       !((start_offset >> 12) & 0xe))) {
+      return 1;
+  }
+
+  if ((relative_frame_number < frame_count) && (start_offset > next_offset)) {
+      return 1;
+  }
+
+  if ((start_offset & 0x1000) == 0) {
+      start_addr = (td->dword1 & OHCI_PAGE_MASK) |
+          (start_offset & OHCI_OFFSET_MASK);
+  } else {
+      start_addr = (td->dword2 & OHCI_PAGE_MASK) |
+          (start_offset & OHCI_OFFSET_MASK);
+  }
+
+  if (relative_frame_number < frame_count) {
+      end_offset = next_offset - 1;
+      if ((end_offset & 0x1000) == 0) {
+          end_addr = (td->dword1 & OHCI_PAGE_MASK) |
+              (end_offset & OHCI_OFFSET_MASK);
+      } else {
+          end_addr = (td->dword2 & OHCI_PAGE_MASK) |
+              (end_offset & OHCI_OFFSET_MASK);
+      }
+  } else {
+      /* Last packet in the ISO TD */
+      end_addr = next_offset;
+  }
+
+  if (start_addr > end_addr) {
+      return 1;
+  }
+
+  if ((start_addr & OHCI_PAGE_MASK) != (end_addr & OHCI_PAGE_MASK)) {
+      len = (end_addr & OHCI_OFFSET_MASK) + 0x1001
+          - (start_addr & OHCI_OFFSET_MASK);
+  } else {
+      len = end_addr - start_addr + 1;
+  }
+
+  if (len > sizeof(buf)) {
+      len = sizeof(buf);
+  }
+
+  if (len && pid != USB_TOKEN_IN) {
+      ohci_copy_iso_td(start_addr, end_addr, buf, len, true);
+  }
+
+  if (completion) {
+    ret = p->packet.len;
+  } else {
+    p = create_async_packet(&hub->packets, addr, len);
+    if (pid != USB_TOKEN_IN)
+      memcpy(p->packet.data, buf, len);
+    p->packet.pid = pid;
+    p->packet.devaddr = ED_GET_FA(ed);
+    p->packet.devep = ED_GET_EN(ed);
+    p->packet.speed = ED_GET_S(ed) ? USB_SPEED_LOW : USB_SPEED_FULL;
+#if HANDLE_TOGGLE_CONTROL
+    p->packet.toggle = ED_GET_C(ed) ^ (relative_frame_number & 1);
+#endif
+    p->packet.complete_cb = usb_ohci_event_handler;
+    p->packet.complete_dev = hub;
+    ret = usb_ohci_broadcast_packet(hub, &p->packet);
+
+    if (ret == USB_RET_ASYNC)
+      return 1;
+    
+    if (ret >= 0 && pid == USB_TOKEN_SETUP)
+      ret = len = 8;
+  }
+
+      
+  if (pid == USB_TOKEN_IN && ret >= 0 && ret <= len) {
+    ohci_copy_iso_td(start_addr, end_addr, buf, len, false);
+    
+    td->offset[relative_frame_number] = (NoError << 12) | (len & 0xfff);
+  } else if (pid == USB_TOKEN_OUT && ret == len) {
+    td->offset[relative_frame_number] = (NoError << 12);
+  } else {
+    if (ret > len)
+      td->offset[relative_frame_number] = (DataOverrun << 12) | (len & 0xfff);
+    else if (ret >= 0) {
+      td->offset[relative_frame_number] &= 0xFFF;
+      td->offset[relative_frame_number] |= (DataUnderrun << 12);
+    } else {
+      td->offset[relative_frame_number] = (ret == USB_RET_IOERROR || ret == USB_RET_NODEV) ? DeviceNotResponding : Stall;
+    }
+  }
+  
+  if (relative_frame_number == frame_count) {
+    const uint32_t temp = ED_GET_HEADP(ed);
+    TD_SET_CC(td, NoError);
+    ED_SET_HEADP(ed, ISO_TD_GET_NEXTTD(td));
+    TD_SET_NEXTTD(td, hub->op_regs.HcDoneHead);
+    hub->op_regs.HcDoneHead = temp;
+    if (ISO_TD_GET_DI(td) < hub->ohci_done_count)
+      hub->ohci_done_count = ISO_TD_GET_DI(td);
+  }
+  
+  dma_bm_write(addr, (uint8_t*)td, sizeof(struct OHCI_ISO_TD), 4);
+  return 1;
+}
+
 int usb_ohci_process_td(bx_ohci_core_t* hub, struct OHCI_TD *td, struct OHCI_ED *ed, int toggle)
 {
   unsigned pid = 0, len = 0, len1, len2;
@@ -1434,6 +1647,7 @@ int usb_ohci_process_td(bx_ohci_core_t* hub, struct OHCI_TD *td, struct OHCI_ED 
 bool usb_ohci_process_ed(bx_ohci_core_t* hub, struct OHCI_ED *ed, const uint32_t ed_address)
 {
   struct OHCI_TD cur_td;
+  struct OHCI_ISO_TD cur_iso_td;
   int toggle;
   bool ret = 0;
 
@@ -1443,7 +1657,11 @@ bool usb_ohci_process_ed(bx_ohci_core_t* hub, struct OHCI_ED *ed, const uint32_t
       if (hub->op_regs.HcControl.ie) {
         // load and do a isochronous TD list
         BX_DEBUG(("Found a valid ED that points to an isochronous TD"));
-        // we currently ignore ISO TD's
+        while (!ED_GET_H(ed) && (ED_GET_HEADP(ed) != ED_GET_TAILP(ed))) {
+          dma_bm_read(ED_GET_HEADP(ed), (uint8_t*)&cur_iso_td, sizeof(struct OHCI_ISO_TD), 4);
+          if (usb_ohci_process_iso_td(hub, &cur_iso_td, ed))
+            break;
+        }
       }
     } else {
       BX_DEBUG(("Found a valid ED that points to an control/bulk/int TD"));
