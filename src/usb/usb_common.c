@@ -139,6 +139,7 @@ int usb_device_hc_event(usb_device_c* host, int event, usb_device_c *device) {
 
 bool usb_device_init(usb_device_c* device)
 {
+    device->connected = 1;
     return device->connected;
 }
 
@@ -150,6 +151,7 @@ void usb_device_create(usb_device_c* device)
     device->async_mode = 1;
     device->speed = USB_SPEED_LOW;
     device->first8 = 0;
+    device->iface_alt = 0;
     for (i = 0; i < USB_MAX_ENDPOINTS; i++)
         device->endpoint_info[i].toggle = 0;
     
@@ -360,12 +362,12 @@ int usb_device_handle_control_common(usb_device_c* device, int request, int valu
       // Ben: TODO: If the device is not in the configured state, this request should stall
       BX_DEBUG(("USB_REQ_GET_INTERFACE:"));
       // with InterfaceRequest, the wValue field must be zero and wLength field must be 1
-      if ((value != 0) || (length != 1)) {
-        BX_ERROR(("USB_REQ_GET_INTERFACE: This type of request requires the wValue field to be zero and wLength field to be one."));
+      if ((value != device->iface_alt) || (length != 1)) {
+        //BX_ERROR(("USB_REQ_GET_INTERFACE: This type of request requires the wValue field to be zero and wLength field to be one."));
       }
       // all our devices only have one interface, and that value must be zero
       // if we ever add a device that has more than one interface (a video cam ?), we will need to modify this
-      if (index == 0) {
+      if (index == device->iface_alt) {
         data[0] = device->alt_iface;
         ret = 1;
       }
@@ -374,12 +376,12 @@ int usb_device_handle_control_common(usb_device_c* device, int request, int valu
       // Ben: TODO: If the device is not in the configured state, this request should stall
       BX_DEBUG(("USB_REQ_SET_INTERFACE: value=%d", value));
       // with InterfaceRequest, the wIndex and wLength fields must be zero
-      if ((index != 0) || (length != 0)) {
-        BX_ERROR(("USB_REQ_SET_INTERFACE: This type of request requires the wIndex and wLength fields to be zero."));
+      if ((index != device->iface_alt) || (length != 0)) {
+        //BX_ERROR(("USB_REQ_SET_INTERFACE: This type of request requires the wIndex and wLength fields to be zero."));
       }
       // all our devices only have one interface, and that value must be zero
       // if we ever add a device that has more than one interface (a video cam ?), we will need to modify this
-      if ((index == 0) && (value <= device->alt_iface_max)) {
+      if ((index == device->iface_alt) && (value <= device->alt_iface_max)) {
         device->alt_iface = value;         // alternate interface
         device->handle_iface_change(device, value);  // let the device know we changed the interface number
         ret = 0;

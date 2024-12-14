@@ -206,6 +206,8 @@ struct usb_device_c {
     uint8_t alt_iface;
     /* Maximum alternate interface usable. */
     uint8_t alt_iface_max;
+    /* Interface with alternate settings. */
+    uint8_t iface_alt; // This naming is terrible...
     /* Name of device. */
     char devname[32];
     /* Endpoints. */
@@ -227,8 +229,8 @@ struct usb_device_c {
 
     /* Setup packets' state information. */
     int state;
-    uint8_t setup_buf[8];
-    uint8_t data_buf[1024];
+    uint8_t setup_buf[64];
+    uint8_t data_buf[1280];
     int remote_wakeup;
     int setup_state;
     int setup_len;
@@ -259,6 +261,9 @@ struct usb_device_c {
     void (*handle_iface_change)(usb_device_c* device, int iface);
     /* Initializes the device. Returns true on success. */
     bool (*init)(usb_device_c *init);
+
+    /* Opaque data. */
+    void* priv;
 };
 
 /* Default inits the device. */
@@ -292,7 +297,7 @@ bool usb_device_get_halted(usb_device_c* device, int ep);
 int usb_set_usb_string(uint8_t *buf, const char *str);
 /* Get maximum packet size the device can handle for an endpoint. */
 int usb_device_get_mps(usb_device_c* device, const int ep);
-/* Events to send to the host controller. */
+/* Events to send to the host controller. Send USB_EVENT_WAKEUP to wake up the host. */
 extern int usb_device_hc_event(usb_device_c* host, int event, usb_device_c *device);
 
 #endif
