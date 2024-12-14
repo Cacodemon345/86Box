@@ -417,7 +417,7 @@ usb_audio_get_buffer(int32_t *buffer, int len, void *priv)
     double gain = (double)pow(10, (double)-decibels / 20.0);
 
     for (int c = 0; c < len * 2; c++)
-        buffer[c] = usb_audio->buffer[c] * gain;
+        buffer[c] += usb_audio->buffer[c] * gain;
 }
 
 void *
