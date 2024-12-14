@@ -363,7 +363,7 @@ int usb_device_handle_control_common(usb_device_c* device, int request, int valu
       BX_DEBUG(("USB_REQ_GET_INTERFACE:"));
       // with InterfaceRequest, the wValue field must be zero and wLength field must be 1
       if ((value != device->iface_alt) || (length != 1)) {
-        //BX_ERROR(("USB_REQ_GET_INTERFACE: This type of request requires the wValue field to be zero and wLength field to be one."));
+        BX_ERROR(("USB_REQ_GET_INTERFACE: This type of request requires the wValue field to be zero and wLength field to be one."));
       }
       // all our devices only have one interface, and that value must be zero
       // if we ever add a device that has more than one interface (a video cam ?), we will need to modify this
@@ -377,7 +377,7 @@ int usb_device_handle_control_common(usb_device_c* device, int request, int valu
       BX_DEBUG(("USB_REQ_SET_INTERFACE: value=%d", value));
       // with InterfaceRequest, the wIndex and wLength fields must be zero
       if ((index != device->iface_alt) || (length != 0)) {
-        //BX_ERROR(("USB_REQ_SET_INTERFACE: This type of request requires the wIndex and wLength fields to be zero."));
+        BX_ERROR(("USB_REQ_SET_INTERFACE: This type of request requires the wIndex and wLength fields to be zero."));
       }
       // all our devices only have one interface, and that value must be zero
       // if we ever add a device that has more than one interface (a video cam ?), we will need to modify this
@@ -674,6 +674,7 @@ int usb_device_handle_packet(usb_device_c* device, USBPacket *p)
       ret = USB_RET_STALL;
       break;
   }
+  //pclog("ret = %d\n", ret);
   return ret;
 }
 

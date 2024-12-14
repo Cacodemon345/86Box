@@ -1,3 +1,5 @@
+/* FIXME: Isochronous transfer work but cause massive problems in Windows 2000 and Windows 98 SE.*/
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -202,7 +204,7 @@ const char *usb_speed[4] = {
     "high", // USB_SPEED_HIGH  = 2
     "super" // USB_SPEED_SUPER = 3
 };
-
+#define ENABLE_UHCI_LOG 1
 #ifdef ENABLE_UHCI_LOG
 int uhci_do_log = ENABLE_UHCI_LOG;
 
@@ -652,6 +654,9 @@ usb_uhci_do_transfer(bx_uhci_core_t *hub, uint32_t address, struct TD *td)
     if (td->dword0 & (1 << 3)) {
         BX_INFO(("UHCI Core: Reserved bit in the Link Pointer is not zero."));
     }
+
+    if (td->dword1 & (1 << 25))
+        BX_INFO(("UHCI Core: Encountered Isochronous Packet.\n"));
 
     // the device should remain in a stall state until the next setup packet is recieved
     // For some reason, this doesn't work yet.

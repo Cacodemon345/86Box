@@ -73,7 +73,7 @@ static const uint8_t bx_audio_config_descriptor[] =
     0x24,       /* u8 bDescriptor Type (CS_INTERFACE); */
     0x01,       /* u8 bDescriptorSubType (HEADER); */
     0x00, 0x01, /* u16 bcdADC; */
-    0x09 + 0x0c + 0x0d + 0x09, 0x00, /* u16 wTotalLength; */
+    0x09 + 0x0c + 0x09 + 0x09, 0x00, /* u16 wTotalLength; */
     0x01,       /* u8 bInCollection; */
     0x01,       /* u8 baInterfaceNr; */
 
@@ -165,7 +165,7 @@ static const uint8_t bx_audio_config_descriptor[] =
     0x25,       /* u8 bDescriptorType; */
     0x01,       /* u8 bDescriptorSubtype; */
     // Reminder to ask the host to pad packets if this is not sufficient enough.
-    0x00,       /* u8 bmAttributes; */
+    0x80,       /* u8 bmAttributes; */
     0x00,       /* u8 bLockDelayUnits; */
     0x00, 0x00  /* u16 wLockDelay; */
 };
@@ -232,6 +232,7 @@ usb_device_audio_handle_data(usb_device_c *device, USBPacket *p)
                     // Null packets must be accepted as well.
                     if (p->len > 0)
                         fifo8_push_all(&usb_audio->audio_buf, p->data, p->len);
+                    ret = p->len;
                 }
                 else
                 {
@@ -263,6 +264,8 @@ usb_device_audio_handle_iface_change(usb_device_c* device, int iface)
     usb_device_audio* usb_audio = (usb_device_audio*) device->priv;
 
     usb_audio->alt_iface_enabled = !!iface;
+    if (usb_audio->alt_iface_enabled == 0)
+        fifo8_drop(&usb_audio->audio_buf, fifo8_num_used(&usb_audio->audio_buf));
 }
 
 /*
@@ -406,6 +409,8 @@ usb_audio_get_buffer(int32_t *buffer, int len, void *priv)
     
     if (fifo8_num_used(&usb_audio->audio_buf) < (SOUNDBUFLEN * 2 * 2))
     {
+        static int buffer_underrun = 0;
+        //pclog("USB Audio: Buffer underrun! (%d)\n", buffer_underrun++);
         return;
     }
 
@@ -433,7 +438,7 @@ usb_audio_device_create(const device_t *info)
 
     usb_device_create(&usb_audio->device);
     usb_audio->device.type     = 0;
-    usb_audio->device.minspeed = USB_SPEED_LOW;
+    usb_audio->device.minspeed = USB_SPEED_FULL;
     usb_audio->device.maxspeed = USB_SPEED_FULL;
     usb_audio->device.speed    = usb_audio->device.minspeed;
     usb_audio->device.priv     = usb_audio;
@@ -453,6 +458,7 @@ usb_audio_device_create(const device_t *info)
     usb_audio->device.endpoint_info[1].max_burst_size               = 0;
     usb_audio->device.connected                                     = true;
     usb_audio->device.iface_alt                                     = 1;
+    usb_audio->device.alt_iface_max                                 = 1;
 
     usb_audio->device.handle_iface_change = usb_device_audio_handle_iface_change;
     usb_audio->device.handle_control = usb_device_audio_handle_control;
@@ -464,7 +470,7 @@ usb_audio_device_create(const device_t *info)
         return NULL;
     }
 
-    fifo8_create(&usb_audio->audio_buf, 65536);
+    fifo8_create(&usb_audio->audio_buf, 65536 * 4);
 
     sound_add_handler(usb_audio_get_buffer, usb_audio);
     return usb_audio;

@@ -294,7 +294,7 @@ ohci_log(const char *fmt, ...)
 
     if (ohci_do_log) {
         va_start(ap, fmt);
-        pclog_ex(fmt, ap);
+        ohci_log_ex(fmt, ap);
         va_end(ap);
     }
 }
@@ -305,7 +305,7 @@ ohci_log(const char *fmt, ...)
 #define BX_ERROR(x) ohci_log x ; ohci_log ("\n")
 #define BX_INFO(x)  ohci_log x ; ohci_log ("\n")
 #define BX_DEBUG(x) ohci_log x ; ohci_log ("\n")
-#define BX_PANIC(x) fatal x ; pclog ("\n")
+#define BX_PANIC(x) fatal x ; ohci_log ("\n")
 
 #define DEV_MEM_WRITE_PHYSICAL(addr, size, data) dma_bm_write(addr, (uint8_t*)data, size, 4);
 #define DEV_MEM_READ_PHYSICAL(addr, size, data) dma_bm_read(addr, (uint8_t*)data, size, 4);
@@ -1312,17 +1312,20 @@ int usb_ohci_process_iso_td(bx_ohci_core_t* hub, struct OHCI_ISO_TD *td, struct 
   p = find_async_packet(&hub->packets, addr);
   completion = (p != NULL);
   if (completion && !p->done) {
-    return 0;
+    return 1;
   }
 
   starting_frame = ISO_TD_GET_SF(td);
   frame_count = ISO_TD_GET_FC(td);
   relative_frame_number = (int16_t)((uint16_t)(hub->op_regs.HcFmNumber) - (uint16_t)(starting_frame));
 
-  if (relative_frame_number < 0)
+  if (relative_frame_number < 0){
+    ohci_log("Relative frame number < 0\n");
     return 1;
+  }
   else if (relative_frame_number > frame_count) {
     const uint32_t temp = ED_GET_HEADP(ed);
+    ohci_log("Relative frame number > Frame Count\n");
     if (ISO_TD_GET_CC(td) == DataOverrun)
       return 1;
     else {
@@ -1340,13 +1343,15 @@ int usb_ohci_process_iso_td(bx_ohci_core_t* hub, struct OHCI_ISO_TD *td, struct 
     pid = USB_TOKEN_OUT;
   else if (ED_GET_D(ed) == 2)
     pid = USB_TOKEN_IN;
-  else if (ED_GET_D(ed) == 0)
+  else if (ED_GET_D(ed) == 0 || ED_GET_D(ed) == 3)
     pid = USB_TOKEN_SETUP;
   else
     return 1;
   
-  if (ISO_TD_GET_BE(td) == 0 || ISO_TD_GET_BP0(td) == 0)
+  if (ISO_TD_GET_BE(td) == 0 || ISO_TD_GET_BP0(td) == 0) {
+    ohci_log("Zero-ed BE/BP0\n");
     return 1;
+  }
   
   start_offset = td->offset[relative_frame_number];
   if (relative_frame_number < frame_count) {
@@ -1357,11 +1362,13 @@ int usb_ohci_process_iso_td(bx_ohci_core_t* hub, struct OHCI_ISO_TD *td, struct 
   
   if (!((start_offset >> 12) & 0xe) ||
       ((relative_frame_number < frame_count) &&
-       !((start_offset >> 12) & 0xe))) {
+       !((next_offset >> 12) & 0xe))) {
+      ohci_log("NOTACCESSED\n");
       return 1;
   }
 
   if ((relative_frame_number < frame_count) && (start_offset > next_offset)) {
+      ohci_log("NOTACCESSED (2)\n");
       return 1;
   }
 
@@ -1388,6 +1395,7 @@ int usb_ohci_process_iso_td(bx_ohci_core_t* hub, struct OHCI_ISO_TD *td, struct 
   }
 
   if (start_addr > end_addr) {
+      ohci_log("start_addr > end_addr\n");
       return 1;
   }
 
@@ -1459,6 +1467,7 @@ int usb_ohci_process_iso_td(bx_ohci_core_t* hub, struct OHCI_ISO_TD *td, struct 
   }
   
   dma_bm_write(addr, (uint8_t*)td, sizeof(struct OHCI_ISO_TD), 4);
+  remove_async_packet(&hub->packets, p);
   return 1;
 }
 
@@ -1656,7 +1665,7 @@ bool usb_ohci_process_ed(bx_ohci_core_t* hub, struct OHCI_ED *ed, const uint32_t
     if (ED_GET_F(ed)) {
       if (hub->op_regs.HcControl.ie) {
         // load and do a isochronous TD list
-        BX_DEBUG(("Found a valid ED that points to an isochronous TD"));
+        ohci_log("Found a valid ED that points to an isochronous TD\n");
         while (!ED_GET_H(ed) && (ED_GET_HEADP(ed) != ED_GET_TAILP(ed))) {
           dma_bm_read(ED_GET_HEADP(ed), (uint8_t*)&cur_iso_td, sizeof(struct OHCI_ISO_TD), 4);
           if (usb_ohci_process_iso_td(hub, &cur_iso_td, ed))
