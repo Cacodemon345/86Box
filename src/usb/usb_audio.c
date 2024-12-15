@@ -21,6 +21,34 @@
 
 #include "usb_common.h"
 
+enum usb_audio_strings {
+    STRING_NULL,
+    STRING_MANUFACTURER,
+    STRING_PRODUCT,
+    STRING_SERIALNUMBER,
+    STRING_CONFIG,
+    STRING_USBAUDIO_CONTROL,
+    STRING_INPUT_TERMINAL,
+    STRING_FEATURE_UNIT,
+    STRING_OUTPUT_TERMINAL,
+    STRING_NULL_STREAM,
+    STRING_REAL_STREAM,
+};
+
+static const char* usb_audio_stringtable[] = {
+    [STRING_MANUFACTURER]       = "QEMU",
+    [STRING_PRODUCT]            = "QEMU USB Audio",
+    [STRING_SERIALNUMBER]       = "1",
+    [STRING_CONFIG]             = "Audio Configuration",
+    [STRING_USBAUDIO_CONTROL]   = "Audio Device",
+    [STRING_INPUT_TERMINAL]     = "Audio Output Pipe",
+    [STRING_FEATURE_UNIT]       = "Audio Output Volume Control",
+    [STRING_OUTPUT_TERMINAL]    = "Audio Output Terminal",
+    [STRING_NULL_STREAM]        = "Audio Output - Disabled",
+    [STRING_REAL_STREAM]        = "Audio Output - 48 kHz Stereo",
+};
+
+
 // Speaker
 static const uint8_t bx_audio_dev_descriptor[] = {
     0x12,       /*  u8 bLength; */
@@ -49,7 +77,7 @@ static const uint8_t bx_audio_config_descriptor[] =
     113, 0x00,  /*  u16 wTotalLength; */
     0x02,       /*  u8  bNumInterfaces; (1) */
     0x01,       /*  u8  bConfigurationValue; */
-    0x04,       /*  u8  iConfiguration; */
+    STRING_CONFIG,       /*  u8  iConfiguration; */
     0b10100000, /*  u8  bmAttributes;
                            Bit 7: must be set,
                                6: Self-powered,
@@ -66,7 +94,7 @@ static const uint8_t bx_audio_config_descriptor[] =
     0x01,       /* u8 bInterfaceClass; */
     0x01,       /* u8 bInterfaceSubclass; */
     0x00,       /* u8 bInterfaceProtocol; */
-    0x00,       /* u8 iInterface; */
+    STRING_USBAUDIO_CONTROL,       /* u8 iInterface; */
 
     /* Class-specific Interface Descriptor */
     0x09,       /* u8 bLength; */
@@ -87,7 +115,7 @@ static const uint8_t bx_audio_config_descriptor[] =
     0x02,       /* u8 bNrChannels; */
     0x03, 0x00, /* u16 wChannelConfig; */
     0x00,       /* u8 iChannelNames; */
-    0x00,       /* u8 iTerminal; */
+    STRING_INPUT_TERMINAL,       /* u8 iTerminal; */
 
     /* Feature Unit ID2 Descriptor */
     0x0d,       /* u8 bLength; */
@@ -99,7 +127,7 @@ static const uint8_t bx_audio_config_descriptor[] =
     0x01, 0x00, /* u16 bmaControls(0); */
     0x02, 0x00, /* u16 bmaControls(1); */
     0x02, 0x00, /* u16 bmaControls(2); */
-    0x00,       /* u8 iFeature; */
+    STRING_FEATURE_UNIT,       /* u8 iFeature; */
 
     /* Output Terminal ID3 Descriptor */
     0x09,       /* u8 bLength; */
@@ -109,7 +137,7 @@ static const uint8_t bx_audio_config_descriptor[] =
     0x04, 0x03,  /* u16 wTerminalType; */
     0x00,       /* u8 bAssocTerminal; */
     0x02,       /* u8 bSourceID; */
-    0x00,       /* u8 iTerminal; */
+    STRING_OUTPUT_TERMINAL,       /* u8 iTerminal; */
 
     /* Standard AudioStreaming Interface Descriptor */
     0x09,       /* u8 bLength; */
@@ -131,7 +159,7 @@ static const uint8_t bx_audio_config_descriptor[] =
     0x01,       /* u8 bInterfaceClass; */
     0x02,       /* u8 bInterfaceSubclass; */
     0x00,       /* u8 bInterfaceProtocol; */
-    0x00,       /* u8 iInterface; */
+    STRING_REAL_STREAM,       /* u8 iInterface; */
 
     /* Class-specific Interface Descriptor */
     0x07,       /* u8 bLength; */
@@ -371,7 +399,7 @@ usb_device_audio_handle_control(usb_device_c *device, int request, int value, in
         case EndpointRequest | USB_REQ_GET_STATUS:
             // if the endpoint is currently halted, return bit 0 = 1
             if (value == USB_ENDPOINT_HALT) {
-                if (index == 0x81) {
+                if (index == 0x1) {
                     data[0] = 0x00 | (usb_device_get_halted(device, index) ? 1 : 0);
                     data[1] = 0x00;
                     ret     = 2;
@@ -381,6 +409,12 @@ usb_device_audio_handle_control(usb_device_c *device, int request, int value, in
             } else {
                 goto fail;
             }
+            break;
+        case DeviceRequest | USB_REQ_GET_DESCRIPTOR:
+            if ((value & 0xff) > 3 && (value & 0xff) <= 8 && (value >> 8) == USB_DT_STRING)
+                ret = usb_set_usb_string(data, usb_audio_stringtable[value & 0xff]);
+            else
+                goto fail;
             break;
         /* Class-specific requests. */
         case DeviceClassInRequest | CR_GET_CUR:
