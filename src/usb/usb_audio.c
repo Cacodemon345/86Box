@@ -75,9 +75,9 @@ static const uint8_t bx_audio_config_descriptor[] =
     0x09,       /*  u8  bLength; */
     0x02,       /*  u8  bDescriptorType; Configuration */
     113, 0x00,  /*  u16 wTotalLength; */
-    0x02,       /*  u8  bNumInterfaces; (1) */
+    0x02,       /*  u8  bNumInterfaces; (2) */
     0x01,       /*  u8  bConfigurationValue; */
-    STRING_CONFIG,       /*  u8  iConfiguration; */
+    0x00,       /*  u8  iConfiguration; */
     0b10100000, /*  u8  bmAttributes;
                            Bit 7: must be set,
                                6: Self-powered,
@@ -94,14 +94,14 @@ static const uint8_t bx_audio_config_descriptor[] =
     0x01,       /* u8 bInterfaceClass; */
     0x01,       /* u8 bInterfaceSubclass; */
     0x00,       /* u8 bInterfaceProtocol; */
-    STRING_USBAUDIO_CONTROL,       /* u8 iInterface; */
+    0x00,       /* u8 iInterface; */
 
     /* Class-specific Interface Descriptor */
     0x09,       /* u8 bLength; */
     0x24,       /* u8 bDescriptor Type (CS_INTERFACE); */
     0x01,       /* u8 bDescriptorSubType (HEADER); */
     0x00, 0x01, /* u16 bcdADC; */
-    0x09 + 0x0c + 0x0d + 0x09, 0x00, /* u16 wTotalLength; */
+    43, 0x00, /* u16 wTotalLength; */
     0x01,       /* u8 bInCollection; */
     0x01,       /* u8 baInterfaceNr; */
 
@@ -115,7 +115,7 @@ static const uint8_t bx_audio_config_descriptor[] =
     0x02,       /* u8 bNrChannels; */
     0x03, 0x00, /* u16 wChannelConfig; */
     0x00,       /* u8 iChannelNames; */
-    STRING_INPUT_TERMINAL,       /* u8 iTerminal; */
+    0x00,       /* u8 iTerminal; */
 
     /* Feature Unit ID2 Descriptor */
     0x0d,       /* u8 bLength; */
@@ -127,7 +127,7 @@ static const uint8_t bx_audio_config_descriptor[] =
     0x01, 0x00, /* u16 bmaControls(0); */
     0x02, 0x00, /* u16 bmaControls(1); */
     0x02, 0x00, /* u16 bmaControls(2); */
-    STRING_FEATURE_UNIT,       /* u8 iFeature; */
+    0x00,       /* u8 iFeature; */
 
     /* Output Terminal ID3 Descriptor */
     0x09,       /* u8 bLength; */
@@ -137,7 +137,7 @@ static const uint8_t bx_audio_config_descriptor[] =
     0x04, 0x03,  /* u16 wTerminalType; */
     0x00,       /* u8 bAssocTerminal; */
     0x02,       /* u8 bSourceID; */
-    STRING_OUTPUT_TERMINAL,       /* u8 iTerminal; */
+    0x00,       /* u8 iTerminal; */
 
     /* Standard AudioStreaming Interface Descriptor */
     0x09,       /* u8 bLength; */
@@ -159,7 +159,7 @@ static const uint8_t bx_audio_config_descriptor[] =
     0x01,       /* u8 bInterfaceClass; */
     0x02,       /* u8 bInterfaceSubclass; */
     0x00,       /* u8 bInterfaceProtocol; */
-    STRING_REAL_STREAM,       /* u8 iInterface; */
+    0x00,       /* u8 iInterface; */
 
     /* Class-specific Interface Descriptor */
     0x07,       /* u8 bLength; */
@@ -312,6 +312,9 @@ static int usb_device_audio_get_control(usb_device_audio *device, uint8_t attrib
         break;
     }
 
+    if (ret < 0)
+        pclog("ATTRIB_ID(0x%X, 0x%X, 0x%04X), ret = %d (get)\n", val, attrib, idif, ret);
+
     return ret;
 }
 
@@ -336,6 +339,9 @@ static int usb_device_audio_set_control(usb_device_audio *device, uint8_t attrib
         device->vol[cn] = vol;
         ret = 0;
     }
+
+    if (ret < 0)
+        pclog("ATTRIB_ID(0x%X, 0x%X, 0x%04X), ret = %d (set)\n", val, attrib, idif, ret);
 
     return ret;
 }
