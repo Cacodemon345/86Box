@@ -204,7 +204,7 @@ const char *usb_speed[4] = {
     "high", // USB_SPEED_HIGH  = 2
     "super" // USB_SPEED_SUPER = 3
 };
-#define ENABLE_UHCI_LOG 1
+
 #ifdef ENABLE_UHCI_LOG
 int uhci_do_log = ENABLE_UHCI_LOG;
 
@@ -548,7 +548,7 @@ usb_uhci_timer(void *priv)
 
         // The Frame Number Register is incremented every 1ms
         hub->usb_frame_num.frame_num++;
-        hub->usb_frame_num.frame_num &= (1024 - 1);
+        hub->usb_frame_num.frame_num &= (2048 - 1);
 
         // The status.interrupt bit should be set regardless of the enable bits if a IOC or SPD is found
         if (interrupt || shortpacket) {
