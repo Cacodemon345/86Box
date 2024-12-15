@@ -210,6 +210,7 @@ typedef struct usb_device_audio
     int16_t vol;
     
     int alt_iface_enabled;
+    int buffer_retented;
 } usb_device_audio;
 
 int
@@ -409,10 +410,13 @@ usb_audio_get_buffer(int32_t *buffer, int len, void *priv)
     
     if (fifo8_num_used(&usb_audio->audio_buf) < (SOUNDBUFLEN * 2 * 2))
     {
-        static int buffer_underrun = 0;
-        //pclog("USB Audio: Buffer underrun! (%d)\n", buffer_underrun++);
+        usb_audio->buffer_retented = 0;
         return;
     }
+
+    usb_audio->buffer_retented++;
+    if (usb_audio->buffer_retented < 2)
+        return;
 
     fifo8_pop_buf(&usb_audio->audio_buf, (uint8_t*)usb_audio->buffer, sizeof (usb_audio->buffer));
     if (usb_audio->vol == ((int16_t)0x8000))
