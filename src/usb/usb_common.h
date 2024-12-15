@@ -114,6 +114,8 @@ enum {
 #define USB_DT_OTHER_SPEED_CONFIG       0x07
 #define USB_DT_INTERFACE_POWER          0x08
 
+
+typedef void (*usb_sof_timer)(void* priv);
 typedef struct USBPacket USBPacket;
 
 // packet events
@@ -261,6 +263,8 @@ struct usb_device_c {
     void (*handle_iface_change)(usb_device_c* device, int iface);
     /* Initializes the device. Returns true on success. */
     bool (*init)(usb_device_c *init);
+    /* Called after each SOF from the host. */
+    usb_sof_timer sof_callback;
 
     /* Opaque data. */
     void* priv;

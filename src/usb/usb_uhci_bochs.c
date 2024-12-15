@@ -565,6 +565,12 @@ usb_uhci_timer(void *priv)
     if (hub->usb_command.schedule == 0)
         hub->usb_status.host_halted = 1;
 
+    /* Iterate through all ports and invoke SOF callbacks if those exist. */
+    for (int i = 0; i < 2; i++) {
+        if (hub->usb_port[i].device != NULL && hub->usb_port[i].device->sof_callback)
+            hub->usb_port[i].device->sof_callback(hub->usb_port[i].device->priv);
+    }
+
     // TODO ?:
     //  If in Global_Suspend mode and any of usb_port[i] bits 6,3, or 1 are set,
     //    we need to issue a Global_Resume (set the global resume bit).

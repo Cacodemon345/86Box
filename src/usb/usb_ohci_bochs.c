@@ -1834,6 +1834,12 @@ void usb_ohci_timer(void* priv)
     }
 
   }  // end run schedule
+
+  /* Iterate through all ports and invoke SOF callbacks if those exist. */
+  for (int i = 0; i < 2; i++) {
+      if (hub->usb_port[i].device != NULL && hub->usb_port[i].device->sof_callback)
+          hub->usb_port[i].device->sof_callback(hub->usb_port[i].device->priv);
+  }
 }
 
 void usb_ohci_set_port_device(bx_ohci_core_t *hub, int port, usb_device_c *dev)

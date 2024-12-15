@@ -241,46 +241,8 @@ typedef struct usb_device_audio
     bool mute;
     
     int alt_iface_enabled;
-    int buffer_retented;
+    bool transfer_detected;
 } usb_device_audio;
-
-int
-usb_device_audio_handle_data(usb_device_c *device, USBPacket *p)
-{
-    int ret = 0;
-    usb_device_audio* usb_audio = (usb_device_audio*)device;
-
-    // check that the length is <= the max packet size of the device
-    if (p->len > usb_device_get_mps(device, p->devep)) {
-        //BX_DEBUG(("EP%d transfer length (%d) is greater than Max Packet Size (%d).", p->devep, p->len, usb_device_get_mps(device, (p->devep))));
-    }
-
-    switch (p->pid)
-    {
-        case USB_TOKEN_OUT:
-            {
-                if (p->devep == 1 && usb_audio->alt_iface_enabled)
-                {
-                    // Null packets must be accepted as well.
-                    if (p->len > 0)
-                        fifo8_push_all(&usb_audio->audio_buf, p->data, p->len);
-                    ret = p->len;
-                }
-                else
-                {
-                    goto fail;
-                }
-            }
-            break;
-        default:
-fail:
-            device->stall = 1;
-            ret           = USB_RET_STALL;
-            break;
-    }
-
-    return ret;
-}
 
 void
 usb_device_audio_handle_reset(usb_device_c *device)
@@ -288,6 +250,7 @@ usb_device_audio_handle_reset(usb_device_c *device)
     usb_device_audio* usb_audio = (usb_device_audio*) device->priv;
 
     usb_audio->alt_iface_enabled = 0;
+    fifo8_reset(&usb_audio->audio_buf);
 }
 
 void
@@ -297,7 +260,7 @@ usb_device_audio_handle_iface_change(usb_device_c* device, int iface)
 
     usb_audio->alt_iface_enabled = !!iface;
     if (usb_audio->alt_iface_enabled == 0)
-        fifo8_drop(&usb_audio->audio_buf, fifo8_num_used(&usb_audio->audio_buf));
+        fifo8_reset(&usb_audio->audio_buf);
 }
 
 /*
@@ -443,23 +406,67 @@ usb_device_audio_handle_control(usb_device_c *device, int request, int value, in
     return ret;
 }
 
+int
+usb_device_audio_handle_data(usb_device_c *device, USBPacket *p)
+{
+    int ret = 0;
+    usb_device_audio* usb_audio = (usb_device_audio*)device;
+
+    switch (p->pid)
+    {
+        case USB_TOKEN_OUT:
+            {
+                if (p->devep == 1 && usb_audio->alt_iface_enabled)
+                {
+                    // Null packets must be accepted as well.
+                    if (p->len > 0)
+                        fifo8_push_all(&usb_audio->audio_buf, p->data, p->len);
+                    ret = p->len;
+                    if (p->len > 0)
+                        usb_audio->transfer_detected = true;
+                }
+                else
+                {
+                    goto fail;
+                }
+            }
+            break;
+        default:
+fail:
+            device->stall = 1;
+            ret           = USB_RET_STALL;
+            break;
+    }
+
+    return ret;
+}
+
+/*  We need to maintain a constant stream of data to the audio backend. The OS isn't
+    obliged to send zero-length packets in isochronous transfers to signal end of audio buffers.
+*/
+
+static uint8_t zero[192];
+static void
+usb_audio_sof(void *priv)
+{
+    usb_device_audio* usb_audio = (usb_device_audio*)priv;
+
+    if (!usb_audio->transfer_detected) {
+        fifo8_push_all(&usb_audio->audio_buf, zero, 192);
+    }
+        
+    usb_audio->transfer_detected = false;
+}
+
 static void
 usb_audio_get_buffer(int32_t *buffer, int len, void *priv)
 {
     usb_device_audio* usb_audio = (usb_device_audio*)priv;
 
-    if (usb_audio->alt_iface_enabled == 0)
-        return;
-    
     if (fifo8_num_used(&usb_audio->audio_buf) < (SOUNDBUFLEN * 2 * 2))
     {
-        usb_audio->buffer_retented = 0;
         return;
     }
-
-    usb_audio->buffer_retented++;
-    if (usb_audio->buffer_retented < 2)
-        return;
 
     fifo8_pop_buf(&usb_audio->audio_buf, (uint8_t*)usb_audio->buffer, sizeof (usb_audio->buffer));
     if (usb_audio->mute)
@@ -506,6 +513,7 @@ usb_audio_device_create(const device_t *info)
     usb_audio->device.connected                                     = true;
     usb_audio->device.iface_alt                                     = 1;
     usb_audio->device.alt_iface_max                                 = 1;
+    usb_audio->device.sof_callback                                  = usb_audio_sof;
 
     usb_audio->device.handle_iface_change = usb_device_audio_handle_iface_change;
     usb_audio->device.handle_control = usb_device_audio_handle_control;
