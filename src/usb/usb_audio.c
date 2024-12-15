@@ -46,7 +46,7 @@ static const uint8_t bx_audio_config_descriptor[] =
 {
     0x09,       /*  u8  bLength; */
     0x02,       /*  u8  bDescriptorType; Configuration */
-    108, 0x00,  /*  u16 wTotalLength; */
+    113, 0x00,  /*  u16 wTotalLength; */
     0x02,       /*  u8  bNumInterfaces; (1) */
     0x01,       /*  u8  bConfigurationValue; */
     0x04,       /*  u8  iConfiguration; */
@@ -73,7 +73,7 @@ static const uint8_t bx_audio_config_descriptor[] =
     0x24,       /* u8 bDescriptor Type (CS_INTERFACE); */
     0x01,       /* u8 bDescriptorSubType (HEADER); */
     0x00, 0x01, /* u16 bcdADC; */
-    0x09 + 0x0c + 0x09 + 0x09, 0x00, /* u16 wTotalLength; */
+    0x09 + 0x0c + 0x0d + 0x09, 0x00, /* u16 wTotalLength; */
     0x01,       /* u8 bInCollection; */
     0x01,       /* u8 baInterfaceNr; */
 
@@ -90,13 +90,15 @@ static const uint8_t bx_audio_config_descriptor[] =
     0x00,       /* u8 iTerminal; */
 
     /* Feature Unit ID2 Descriptor */
-    0x09,       /* u8 bLength; */
+    0x0d,       /* u8 bLength; */
     0x24,       /* u8 bDescriptorType; */
     0x06,       /* u8 bDescriptorSubtype; */
     0x02,       /* u8 bUnitID; */
     0x01,       /* u8 bSourceID; */
     0x02,       /* u8 bControlSize; */
-    0x02, 0x00, /* u16 bmaControls(0); */
+    0x01, 0x00, /* u16 bmaControls(0); */
+    0x02, 0x00, /* u16 bmaControls(1); */
+    0x02, 0x00, /* u16 bmaControls(2); */
     0x00,       /* u8 iFeature; */
 
     /* Output Terminal ID3 Descriptor */
@@ -207,7 +209,8 @@ typedef struct usb_device_audio
     Fifo8 audio_buf;
     int16_t buffer[SOUNDBUFLEN * 2];
 
-    int16_t vol;
+    int16_t vol[2];
+    bool mute;
     
     int alt_iface_enabled;
     int buffer_retented;
@@ -288,29 +291,29 @@ static int usb_device_audio_get_control(usb_device_audio *device, uint8_t attrib
     switch (aid)
     {
     case ATTRIB_ID(VOLUME_CONTROL, CR_GET_CUR, 0x0200):
-        if (cn == 255) {
-            uint16_t vol = (uint16_t)device->vol;
+        if (cn < 2) {
+            uint16_t vol = (uint16_t)device->vol[cn];
             data[0] = vol;
             data[1] = vol >> 8;
             ret = 2;
         }
         break;
     case ATTRIB_ID(VOLUME_CONTROL, CR_GET_MIN, 0x0200):
-        if (cn == 255) {
+        if (cn < 2) {
             data[0] = 0x01;
             data[1] = 0x80;
             ret = 2;
         }
         break;
     case ATTRIB_ID(VOLUME_CONTROL, CR_GET_MAX, 0x0200):
-        if (cn == 255) {
+        if (cn < 2) {
             data[0] = 0x00;
             data[1] = 0x00;
             ret = 2;
         }
         break;
     case ATTRIB_ID(VOLUME_CONTROL, CR_GET_RES, 0x0200):
-        if (cn == 255) {
+        if (cn < 2) {
             data[0] = 0x01;
             data[1] = 0x00;
             ret = 2;
@@ -330,10 +333,16 @@ static int usb_device_audio_set_control(usb_device_audio *device, uint8_t attrib
     uint32_t aid = ATTRIB_ID(val, attrib, idif);
     int ret = USB_RET_STALL;
 
-    if (aid == ATTRIB_ID(VOLUME_CONTROL, CR_SET_CUR, 0x0200) && cn == 255)
+    if (aid == ATTRIB_ID(MUTE_CONTROL, CR_SET_CUR, 0x0200))
+    {
+        device->mute = data[0] & 1;
+        ret = 0;
+    }
+
+    if (aid == ATTRIB_ID(VOLUME_CONTROL, CR_SET_CUR, 0x0200) && cn < 2)
     {
         int16_t vol = data[0] + (data[1] << 8);
-        device->vol = vol;
+        device->vol[cn] = vol;
         ret = 0;
     }
 
@@ -419,14 +428,14 @@ usb_audio_get_buffer(int32_t *buffer, int len, void *priv)
         return;
 
     fifo8_pop_buf(&usb_audio->audio_buf, (uint8_t*)usb_audio->buffer, sizeof (usb_audio->buffer));
-    if (usb_audio->vol == ((int16_t)0x8000))
+    if (usb_audio->mute)
         return; // Utter silence.
-    
-    double decibels = (usb_audio->vol / -32768.0) * 128.0;
-    double gain = (double)pow(10, (double)-decibels / 20.0);
 
-    for (int c = 0; c < len * 2; c++)
+    for (int c = 0; c < len * 2; c++) {
+        double decibels = (usb_audio->vol[c & 1] / -32768.0) * 128.0;
+        double gain = (double)pow(10, (double)-decibels / 20.0);
         buffer[c] += usb_audio->buffer[c] * gain;
+    }
 }
 
 void *
