@@ -570,7 +570,7 @@ usb_device_audio_destroy(void* priv)
 }
 
 const device_t usb_audio_device = {
-    .name          = "USB Audio",
+    .name          = "Desktop Speakers",
     .internal_name = "usb_audio",
     .flags         = DEVICE_USB,
     .local         = 0,
