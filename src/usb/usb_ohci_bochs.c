@@ -1,3 +1,23 @@
+/*
+ * 86Box    A hypervisor and IBM PC system emulator that specializes in
+ *          running old operating systems and software designed for IBM
+ *          PC systems and compatibles from 1981 through fairly recent
+ *          system designs based on the PCI bus.
+ *
+ *          This file is part of the 86Box distribution.
+ *
+ *          USB OHCI host controller emulation, ported from Bochs.
+ *
+ * Authors: Cacodemon345
+ *          Benjamin D Lunt (fys [at] fysnet [dot] net)
+ *          The Bochs Project
+ * 
+ *          Copyright 2009-2024  Benjamin D Lunt (fys [at] fysnet [dot] net)
+ *          Copyright 2009-2024  The Bochs Project
+ *          Copyright 2024       Cacodemon345
+ *          
+ */
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>
