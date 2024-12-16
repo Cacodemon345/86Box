@@ -340,9 +340,6 @@ static int usb_device_audio_set_control(usb_device_audio *device, uint8_t attrib
         ret = 0;
     }
 
-    if (ret < 0)
-        pclog("ATTRIB_ID(0x%X, 0x%X, 0x%04X), ret = %d (set)\n", val, attrib, idif, ret);
-
     return ret;
 }
 
@@ -386,19 +383,19 @@ usb_device_audio_handle_control(usb_device_c *device, int request, int value, in
                 goto fail;
             break;
         /* Class-specific requests. */
-        case DeviceClassInRequest | CR_GET_CUR:
-        case DeviceClassInRequest | CR_GET_MIN:
-        case DeviceClassInRequest | CR_GET_MAX:
-        case DeviceClassInRequest | CR_GET_RES:
+        case InterfaceInClassRequest | CR_GET_CUR:
+        case InterfaceInClassRequest | CR_GET_MIN:
+        case InterfaceInClassRequest | CR_GET_MAX:
+        case InterfaceInClassRequest | CR_GET_RES:
             ret = usb_device_audio_get_control(usb_audio, request & 0xff, value, index,
                                         length, data);
             break;
 
 
-        case DeviceOutClassRequest | CR_SET_CUR:
-        case DeviceOutClassRequest | CR_SET_MIN:
-        case DeviceOutClassRequest | CR_SET_MAX:
-        case DeviceOutClassRequest | CR_SET_RES:
+        case InterfaceOutClassRequest | CR_SET_CUR:
+        case InterfaceOutClassRequest | CR_SET_MIN:
+        case InterfaceOutClassRequest | CR_SET_MAX:
+        case InterfaceOutClassRequest | CR_SET_RES:
             ret = usb_device_audio_set_control(usb_audio, request & 0xff, value, index,
                                         length, data);
             break;
@@ -409,6 +406,10 @@ usb_device_audio_handle_control(usb_device_c *device, int request, int value, in
             ret           = USB_RET_STALL;
             break;
     }
+
+    if (ret < 0)
+        pclog("request = 0x%04X, value = 0x%04X, index = 0x%04X, length = %d\n", request, value, index, length);
+
     return ret;
 }
 
