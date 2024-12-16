@@ -15,6 +15,11 @@
  *          Copyright 2009-2024  Benjamin D Lunt (fys [at] fysnet [dot] net)
  *          Copyright 2009-2024  The Bochs Project
  *          Copyright 2024       Cacodemon345
+ * 
+ * QEMU isochronous transfer code:
+ *          Copyright 2004 Gianni Tedesco
+ *          Copyright 2006 CodeSourcery
+ *          Copyright 2006 Openedhand Ltd.
  *          
  */
 
