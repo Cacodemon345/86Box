@@ -1,3 +1,26 @@
+/*
+ * 86Box    A hypervisor and IBM PC system emulator that specializes in
+ *          running old operating systems and software designed for IBM
+ *          PC systems and compatibles from 1981 through fairly recent
+ *          system designs based on the PCI bus.
+ *
+ *          This file is part of the 86Box distribution.
+ *
+ *          USB Audio emulation, ported from QEMU.
+ *
+ * Authors: Cacodemon345
+ *          H. Peter Anvin <hpa@linux.intel.com>
+ *          Gerd Hoffmann <kraxel@redhat.com>
+ *
+ *          Copyright 2024 Cacodemon345
+ *          Copyright 2010-2019 Gerd Hoffmann
+ *          Copyright 2010 H. Peter Anvin
+ *          
+ *          Original code based on USB net device code:
+ *          Copyright 2006 Thomas Sailer
+ *          Copyright 2008 Andrzej Zaborowski
+ */
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>
