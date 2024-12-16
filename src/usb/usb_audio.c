@@ -36,9 +36,6 @@ enum usb_audio_strings {
 };
 
 static const char* usb_audio_stringtable[] = {
-    [STRING_MANUFACTURER]       = "QEMU",
-    [STRING_PRODUCT]            = "QEMU USB Audio",
-    [STRING_SERIALNUMBER]       = "1",
     [STRING_CONFIG]             = "Audio Configuration",
     [STRING_USBAUDIO_CONTROL]   = "Audio Device",
     [STRING_INPUT_TERMINAL]     = "Audio Output Pipe",
@@ -263,12 +260,8 @@ usb_device_audio_handle_iface_change(usb_device_c* device, int iface)
         fifo8_reset(&usb_audio->audio_buf);
 }
 
-/*
- * Note: we arbitrarily map the volume control range onto -inf..+8 dB
- */
 #define ATTRIB_ID(cs, attrib, idif)     \
     (((cs) << 24) | ((attrib) << 16) | (idif))
-
 
 static int usb_device_audio_get_control(usb_device_audio *device, uint8_t attrib,
                                  uint16_t cscn, uint16_t idif,
@@ -297,8 +290,8 @@ static int usb_device_audio_get_control(usb_device_audio *device, uint8_t attrib
         break;
     case ATTRIB_ID(VOLUME_CONTROL, CR_GET_MIN, 0x0200):
         if (cn < 2) {
-            data[0] = 0x01;
-            data[1] = 0x80;
+            data[0] = 0x00;
+            data[1] = 0xc2;
             ret = 2;
         }
         break;
@@ -486,8 +479,8 @@ usb_audio_get_buffer(int32_t *buffer, int len, void *priv)
         return; // Utter silence.
 
     for (int c = 0; c < len * 2; c++) {
-        double decibels = (usb_audio->vol[c & 1] / -32768.0) * 128.0;
-        double gain = (double)pow(10, (double)-decibels / 20.0);
+        double decibels = (usb_audio->vol[c & 1] / 32768.0) * 128.0;
+        double gain = (usb_audio->vol[c & 1] == ((int16_t)0x8000)) ? 0.0 : (double)pow(10, (double)decibels / 20.0);
         buffer[c] += usb_audio->buffer[c] * gain;
     }
 }
