@@ -852,6 +852,10 @@ usb_uhci_read(uint16_t address, void *priv)
 
         case 0x06: // frame number register (16-bit)
             val = hub->usb_frame_num.frame_num;
+#ifdef USE_DYNAREC
+            if (cpu_use_dynarec)
+                update_tsc();
+#endif
             break;
 
         case 0x08: // frame base register (32-bit)
