@@ -281,6 +281,12 @@ static int usb_device_audio_get_control(usb_device_audio *device, uint8_t attrib
 
     switch (aid)
     {
+    case ATTRIB_ID(MUTE_CONTROL, CR_GET_CUR, 0x0200):
+    {
+        data[0] = device->mute;
+        ret = 1;
+        break;
+    }
     case ATTRIB_ID(VOLUME_CONTROL, CR_GET_CUR, 0x0200):
         if (cn < 2) {
             uint16_t vol = (uint16_t)device->vol[cn];
