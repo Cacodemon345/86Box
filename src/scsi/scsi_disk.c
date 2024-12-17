@@ -69,7 +69,9 @@ const uint8_t scsi_disk_command_flags[0x100] = {
     0, 0,
     IMPLEMENTED,               /* 0x1D */
     IMPLEMENTED | CHECK_READY, /* 0x1E */
-    0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0,
+    IMPLEMENTED | CHECK_READY, /* 0x23 */
+    0,
     IMPLEMENTED | CHECK_READY, /* 0x25 */
     0, 0,
     IMPLEMENTED | CHECK_READY, /* 0x28 */
@@ -1282,6 +1284,39 @@ scsi_disk_command(scsi_common_t *sc, uint8_t *cdb)
             dev->total_length = len;
             dev->do_page_save = cdb[1] & 1;
             scsi_disk_data_command_finish(dev, len, len, len, 1);
+            return;
+
+        case GPCMD_READ_FORMAT_CAPACITIES:
+            max_len = cdb[7];
+            max_len <<= 8;
+            max_len |= cdb[8];
+
+            if ((!max_len) || (*BufLen == 0)) {
+                scsi_disk_set_phase(dev, SCSI_PHASE_STATUS);
+                /* scsi_disk_log("SCSI HD %i: All done - callback set\n", dev->id); */
+                dev->packet_status = PHASE_COMPLETE;
+                dev->callback      = 20.0 * SCSI_TIME;
+                break;
+            }
+
+            max_len = hdd_image_get_last_sector(dev->id);
+            memset(dev->temp_buffer, 0, 12);
+
+            dev->temp_buffer[3] = 12;
+            dev->temp_buffer[4] = (max_len >> 24) & 0xff;
+            dev->temp_buffer[5] = (max_len >> 16) & 0xff;
+            dev->temp_buffer[6] = (max_len >> 8) & 0xff;
+            dev->temp_buffer[7] = max_len & 0xff;
+            dev->temp_buffer[8] = 2;
+            dev->temp_buffer[9] = 0;
+            dev->temp_buffer[10] = 2;
+            dev->temp_buffer[11] = 0;
+            len                 = 12;
+
+            scsi_disk_set_buf_len(dev, BufLen, &len);
+
+            scsi_disk_set_phase(dev, SCSI_PHASE_DATA_IN);
+            scsi_disk_data_command_finish(dev, len, len, len, 0);
             return;
 
         case GPCMD_INQUIRY:

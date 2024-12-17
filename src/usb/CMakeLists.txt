@@ -13,4 +13,4 @@
 #          Copyright 2024 Cacodemon345.
 #
 
-add_library(usb OBJECT usb_hid_mouse.c usb_hid_keyboard.c usb_uhci_bochs.c usb_ohci_bochs.c usb_common.c usb_audio.c)
+add_library(usb OBJECT usb_hid_mouse.c usb_hid_keyboard.c usb_uhci_bochs.c usb_ohci_bochs.c usb_common.c usb_msd.c usb_audio.c)

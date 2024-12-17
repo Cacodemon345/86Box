@@ -304,4 +304,7 @@ int usb_device_get_mps(usb_device_c* device, const int ep);
 /* Events to send to the host controller. Send USB_EVENT_WAKEUP to wake up the host. */
 extern int usb_device_hc_event(usb_device_c* host, int event, usb_device_c *device);
 
+void usb_device_set_toggle(usb_device_c* device, int ep, int toggle);
+int usb_device_get_toggle(usb_device_c* device, int ep);
+
 #endif
