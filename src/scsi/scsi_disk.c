@@ -1297,7 +1297,12 @@ scsi_disk_command(scsi_common_t *sc, uint8_t *cdb)
                 dev->packet_status = PHASE_COMPLETE;
                 dev->callback      = 20.0 * SCSI_TIME;
                 break;
+            } else if (max_len < 12) {
+                scsi_disk_data_phase_error(dev);
+                return;
             }
+
+            scsi_disk_buf_alloc(dev, 256);
 
             max_len = hdd_image_get_last_sector(dev->id);
             memset(dev->temp_buffer, 0, 12);
