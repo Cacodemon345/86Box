@@ -322,6 +322,9 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                         if (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length == 0 && cur_phase == SCSI_PHASE_DATA_OUT)
                             scsi_device_command_phase1(&scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun]);
                         usb_msd->current_csw.bCSWStatus = (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].phase == SCSI_PHASE_STATUS) ? (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].status == SCSI_STATUS_CHECK_CONDITION) : 2;
+                    } else {
+                        if (usb_msd->current_cbw.dCBWDataTransferLength >= scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length)
+                            usb_msd->current_csw.dCSWDataResidue = usb_msd->current_cbw.dCBWDataTransferLength - scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length;
                     }
                     break;
                 }
