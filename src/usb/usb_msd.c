@@ -246,6 +246,14 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
             if (p->devep != 2)
                 goto fail;
             
+            if (usb_msd->phase != USB_MSDM_CBW && usb_msd->phase != USB_MSDM_CSW && usb_msd->current_cbw.dCBWDataTransferLength < scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length)
+            {
+                pclog("Phase error\n");
+                usb_msd->phase = USB_MSDM_CSW;
+                usb_msd->current_csw.bCSWStatus = 0x02;
+                goto fail;
+            }
+
             switch (usb_msd->phase)
             {
                 case USB_MSDM_CBW:
@@ -280,7 +288,6 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                     usb_msd->current_csw.dCSWTag       = cbw->dCBWTag;
 
                     if (usb_msd->phase == USB_MSDM_DATAIN) {
-                        pclog("dCBWDataTransferLength = %u\n", cbw->dCBWDataTransferLength);
                         if (cbw->CBWCB[0] == GPCMD_INQUIRY || cbw->CBWCB[0] == GPCMD_READ_FORMAT_CAPACITIES) {
                             scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].sc->temp_buffer = calloc(1, cbw->dCBWDataTransferLength);
                             scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length = cbw->dCBWDataTransferLength;
@@ -288,7 +295,22 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                     }
 
                     ret = len;
-                    pclog("CBWCB { 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X }\n", cbw->CBWCB[0], cbw->CBWCB[1], cbw->CBWCB[2], cbw->CBWCB[3], cbw->CBWCB[4], cbw->CBWCB[5], cbw->CBWCB[6], cbw->CBWCB[7], cbw->CBWCB[8], cbw->CBWCB[9], cbw->CBWCB[10], cbw->CBWCB[11], cbw->CBWCB[12], cbw->CBWCB[13], cbw->CBWCB[14], cbw->CBWCB[15]);
+                    pclog("CBWCB { 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X }\n", cbw->CBWCB[0],
+                                                                                                                                                                        cbw->CBWCB[1],
+                                                                                                                                                                        cbw->CBWCB[2],
+                                                                                                                                                                        cbw->CBWCB[3],
+                                                                                                                                                                        cbw->CBWCB[4],
+                                                                                                                                                                        cbw->CBWCB[5],
+                                                                                                                                                                        cbw->CBWCB[6],
+                                                                                                                                                                        cbw->CBWCB[7],
+                                                                                                                                                                        cbw->CBWCB[8],
+                                                                                                                                                                        cbw->CBWCB[9],
+                                                                                                                                                                        cbw->CBWCB[10],
+                                                                                                                                                                        cbw->CBWCB[11],
+                                                                                                                                                                        cbw->CBWCB[12],
+                                                                                                                                                                        cbw->CBWCB[13],
+                                                                                                                                                                        cbw->CBWCB[14],
+                                                                                                                                                                        cbw->CBWCB[15]);
                     scsi_device_command_phase0(&scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun], cbw->CBWCB);
 
                     usb_msd->temp_index = 0;
@@ -360,6 +382,14 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
         {
             if (p->devep != 0x01)
                 goto fail;
+
+            if (usb_msd->phase != USB_MSDM_CBW && usb_msd->phase != USB_MSDM_CSW && usb_msd->current_cbw.dCBWDataTransferLength < scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length)
+            {
+                pclog("Phase error\n");
+                usb_msd->phase = USB_MSDM_CSW;
+                usb_msd->current_csw.bCSWStatus = 0x02;
+                goto fail;
+            }
 
             switch (usb_msd->phase)
             {
