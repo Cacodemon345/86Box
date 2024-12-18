@@ -284,7 +284,16 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
         {
             if (p->devep != 2)
                 goto fail;
-            
+
+            if (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].status == SCSI_STATUS_CHECK_CONDITION) {
+                usb_msd_log("Command failed\n");
+                usb_msd->phase = USB_MSDM_CSW;
+                usb_msd->current_csw.bCSWStatus = 0x01;
+                usb_msd->current_csw.dCSWDataResidue = 0x0;
+                scsi_device_command_stop(&scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun]);
+                goto fail;
+            }
+
             if (usb_msd->phase != USB_MSDM_CBW && usb_msd->phase != USB_MSDM_CSW && usb_msd->current_cbw.dCBWDataTransferLength < scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length)
             {
                 usb_msd_log("Phase error\n");
@@ -432,6 +441,15 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
             if (p->devep != 0x01)
                 goto fail;
 
+            if (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].status == SCSI_STATUS_CHECK_CONDITION) {
+                usb_msd_log("Command failed (data in)\n");
+                usb_msd->phase = USB_MSDM_CSW;
+                usb_msd->current_csw.bCSWStatus = 0x01;
+                usb_msd->current_csw.dCSWDataResidue = 0x0;
+                scsi_device_command_stop(&scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun]);
+                goto fail;
+            }
+
             if (usb_msd->phase != USB_MSDM_CBW && usb_msd->phase != USB_MSDM_CSW && usb_msd->current_cbw.dCBWDataTransferLength < scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length)
             {
                 usb_msd_log("Phase error\n");
@@ -459,14 +477,6 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                 case USB_MSDM_DATAIN:
                 {
                     uint32_t len = p->len;
-                    if (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].status == SCSI_STATUS_CHECK_CONDITION) {
-                        usb_msd_log("Command failed (data in)\n");
-                        usb_msd->phase = USB_MSDM_CSW;
-                        usb_msd->current_csw.bCSWStatus = 0x01;
-                        usb_msd->current_csw.dCSWDataResidue = 0x0;
-                        scsi_device_command_stop(&scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun]);
-                        goto fail;
-                    }
                     if (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].phase != SCSI_PHASE_DATA_IN) {
                         usb_msd_log("Phase error (not data in, phase 0x%02X)\n", scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].phase);
                         usb_msd->phase = USB_MSDM_CSW;
