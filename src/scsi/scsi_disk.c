@@ -1297,9 +1297,6 @@ scsi_disk_command(scsi_common_t *sc, uint8_t *cdb)
                 dev->packet_status = PHASE_COMPLETE;
                 dev->callback      = 20.0 * SCSI_TIME;
                 break;
-            } else if (max_len < 12) {
-                scsi_disk_data_phase_error(dev);
-                return;
             }
 
             scsi_disk_buf_alloc(dev, 256);
@@ -1307,7 +1304,7 @@ scsi_disk_command(scsi_common_t *sc, uint8_t *cdb)
             max_len = hdd_image_get_last_sector(dev->id) + 1;
             memset(dev->temp_buffer, 0, 20);
 
-            dev->temp_buffer[3] = 16;
+            dev->temp_buffer[3] = 8;
 
             dev->temp_buffer[4] = (max_len >> 24) & 0xff;
             dev->temp_buffer[5] = (max_len >> 16) & 0xff;
@@ -1318,16 +1315,7 @@ scsi_disk_command(scsi_common_t *sc, uint8_t *cdb)
             dev->temp_buffer[10] = 2;
             dev->temp_buffer[11] = 0;
 
-            dev->temp_buffer[12] = (max_len >> 24) & 0xff;
-            dev->temp_buffer[13] = (max_len >> 16) & 0xff;
-            dev->temp_buffer[14] = (max_len >> 8) & 0xff;
-            dev->temp_buffer[15] = max_len & 0xff;
-            dev->temp_buffer[16] = 0;
-            dev->temp_buffer[17] = 0;
-            dev->temp_buffer[18] = 2;
-            dev->temp_buffer[19] = 0;
-
-            len                 = 20;
+            len                 = 12;
 
             scsi_disk_set_buf_len(dev, BufLen, &len);
 

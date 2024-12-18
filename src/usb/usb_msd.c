@@ -162,6 +162,7 @@ typedef struct usb_device_msd
     uint32_t force_stall;
 } usb_device_msd;
 
+#define ENABLE_USB_MSD_LOG 1
 #ifdef ENABLE_USB_MSD_LOG
 int usb_msd_do_log = ENABLE_USB_MSD_LOG;
 
@@ -361,8 +362,14 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                             scsi_device_command_phase1(&scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun]);
                         usb_msd->current_csw.bCSWStatus = (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].phase == SCSI_PHASE_STATUS) ? (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].status == SCSI_STATUS_CHECK_CONDITION) : 2;
                     } else {
-                        if (usb_msd->current_cbw.dCBWDataTransferLength >= scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length)
+                        if (usb_msd->current_cbw.dCBWDataTransferLength >= scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length) {
                             usb_msd->current_csw.dCSWDataResidue = usb_msd->current_cbw.dCBWDataTransferLength - scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length;
+                            if (usb_msd->phase == USB_MSDM_DATAIN) {
+                                scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].sc->temp_buffer = realloc(scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].sc->temp_buffer, usb_msd->current_cbw.dCBWDataTransferLength);
+                                usb_msd->data_in_len = usb_msd->current_cbw.dCBWDataTransferLength;
+                                scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length = usb_msd->data_in_len;
+                            }
+                        }
                     }
                     break;
                 }
@@ -404,7 +411,6 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                         usb_msd->phase = USB_MSDM_CSW;
                         usb_msd->current_csw.bCSWStatus = (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].status == SCSI_STATUS_CHECK_CONDITION);
                         usb_msd->current_csw.dCSWDataResidue = residue;
-                        usb_msd->force_stall = 1;
                     }
                     ret = p->len;
                     break;
@@ -477,17 +483,11 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                     if (usb_msd->data_in_len == 0)
                     {
                         usb_msd_log("Transfer finished (data in)\n");
-                        usb_msd->current_csw.dCSWDataResidue = usb_msd->current_cbw.dCBWDataTransferLength - scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length;
                         scsi_device_command_phase1(&scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun]);
-                        if (usb_msd->current_cbw.dCBWDataTransferLength < scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length)
-                        {
-                            usb_msd->current_csw.bCSWStatus = 0x02;
-                            usb_msd->current_csw.dCSWDataResidue = 0;
-                        } else {
-                            usb_msd->current_csw.bCSWStatus = (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].status == SCSI_STATUS_CHECK_CONDITION);
-                        }
+                        usb_msd->current_csw.bCSWStatus = (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].status == SCSI_STATUS_CHECK_CONDITION);
                         usb_msd->phase = USB_MSDM_CSW;
-                        usb_msd->force_stall = 1;
+//                        if (usb_msd->current_csw.dCSWDataResidue)
+//                            usb_msd->force_stall = 1;
                     }
                     break;
                 }
