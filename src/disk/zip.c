@@ -70,7 +70,7 @@ const uint8_t zip_command_flags[0x100] = {
     IMPLEMENTED,               /* 0x1D */
     IMPLEMENTED | CHECK_READY, /* 0x1E */
     0, 0, 0, 0,
-    IMPLEMENTED | ATAPI_ONLY, /* 0x23 */
+    IMPLEMENTED, /* 0x23 */
     0,
     IMPLEMENTED | CHECK_READY, /* 0x25 */
     0, 0,
@@ -1997,7 +1997,14 @@ atapi_out:
         case GPCMD_READ_FORMAT_CAPACITIES:
             len = (cdb[7] << 8) | cdb[8];
 
-            zip_buf_alloc(dev, len);
+            if (!len) {
+                zip_set_phase(dev, SCSI_PHASE_STATUS);
+                dev->packet_status = PHASE_COMPLETE;
+                dev->callback      = 20.0 * SCSI_TIME;
+                break;
+            }
+
+            zip_buf_alloc(dev, 256);
             memset(dev->buffer, 0, len);
 
             pos = 0;
