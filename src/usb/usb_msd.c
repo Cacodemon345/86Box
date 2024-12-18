@@ -1,3 +1,21 @@
+/*
+ * 86Box    A hypervisor and IBM PC system emulator that specializes in
+ *          running old operating systems and software designed for IBM
+ *          PC systems and compatibles from 1981 through fairly recent
+ *          system designs based on the PCI bus.
+ *
+ *          This file is part of the 86Box distribution.
+ *
+ *          USB mass storage emulation, ported from Bochs and somewhat rewritten.
+ *
+ * Authors: Cacodemon345
+ *          Paul Brook
+ * 
+ *          Copyright 2006 CodeSourcery
+ *          Copyright 2024 Cacodemon345
+ *          
+ */
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -144,6 +162,24 @@ typedef struct usb_device_msd
     uint32_t force_stall;
 } usb_device_msd;
 
+#ifdef ENABLE_USB_MSD_LOG
+int usb_msd_do_log = ENABLE_USB_MSD_LOG;
+
+static void
+usb_msd_log(const char *fmt, ...)
+{
+    va_list ap;
+
+    if (usb_msd_do_log) {
+        va_start(ap, fmt);
+        pclog_ex(fmt, ap);
+        va_end(ap);
+    }
+}
+#else
+#    define usb_msd_log(fmt, ...)
+#endif
+
 int
 usb_device_msd_handle_control(usb_device_c *device, int request, int value, int index, int length, uint8_t *data)
 {
@@ -214,7 +250,7 @@ usb_device_msd_handle_control(usb_device_c *device, int request, int value, int 
 
 
     if (ret < 0)
-        pclog("request = 0x%04X, value = 0x%04X, index = 0x%04X, length = %d\n", request, value, index, length);
+        usb_msd_log("request = 0x%04X, value = 0x%04X, index = 0x%04X, length = %d\n", request, value, index, length);
 
     return ret;
 }
@@ -250,7 +286,7 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
             
             if (usb_msd->phase != USB_MSDM_CBW && usb_msd->phase != USB_MSDM_CSW && usb_msd->current_cbw.dCBWDataTransferLength < scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length)
             {
-                pclog("Phase error\n");
+                usb_msd_log("Phase error\n");
                 usb_msd->phase = USB_MSDM_CSW;
                 usb_msd->current_csw.bCSWStatus = 0x02;
                 goto fail;
@@ -267,12 +303,12 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                 {
                     usb_msd_cbw* cbw = (usb_msd_cbw*)p->data;
                     if (len != 31) {
-                        pclog("len != 31\n");
+                        usb_msd_log("len != 31\n");
                         goto fail;
                     }
                     
                     if (cbw->dCBWSignature != 0x43425355) {
-                        pclog("Mismatched signature\n");
+                        usb_msd_log("Mismatched signature\n");
                         goto fail;
                     }
                     
@@ -297,7 +333,7 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                     
 
                     ret = len;
-                    pclog("CBWCB { 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X }\n", cbw->CBWCB[0],
+                    usb_msd_log("CBWCB { 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X }\n", cbw->CBWCB[0],
                                                                                                                                                                         cbw->CBWCB[1],
                                                                                                                                                                         cbw->CBWCB[2],
                                                                                                                                                                         cbw->CBWCB[3],
@@ -333,7 +369,7 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                 case USB_MSDM_DATAOUT:
                 {
                     if (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].status == SCSI_STATUS_CHECK_CONDITION) {
-                        pclog("Command failed\n");
+                        usb_msd_log("Command failed\n");
                         usb_msd->phase = USB_MSDM_CSW;
                         usb_msd->current_csw.bCSWStatus = 0x01;
                         usb_msd->current_csw.dCSWDataResidue = 0x0;
@@ -341,7 +377,7 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                         goto fail;
                     }
                     if (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].phase != SCSI_PHASE_DATA_OUT) {
-                        pclog("Phase error (not data out)\n");
+                        usb_msd_log("Phase error (not data out, phase 0x%02X)\n", scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].phase);
                         usb_msd->phase = USB_MSDM_CSW;
                         usb_msd->current_csw.bCSWStatus = 0x02;
                         scsi_device_command_stop(&scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun]);
@@ -353,7 +389,7 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                     usb_msd->expected_len -= MIN(usb_msd->expected_len, p->len);
                     if (usb_msd->expected_len == 0 || p->len < 64)
                     {
-                        pclog("Transfer finished (data out)\n");
+                        usb_msd_log("Transfer finished (data out)\n");
                         int residue = usb_msd->current_cbw.dCBWDataTransferLength - scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length;
                         if (usb_msd->temp_index < scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length)
                         {
@@ -392,7 +428,7 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
 
             if (usb_msd->phase != USB_MSDM_CBW && usb_msd->phase != USB_MSDM_CSW && usb_msd->current_cbw.dCBWDataTransferLength < scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length)
             {
-                pclog("Phase error\n");
+                usb_msd_log("Phase error\n");
                 usb_msd->phase = USB_MSDM_CSW;
                 usb_msd->current_csw.bCSWStatus = 0x02;
                 usb_msd->force_stall = 0;
@@ -408,7 +444,7 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
             {
                 case USB_MSDM_DATAOUT:
                 {
-                    pclog("Data out error (not data in)\n");
+                    usb_msd_log("Data out error (not data in)\n");
                     usb_msd->phase = USB_MSDM_CSW;
                     usb_msd->current_csw.bCSWStatus = 0x02;
                     scsi_device_command_stop(&scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun]);
@@ -418,7 +454,7 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                 {
                     uint32_t len = p->len;
                     if (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].status == SCSI_STATUS_CHECK_CONDITION) {
-                        pclog("Command failed (data in)\n");
+                        usb_msd_log("Command failed (data in)\n");
                         usb_msd->phase = USB_MSDM_CSW;
                         usb_msd->current_csw.bCSWStatus = 0x01;
                         usb_msd->current_csw.dCSWDataResidue = 0x0;
@@ -426,7 +462,7 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                         goto fail;
                     }
                     if (scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].phase != SCSI_PHASE_DATA_IN) {
-                        pclog("Phase error (not data in, phase 0x%02X)\n", scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].phase);
+                        usb_msd_log("Phase error (not data in, phase 0x%02X)\n", scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].phase);
                         usb_msd->phase = USB_MSDM_CSW;
                         usb_msd->current_csw.bCSWStatus = 0x02;
                         scsi_device_command_stop(&scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun]);
@@ -440,7 +476,7 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                     ret = len;
                     if (usb_msd->data_in_len == 0)
                     {
-                        pclog("Transfer finished (data in)\n");
+                        usb_msd_log("Transfer finished (data in)\n");
                         usb_msd->current_csw.dCSWDataResidue = usb_msd->current_cbw.dCBWDataTransferLength - scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length;
                         scsi_device_command_phase1(&scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun]);
                         if (usb_msd->current_cbw.dCBWDataTransferLength < scsi_devices[usb_msd->scsi_bus][usb_msd->current_lun].buffer_length)
@@ -462,7 +498,7 @@ usb_device_msd_handle_data(usb_device_c *device, USBPacket *p)
                     memcpy(p->data, (void*)&usb_msd->current_csw, MIN(p->len, 13));
                     ret = MIN(p->len, 13);
                     usb_msd->phase = USB_MSDM_CBW;
-                    pclog("CSW: 0x%08X, 0x%08X, 0x%08X, 0x%02X\n", usb_msd->current_csw.dCSWSignature, usb_msd->current_csw.dCSWTag, usb_msd->current_csw.dCSWDataResidue, usb_msd->current_csw.bCSWStatus);
+                    usb_msd_log("CSW: 0x%08X, 0x%08X, 0x%08X, 0x%02X\n", usb_msd->current_csw.dCSWSignature, usb_msd->current_csw.dCSWTag, usb_msd->current_csw.dCSWDataResidue, usb_msd->current_csw.bCSWStatus);
                     break;
                 }
             }

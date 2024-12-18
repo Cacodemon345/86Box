@@ -319,7 +319,7 @@ ohci_log(const char *fmt, ...)
 
     if (ohci_do_log) {
         va_start(ap, fmt);
-        ohci_log_ex(fmt, ap);
+        pclog_ex(fmt, ap);
         va_end(ap);
     }
 }
