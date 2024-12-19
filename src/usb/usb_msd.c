@@ -162,7 +162,6 @@ typedef struct usb_device_msd
     uint32_t force_stall;
 } usb_device_msd;
 
-#define ENABLE_USB_MSD_LOG 1
 #ifdef ENABLE_USB_MSD_LOG
 int usb_msd_do_log = ENABLE_USB_MSD_LOG;
 
@@ -583,6 +582,10 @@ usb_msd_device_create(const device_t *info)
 
     usb_msd->scsi_bus = scsi_get_bus();
     scsi_bus_set_speed(usb_msd->scsi_bus, 10000000.0);
+
+    for (uint8_t j = 0; j < SCSI_ID_MAX; j++) {
+        scsi_devices[usb_msd->scsi_bus][j].removable_bus = 1;
+    }
 
     return usb_msd;
 }

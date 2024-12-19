@@ -408,6 +408,8 @@ typedef struct scsi_device_t {
     uint8_t  phase;
     uint16_t type;
 
+    uint8_t removable_bus;
+
     scsi_common_t *sc;
 
     void    (*command)(scsi_common_t *sc, uint8_t *cdb);

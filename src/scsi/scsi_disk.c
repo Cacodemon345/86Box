@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <wchar.h>
+#include <stdbool.h>
 #define HAVE_STDARG_H
 #include <86box/86box.h>
 #include <86box/config.h>
@@ -894,10 +895,12 @@ scsi_disk_command(scsi_common_t *sc, uint8_t *cdb)
     int          block_desc             = 0;
     uint8_t      scsi_bus               = (dev->drv->scsi_id >> 4) & 0x0f;
     uint8_t      scsi_id                = dev->drv->scsi_id & 0x0f;
+    bool         removable_bus          = false;
 
     if (dev->drv->bus == HDD_BUS_SCSI) {
         BufLen = &scsi_devices[scsi_bus][scsi_id].buffer_length;
         dev->tf->status &= ~ERR_STAT;
+        removable_bus = !!scsi_devices[scsi_bus][scsi_id].removable_bus;
     } else {
         BufLen           = &blen;
         dev->tf->error   = 0;
@@ -1395,7 +1398,7 @@ scsi_disk_command(scsi_common_t *sc, uint8_t *cdb)
                     dev->temp_buffer[0] = 0x7f; /*No physical device on this LUN*/
                 else
                     dev->temp_buffer[0] = 0;    /*SCSI HD*/
-                dev->temp_buffer[1] = 0;    /*Fixed*/
+                dev->temp_buffer[1] = removable_bus ? 0x80 : 0x00;    /*0x00 = Fixed, 0x80 = Removable (USB disks) */
                 dev->temp_buffer[2] = (dev->drv->bus == HDD_BUS_SCSI) ? 0x02 : 0x00; /*SCSI-2 compliant*/
                 dev->temp_buffer[3] = (dev->drv->bus == HDD_BUS_SCSI) ? 0x02 : 0x21;
                 dev->temp_buffer[4] = 31;
@@ -1783,7 +1786,7 @@ scsi_disk_hard_reset(void)
             sd->reset          = scsi_disk_reset;
             sd->phase_data_out = scsi_disk_phase_data_out;
             sd->command_stop   = scsi_disk_command_stop;
-            sd->type           = SCSI_FIXED_DISK;
+            sd->type           = sd->removable_bus ? SCSI_REMOVABLE_DISK : SCSI_FIXED_DISK;
 
             scsi_disk_log("SCSI disk %i attached to SCSI ID %i\n", c, hdd[c].scsi_id);
         } else if (hdd[c].bus == HDD_BUS_ATAPI) {
