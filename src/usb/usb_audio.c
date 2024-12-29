@@ -447,6 +447,11 @@ usb_device_audio_handle_data(usb_device_c *device, USBPacket *p)
             {
                 if (p->devep == 1 && usb_audio->alt_iface_enabled)
                 {
+                    // Avoid overruns.
+                    if (usb_audio->transfer_detected && p->len > 0) {
+                        //pclog("Buffer overrun!");
+                        fifo8_drop(&usb_audio->audio_buf, MIN(fifo8_num_used(&usb_audio->audio_buf), p->len));
+                    }
                     // Null packets must be accepted as well.
                     if (p->len > 0)
                         fifo8_push_all(&usb_audio->audio_buf, p->data, p->len);
