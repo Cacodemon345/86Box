@@ -749,7 +749,7 @@ usb_uhci_do_transfer(bx_uhci_core_t *hub, uint32_t address, struct TD *td)
         if (!(td->dword1 & (1 << 25)))
             td->dword1 |= (1 << 23);
     } else {
-        set_status(td, 1, 0, 0, 0, 0, 0, 0x007); // stalled
+        set_status(td, 1, 0, 0, 0, 0, 0, 0x7FF); // stalled
     }
     remove_async_packet(&hub->packets, p);
     return 1;
