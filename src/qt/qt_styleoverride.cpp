@@ -1,29 +1,37 @@
 /*
- * 86Box	A hypervisor and IBM PC system emulator that specializes in
- *		running old operating systems and software designed for IBM
- *		PC systems and compatibles from 1981 through fairly recent
- *		system designs based on the PCI bus.
+ * 86Box    A hypervisor and IBM PC system emulator that specializes in
+ *          running old operating systems and software designed for IBM
+ *          PC systems and compatibles from 1981 through fairly recent
+ *          system designs based on the PCI bus.
  *
- *		This file is part of the 86Box distribution.
+ *          This file is part of the 86Box distribution.
  *
- *		Style override class.
+ *          Style override class.
  *
  *
  *
- * Authors:	Teemu Korhonen
+ * Authors: Teemu Korhonen
  *
- *		Copyright 2022 Teemu Korhonen
+ *          Copyright 2022 Teemu Korhonen
  */
 #include "qt_styleoverride.hpp"
 
 #include <QComboBox>
 #include <QAbstractItemView>
 
-int StyleOverride::styleHint(
-        StyleHint hint,
-        const QStyleOption *option,
-        const QWidget *widget,
-        QStyleHintReturn *returnData) const
+#ifdef Q_OS_WINDOWS
+#include <dwmapi.h>
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+#endif
+
+int
+StyleOverride::styleHint(
+    StyleHint           hint,
+    const QStyleOption *option,
+    const QWidget      *widget,
+    QStyleHintReturn   *returnData) const
 {
     /* Disable using menu with alt key */
     if (hint == QStyle::SH_MenuBar_AltKeyNavigation)
@@ -32,7 +40,8 @@ int StyleOverride::styleHint(
     return QProxyStyle::styleHint(hint, option, widget, returnData);
 }
 
-void StyleOverride::polish(QWidget* widget)
+void
+StyleOverride::polish(QWidget *widget)
 {
     QProxyStyle::polish(widget);
     /* Disable title bar context help buttons globally as they are unused. */
@@ -46,9 +55,14 @@ void StyleOverride::polish(QWidget* widget)
             widget->setWindowFlag(Qt::MSWindowsFixedSizeDialogHint, true);
         }
         widget->setWindowFlag(Qt::WindowContextHelpButtonHint, false);
+#ifdef Q_OS_WINDOWS
+        extern bool windows_is_light_theme();
+        BOOL DarkMode = !windows_is_light_theme();
+        DwmSetWindowAttribute((HWND)widget->winId(), DWMWA_USE_IMMERSIVE_DARK_MODE, (LPCVOID)&DarkMode, sizeof(DarkMode));
+#endif
     }
 
-    if (qobject_cast<QComboBox*>(widget)) {
-        qobject_cast<QComboBox*>(widget)->view()->setMinimumWidth(widget->minimumSizeHint().width());
+    if (qobject_cast<QComboBox *>(widget)) {
+        qobject_cast<QComboBox *>(widget)->view()->setMinimumWidth(widget->minimumSizeHint().width());
     }
 }

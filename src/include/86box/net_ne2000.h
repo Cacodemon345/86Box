@@ -1,18 +1,18 @@
 /*
- * VARCem	Virtual ARchaeological Computer EMulator.
- *		An emulator of (mostly) x86-based PC systems and devices,
- *		using the ISA,EISA,VLB,MCA  and PCI system buses, roughly
- *		spanning the era between 1981 and 1995.
+ * 86Box    A hypervisor and IBM PC system emulator that specializes in
+ *          running old operating systems and software designed for IBM
+ *          PC systems and compatibles from 1981 through fairly recent
+ *          system designs based on the PCI bus.
  *
- *		This file is part of the VARCem Project.
+ *          This file is part of the 86Box distribution.
  *
- *		Definitions for the NE2000 ethernet controller.
+ *          Definitions for the NE2000 ethernet controller.
  *
  *
  *
- * Authors:	Fred N. van Kempen, <decwiz@yahoo.com>
+ * Authors: Fred N. van Kempen, <decwiz@yahoo.com>
  *
- *		Copyright 2017,2018 Fred N. van Kempen.
+ *          Copyright 2017-2018 Fred N. van Kempen.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,24 +34,20 @@
  */
 
 #ifndef NET_NE2000_H
-# define NET_NE2000_H
-
+#define NET_NE2000_H
 
 enum {
-    NE2K_NONE = 0,
-    NE2K_NE1000 = 1,			/* 8-bit ISA NE1000 */
-    NE2K_NE2000 = 2,			/* 16-bit ISA NE2000 */
-    NE2K_ETHERNEXT_MC = 3,		/* 16-bit MCA EtherNext/MC */
-    NE2K_RTL8019AS = 4,			/* 16-bit ISA PnP Realtek 8019AS */
-    NE2K_RTL8029AS = 5			/* 32-bit PCI Realtek 8029AS */
+    NE2K_NONE               = 0,
+    NE2K_NE1000             = 1, /* 8-bit ISA NE1000 */
+    NE2K_NE1000_COMPAT      = 2, /* 8-bit ISA NE1000-Compatible */
+    NE2K_NE2000             = 3, /* 16-bit ISA NE2000 */
+    NE2K_NE2000_COMPAT      = 4, /* 16-bit ISA NE2000-Compatible */
+    NE2K_NE2000_COMPAT_8BIT = 5, /* 8-bit ISA NE2000-Compatible, like: https://github.com/skiselev/isa8_eth */
+    NE2K_ETHERNEXT_MC       = 6, /* 16-bit MCA EtherNext/MC */
+    NE2K_RTL8019AS_PNP      = 7, /* 16-bit ISA PnP Realtek 8019AS */
+    NE2K_DE220P             = 8, /* 16-bit ISA PnP D-Link DE-220P */
+    NE2K_RTL8029AS          = 9, /* 32-bit PCI Realtek 8029AS */
+    /* Check nic_init() if adding items after this point. */
 };
 
-
-extern const device_t	ne1000_device;
-extern const device_t	ne2000_device;
-extern const device_t	ethernext_mc_device;
-extern const device_t	rtl8019as_device;
-extern const device_t	rtl8029as_device;
-
-
-#endif	/*NET_NE2000_H*/
+#endif /*NET_NE2000_H*/

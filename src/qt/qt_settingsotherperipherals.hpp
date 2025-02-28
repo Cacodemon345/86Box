@@ -7,8 +7,7 @@ namespace Ui {
 class SettingsOtherPeripherals;
 }
 
-class SettingsOtherPeripherals : public QWidget
-{
+class SettingsOtherPeripherals : public QWidget {
     Q_OBJECT
 
 public:
@@ -31,10 +30,16 @@ private slots:
     void on_comboBoxCard1_currentIndexChanged(int index);
     void on_pushButtonConfigureRTC_clicked();
     void on_comboBoxRTC_currentIndexChanged(int index);
+    void on_checkBoxUnitTester_stateChanged(int arg1);
+    void on_pushButtonConfigureUT_clicked();
+
+    void on_pushButtonConfigureKeyCard_clicked();
+
+    void on_checkBoxKeyCard_stateChanged(int arg1);
 
 private:
     Ui::SettingsOtherPeripherals *ui;
-    int machineId{0};
+    int                           machineId { 0 };
 };
 
 #endif // QT_SETTINGSOTHERPERIPHERALS_HPP

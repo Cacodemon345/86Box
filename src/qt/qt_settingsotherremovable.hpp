@@ -7,16 +7,20 @@ namespace Ui {
 class SettingsOtherRemovable;
 }
 
-class SettingsOtherRemovable : public QWidget
-{
+class SettingsOtherRemovable : public QWidget {
     Q_OBJECT
 
 public:
     explicit SettingsOtherRemovable(QWidget *parent = nullptr);
     ~SettingsOtherRemovable();
+    void reloadBusChannels_MO();
+    void reloadBusChannels_ZIP();
 
     void save();
 
+signals:
+    void moChannelChanged();
+    void zipChannelChanged();
 private slots:
     void on_checkBoxZIP250_stateChanged(int arg1);
 
@@ -47,6 +51,8 @@ private slots:
 
 private:
     Ui::SettingsOtherRemovable *ui;
+    void enableCurrentlySelectedChannel_MO();
+    void enableCurrentlySelectedChannel_ZIP();
 };
 
 #endif // QT_SETTINGSOTHERREMOVABLE_HPP

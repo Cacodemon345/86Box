@@ -7,15 +7,18 @@ namespace Ui {
 class SettingsHarddisks;
 }
 
-class SettingsHarddisks : public QWidget
-{
+class SettingsHarddisks : public QWidget {
     Q_OBJECT
 
 public:
     explicit SettingsHarddisks(QWidget *parent = nullptr);
     ~SettingsHarddisks();
+    void reloadBusChannels();
 
     void save();
+
+signals:
+    void driveChannelChanged();
 
 private slots:
     void on_comboBoxChannel_currentIndexChanged(int index);
@@ -27,11 +30,12 @@ private slots:
     void on_pushButtonNew_clicked();
     void on_comboBoxBus_currentIndexChanged(int index);
 
-    void onTableRowChanged(const QModelIndex& current);
+    void onTableRowChanged(const QModelIndex &current);
 
 private:
     Ui::SettingsHarddisks *ui;
-    bool buschangeinprogress = false;
+    void                   enableCurrentlySelectedChannel();
+    bool                   buschangeinprogress = false;
 };
 
 #endif // QT_SETTINGSHARDDISKS_HPP

@@ -12,6 +12,7 @@
 #include <86box/sound.h>
 #include <86box/snd_sn76489.h>
 #include <86box/timer.h>
+#include <86box/plat_unused.h>
 
 typedef struct pssj_t {
     sn76489_t sn76489;
@@ -41,9 +42,9 @@ pssj_update_irq(pssj_t *pssj)
 }
 
 static void
-pssj_write(uint16_t port, uint8_t val, void *p)
+pssj_write(uint16_t port, uint8_t val, void *priv)
 {
-    pssj_t *pssj = (pssj_t *) p;
+    pssj_t *pssj = (pssj_t *) priv;
 
     switch (port & 3) {
         case 0:
@@ -67,6 +68,9 @@ pssj_write(uint16_t port, uint8_t val, void *p)
                 case 3: /*Direct DAC*/
                     pssj->dac_val = val;
                     break;
+
+                default:
+                    break;
             }
             break;
         case 2:
@@ -76,12 +80,15 @@ pssj_write(uint16_t port, uint8_t val, void *p)
             pssj->freq      = (pssj->freq & 0x0ff) | ((val & 0xf) << 8);
             pssj->amplitude = val >> 4;
             break;
+
+        default:
+            break;
     }
 }
 static uint8_t
-pssj_read(uint16_t port, void *p)
+pssj_read(uint16_t port, void *priv)
 {
-    pssj_t *pssj = (pssj_t *) p;
+    const pssj_t *pssj = (pssj_t *) priv;
 
     switch (port & 3) {
         case 0:
@@ -96,6 +103,9 @@ pssj_read(uint16_t port, void *p)
                     return 0x80;
                 case 3: /*Direct DAC*/
                     return pssj->dac_val;
+
+                default:
+                    break;
             }
             break;
         case 2:
@@ -117,9 +127,9 @@ pssj_update(pssj_t *pssj)
 }
 
 static void
-pssj_callback(void *p)
+pssj_callback(void *priv)
 {
-    pssj_t *pssj = (pssj_t *) p;
+    pssj_t *pssj = (pssj_t *) priv;
     int     data;
 
     pssj_update(pssj);
@@ -157,6 +167,9 @@ pssj_callback(void *p)
             case 0xc0:
                 pssj->dac_val = 0x80;
                 break;
+
+            default:
+                break;
         }
         pssj->wave_pos = (pssj->wave_pos + 1) & 31;
     }
@@ -165,24 +178,22 @@ pssj_callback(void *p)
 }
 
 static void
-pssj_get_buffer(int32_t *buffer, int len, void *p)
+pssj_get_buffer(int32_t *buffer, int len, void *priv)
 {
-    pssj_t *pssj = (pssj_t *) p;
-    int     c;
+    pssj_t *pssj = (pssj_t *) priv;
 
     pssj_update(pssj);
 
-    for (c = 0; c < len * 2; c++)
+    for (int c = 0; c < len * 2; c++)
         buffer[c] += pssj->buffer[c >> 1];
 
     pssj->pos = 0;
 }
 
 void *
-pssj_init(const device_t *info)
+pssj_init(UNUSED(const device_t *info))
 {
-    pssj_t *pssj = malloc(sizeof(pssj_t));
-    memset(pssj, 0, sizeof(pssj_t));
+    pssj_t *pssj = calloc(1, sizeof(pssj_t));
 
     sn76489_init(&pssj->sn76489, 0x00c0, 0x0004, PSSJ, 3579545);
 
@@ -194,10 +205,9 @@ pssj_init(const device_t *info)
 }
 
 void *
-pssj_1e0_init(const device_t *info)
+pssj_1e0_init(UNUSED(const device_t *info))
 {
-    pssj_t *pssj = malloc(sizeof(pssj_t));
-    memset(pssj, 0, sizeof(pssj_t));
+    pssj_t *pssj = calloc(1, sizeof(pssj_t));
 
     sn76489_init(&pssj->sn76489, 0x01e0, 0x0004, PSSJ, 3579545);
 
@@ -208,105 +218,93 @@ pssj_1e0_init(const device_t *info)
     return pssj;
 }
 
-#if defined(DEV_BRANCH) && defined(USE_TANDY_ISA)
 void *
-pssj_isa_init(const device_t *info)
+pssj_isa_init(UNUSED(const device_t *info))
 {
-    pssj_t *pssj = malloc(sizeof(pssj_t));
-    memset(pssj, 0, sizeof(pssj_t));
-
-    sn76489_init(&pssj->sn76489, 0x00c0, 0x0004, PSSJ, 3579545);
+    pssj_t *pssj = calloc(1, sizeof(pssj_t));
 
     uint16_t addr = device_get_config_hex16("base");
 
-    io_sethandler(addr, 0x0004, pssj_read, NULL, NULL, pssj_write, NULL, NULL, pssj);
+    sn76489_init(&pssj->sn76489, addr, 0x0004, PSSJ, 3579545);
+
+    io_sethandler(addr + 0x04, 0x0004, pssj_read, NULL, NULL, pssj_write, NULL, NULL, pssj);
     timer_add(&pssj->timer_count, pssj_callback, pssj, pssj->enable);
     sound_add_handler(pssj_get_buffer, pssj);
 
     return pssj;
 }
-#endif
 
 void
-pssj_close(void *p)
+pssj_close(void *priv)
 {
-    pssj_t *pssj = (pssj_t *) p;
+    pssj_t *pssj = (pssj_t *) priv;
 
     free(pssj);
 }
 
-#if defined(DEV_BRANCH) && defined(USE_TANDY_ISA)
 static const device_config_t pssj_isa_config[] = {
-// clang-format off
+  // clang-format off
     {
-        .name = "base",
-        .description = "Address",
-        .type = CONFIG_HEX16,
-        .default_string = "",
-        .default_int = 0x2C0,
-        .file_filter = "",
-        .spinner = { 0 },
-        .selection = {
-            {
-                .description = "0x0C0",
-                .value = 0x0C0
-            },
-            {
-                .description = "0x1E0",
-                .value = 0x1E0
-            },
-            {
-                .description = "0x2C0",
-                .value = 0x2C0
-            },
-            { .description = "" }
-        }
+        .name           = "base",
+        .description    = "Address",
+        .type           = CONFIG_HEX16,
+        .default_string = NULL,
+        .default_int    = 0x2C0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "0x0C0", .value = 0x0C0 },
+            { .description = "0x0E0", .value = 0x0E0 },
+            { .description = "0x1C0", .value = 0x1C0 },
+            { .description = "0x1E0", .value = 0x1E0 },
+            { .description = "0x2C0", .value = 0x2C0 },
+            { .description = "0x2E0", .value = 0x2E0 },
+            { .description = ""                      }
+        },
+        .bios           = { { 0 } }
     },
     { .name = "", .description = "", .type = CONFIG_END }
-// clang-format on
+  // clang-format on
 };
-#endif
 
 const device_t pssj_device = {
-    .name = "Tandy PSSJ",
+    .name          = "Tandy PSSJ",
     .internal_name = "pssj",
-    .flags = 0,
-    .local = 0,
-    .init = pssj_init,
-    .close = pssj_close,
-    .reset = NULL,
-    { .available = NULL },
+    .flags         = 0,
+    .local         = 0,
+    .init          = pssj_init,
+    .close         = pssj_close,
+    .reset         = NULL,
+    .available     = NULL,
     .speed_changed = NULL,
-    .force_redraw = NULL,
-    .config = NULL
+    .force_redraw  = NULL,
+    .config        = NULL
 };
 
 const device_t pssj_1e0_device = {
-    .name = "Tandy PSSJ (port 1e0h)",
+    .name          = "Tandy PSSJ (port 1e0h)",
     .internal_name = "pssj_1e0",
-    .flags = 0,
-    .local = 0,
-    .init = pssj_1e0_init,
-    .close = pssj_close,
-    .reset = NULL,
-    { .available = NULL },
+    .flags         = 0,
+    .local         = 0,
+    .init          = pssj_1e0_init,
+    .close         = pssj_close,
+    .reset         = NULL,
+    .available     = NULL,
     .speed_changed = NULL,
-    .force_redraw = NULL,
-    .config = NULL
+    .force_redraw  = NULL,
+    .config        = NULL
 };
 
-#if defined(DEV_BRANCH) && defined(USE_TANDY_ISA)
 const device_t pssj_isa_device = {
-    .name = "Tandy PSSJ Clone",
+    .name          = "Tandy PSSJ Clone",
     .internal_name = "pssj_isa",
-    .flags = DEVICE_ISA,
-    .local = 0,
-    .init = pssj_isa_init,
-    .close = pssj_close,
-    .reset = NULL,
-    { .available = NULL },
+    .flags         = DEVICE_ISA,
+    .local         = 0,
+    .init          = pssj_isa_init,
+    .close         = pssj_close,
+    .reset         = NULL,
+    .available     = NULL,
     .speed_changed = NULL,
-    .force_redraw = NULL,
-    .config = pssj_isa_config
+    .force_redraw  = NULL,
+    .config        = pssj_isa_config
 };
-#endif

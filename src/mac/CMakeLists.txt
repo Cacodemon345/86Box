@@ -1,20 +1,22 @@
 #
-# 86Box     A hypervisor and IBM PC system emulator that specializes in
-#           running old operating systems and software designed for IBM
-#           PC systems and compatibles from 1981 through fairly recent
-#           system designs based on the PCI bus.
+# 86Box    A hypervisor and IBM PC system emulator that specializes in
+#          running old operating systems and software designed for IBM
+#          PC systems and compatibles from 1981 through fairly recent
+#          system designs based on the PCI bus.
 #
-#           This file is part of the 86Box distribution.
+#          This file is part of the 86Box distribution.
 #
-#           CMake build script.
+#          CMake build script.
 #
-# Authors:  dob205,
-#           Jerome Vernet
-#           David Hrdlička, <hrdlickadavid@outlook.com>
+# Authors: dob205,
+#          Jerome Vernet
+#          David Hrdlička, <hrdlickadavid@outlook.com>
+#          Jasmine Iwanek, <jriwanek@gmail.com>
 #
-#           Copyright 2021 dob205.
-#           Copyright 2021 Jerome Vernet.
-#           Copyright 2021 David Hrdlička.
+#          Copyright 2021 dob205.
+#          Copyright 2021 Jerome Vernet.
+#          Copyright 2021 David Hrdlička.
+#          Copyright 2024 Jasmine Iwanek.
 #
 
 # Pick the bundle icon depending on the release channel
@@ -38,9 +40,9 @@ set_source_files_properties(${APP_ICON_MACOSX}
 
 # Prepare long version string
 if(EMU_BUILD)
-    set(LONG_VER_STRING	"${CMAKE_PROJECT_VERSION} [${EMU_BUILD}]")
+    set(LONG_VER_STRING "${CMAKE_PROJECT_VERSION} [${EMU_BUILD}]")
 else()
-    set(LONG_VER_STRING	"${CMAKE_PROJECT_VERSION}")
+    set(LONG_VER_STRING "${CMAKE_PROJECT_VERSION}")
 endif()
 
 # Generate Info.plist

@@ -1,17 +1,18 @@
 /*
- * 86Box A hypervisor and IBM PC system emulator that specializes in
- *      running old operating systems and software designed for IBM
- *      PC systems and compatibles from 1981 through fairly recent
- *      system designs based on the PCI bus.
+ * 86Box    A hypervisor and IBM PC system emulator that specializes in
+ *          running old operating systems and software designed for IBM
+ *          PC systems and compatibles from 1981 through fairly recent
+ *          system designs based on the PCI bus.
  *
- *      This file is part of the 86Box distribution.
+ *          This file is part of the 86Box distribution.
  *
- *      OpenGL renderer for Qt
+ *          OpenGL renderer for Qt
  *
- * Authors:
- *      Teemu Korhonen
  *
- *      Copyright 2022 Teemu Korhonen
+ *
+ * Authors: Teemu Korhonen
+ *
+ *          Copyright 2022 Teemu Korhonen
  */
 
 #include <QCoreApplication>
@@ -25,6 +26,14 @@
 
 #include "qt_opengloptionsdialog.hpp"
 #include "qt_openglrenderer.hpp"
+
+#ifndef GL_MAP_PERSISTENT_BIT
+#    define GL_MAP_PERSISTENT_BIT 0x0040
+#endif
+
+#ifndef GL_MAP_COHERENT_BIT
+#    define GL_MAP_COHERENT_BIT 0x0080
+#endif
 
 OpenGLRenderer::OpenGLRenderer(QWidget *parent)
     : QWindow(parent->windowHandle())
@@ -72,6 +81,8 @@ OpenGLRenderer::exposeEvent(QExposeEvent *event)
 
     if (!isInitialized)
         initialize();
+
+    onResize(size().width(), size().height());
 }
 
 void
@@ -87,8 +98,8 @@ OpenGLRenderer::resizeEvent(QResizeEvent *event)
     context->makeCurrent(this);
 
     glViewport(
-        destination.x(),
-        destination.y(),
+        destination.x() * devicePixelRatio(),
+        destination.y() * devicePixelRatio(),
         destination.width() * devicePixelRatio(),
         destination.height() * devicePixelRatio());
 }
@@ -171,8 +182,8 @@ OpenGLRenderer::initialize()
         glClearColor(0.f, 0.f, 0.f, 1.f);
 
         glViewport(
-            destination.x(),
-            destination.y(),
+            destination.x() * devicePixelRatio(),
+            destination.y() * devicePixelRatio(),
             destination.width() * devicePixelRatio(),
             destination.height() * devicePixelRatio());
 
@@ -184,6 +195,9 @@ OpenGLRenderer::initialize()
 
         emit initialized();
 
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        context->swapBuffers(this);
     } catch (const opengl_init_error &e) {
         /* Mark all buffers as in use */
         for (auto &flag : buf_usage)
@@ -239,10 +253,12 @@ void
 OpenGLRenderer::initializeExtensions()
 {
 #ifndef NO_BUFFER_STORAGE
-    if (context->hasExtension("GL_ARB_buffer_storage")) {
+    if (context->hasExtension("GL_ARB_buffer_storage") || context->hasExtension("GL_EXT_buffer_storage")) {
         hasBufferStorage = true;
 
-        glBufferStorage = (PFNGLBUFFERSTORAGEPROC) context->getProcAddress("glBufferStorage");
+        glBufferStorage = (PFNGLBUFFERSTORAGEEXTPROC_LOCAL) context->getProcAddress(context->hasExtension("GL_EXT_buffer_storage") ? "glBufferStorageEXT" : "glBufferStorage");
+        if (!glBufferStorage)
+            glBufferStorage = (PFNGLBUFFERSTORAGEEXTPROC_LOCAL) context->getProcAddress("glBufferStorage");
     }
 #endif
 }
@@ -306,7 +322,10 @@ OpenGLRenderer::applyOptions()
 void
 OpenGLRenderer::reloadOptions()
 {
-    if (options) { delete options; options = nullptr; }
+    if (options) {
+        delete options;
+        options = nullptr;
+    }
     options = new OpenGLOptions(this, true, glslVersion);
 
     applyOptions();
@@ -414,6 +433,14 @@ OpenGLRenderer::onBlit(int buf_idx, int x, int y, int w, int h)
         return;
 
     context->makeCurrent(this);
+
+#ifdef Q_OS_MACOS
+    glViewport(
+        destination.x() * devicePixelRatio(),
+        destination.y() * devicePixelRatio(),
+        destination.width() * devicePixelRatio(),
+        destination.height() * devicePixelRatio());
+#endif
 
     if (source.width() != w || source.height() != h) {
         source.setRect(0, 0, w, h);

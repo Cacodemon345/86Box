@@ -1,18 +1,18 @@
 /*
- * 86Box	A hypervisor and IBM PC system emulator that specializes in
- *		running old operating systems and software designed for IBM
- *		PC systems and compatibles from 1981 through fairly recent
- *		system designs based on the PCI bus.
+ * 86Box    A hypervisor and IBM PC system emulator that specializes in
+ *          running old operating systems and software designed for IBM
+ *          PC systems and compatibles from 1981 through fairly recent
+ *          system designs based on the PCI bus.
  *
- *		This file is part of the 86Box distribution.
+ *          This file is part of the 86Box distribution.
  *
- *		Jenkins build pipeline definition.
+ *          Jenkins build pipeline definition.
  *
  *
  *
- * Authors:	RichardG, <richardg867@gmail.com>
+ * Authors: RichardG, <richardg867@gmail.com>
  *
- *		Copyright 2021-2022 RichardG.
+ *          Copyright 2021-2022 RichardG.
  */
 
 /* ['main builds', 'branch builds'] */
@@ -20,12 +20,13 @@ def repository = ['https://github.com/86Box/86Box.git', scm.userRemoteConfigs[0]
 def commitBrowser = ['https://github.com/86Box/86Box/commit/%s', null]
 def branch = ['master', scm.branches[0].name]
 def buildType = ['beta', 'alpha']
+def tarballFlags = ['', '-s']
 def buildBranch = env.JOB_BASE_NAME.contains('-') ? 1 : 0
 
 def osArchs = [
-	'Windows': ['32', '64'],
-	'Linux': ['x86', 'x86_64', 'arm32', 'arm64'],
-	'macOS': ['x86_64+arm64']
+	'Windows': ['64'],
+	'Linux': ['x86_64', 'arm64'],
+	'macOS': ['x86_64+x86_64h+arm64']
 ]
 
 def osFlags = [
@@ -78,8 +79,7 @@ def dynarecSlugs = [
 ]
 
 def presets = [
-	'Regular',
-	'Debug'
+	'Regular'
 ]
 
 def presetSlugs = [
@@ -98,34 +98,48 @@ def gitClone(repository, branch) {
 	/* Clean workspace. */
 	cleanWs()
 
-	/* Use stashes to avoid performing multiple clones. */
-	if (env.GIT_STASHED != 'true') {
-		/* Perform clone/checkout. */
-		def scmVars = checkout poll: true,
-				       changelog: true,
-				       scm: [$class: 'GitSCM',
-					     branches: [[name: branch]],
-					     userRemoteConfigs: [[url: repository]]]
+	/* Perform git clone if stashed data isn't available yet, or if
+	   this is not debian.citadel where stash is faster than clone. */
+	if (env.GIT_STASHED != 'true' || env.NODE_NAME != 'debian.citadel') {
+		/* Catch network issues in clone. */
+		try {
+			/* Perform clone/checkout, making sure to set poll and changelog only
+			   once to avoid interference from new commits pushed inbetween clones. */
+			def scmVars = checkout(poll: env.GIT_STASHED != 'true',
+					       changelog: env.GIT_STASHED != 'true',
+					       scm: [$class: 'GitSCM',
+						     branches: [[name: branch]],
+						     userRemoteConfigs: [[url: repository]]])
 
-		if (env.GIT_COMMIT == null) {
-			/* Save the current HEAD commit. */
-			env.GIT_COMMIT = scmVars.GIT_COMMIT
-		} else if (env.GIT_COMMIT != scmVars.GIT_COMMIT) {
-			/* Checkout the commit read from the polling log. */
-			if (isUnix())
-				sh(returnStatus: true, script: "git checkout ${env.GIT_COMMIT}")
-			else
-				bat(returnStatus: true, script: "git checkout ${env.GIT_COMMIT}")
+			if (env.GIT_COMMIT == null) {
+				/* Save the current HEAD commit. */
+				env.GIT_COMMIT = scmVars.GIT_COMMIT
+			} else if (env.GIT_COMMIT != scmVars.GIT_COMMIT) {
+				/* Checkout the commit read from the polling log. */
+				if (isUnix())
+					sh(returnStatus: true, script: "git checkout ${env.GIT_COMMIT}")
+				else
+					bat(returnStatus: true, script: "git checkout ${env.GIT_COMMIT}")
+			}
+			println "[-] Using git commit [${env.GIT_COMMIT}]"
+
+			/* Stash data if required, marking it as stashed. */
+			if (env.GIT_STASHED != 'true') {
+				stash(name: 'git', useDefaultExcludes: false)
+				env.GIT_STASHED = 'true'
+			}
+
+			/* No need to use stashed data. */
+			return;
+		} catch (e) {
+			/* If clone fails, use stashed data if available, or re-throw exception otherwise. */
+			if (env.GIT_STASHED != 'true')
+				throw e;
 		}
-		println "[-] Using git commit [${env.GIT_COMMIT}]"
-
-		/* Stash data and mark it as stashed. */
-		stash name: 'git', useDefaultExcludes: false
-		env.GIT_STASHED = 'true'
-	} else {
-		/* Unstash data. */
-		unstash name: 'git'
 	}
+	
+	/* Unstash data. */
+	unstash(name: 'git')
 }
 
 def removeDir(dir) {
@@ -225,7 +239,7 @@ pipeline {
 								dir("${env.WORKSPACE_TMP}/output") {
 									/* Run source tarball creation process. */
 									def packageName = "${env.JOB_BASE_NAME}-Source$buildSuffix"
-									if (runBuild("-s \"$packageName\"") == 0) {
+									if (runBuild("-s \"$packageName\" ${tarballFlags[buildBranch]}") == 0) {
 										/* Archive resulting artifacts. */
 										archiveArtifacts artifacts: "$packageName*"
 									} else {
@@ -247,12 +261,13 @@ pipeline {
 					osArchs.each { os, thisOsArchs ->
 						def combinations = [:]
 						thisOsArchs.each { arch ->
-							def thisArchDynarecs = dynarecArchs[arch.toLowerCase()]
+							def archSlug = arch.replace('+x86_64h', '') /* all instances of arch except the one passed to -b */
+							def thisArchDynarecs = dynarecArchs[archSlug.toLowerCase()]
 							if (!thisArchDynarecs)
 								thisArchDynarecs = ['NoDR']
 							thisArchDynarecs.each { dynarec ->
 								presets.each { preset ->
-									def combination = "$os $arch $dynarec $preset"
+									def combination = "$os $archSlug $dynarec $preset"
 									combinations[combination] = {
 										catchError(buildResult: 'FAILURE', stageResult: 'SUCCESS') {
 											retry(10) {
@@ -264,18 +279,24 @@ pipeline {
 														/* Switch to output directory. */
 														dir("${env.WORKSPACE_TMP}/output") {
 															/* Run build process. */
-															def packageName = "${env.JOB_BASE_NAME}${dynarecSlugs[dynarec]}${presetSlugs[preset]}-$os-$arch$buildSuffix"
+															def packageName = "${env.JOB_BASE_NAME}${dynarecSlugs[dynarec]}${presetSlugs[preset]}-$os-$archSlug$buildSuffix"
 															def ret = -1
-															def archName = archNames[arch]
+															def archName = archNames[archSlug]
 															if (os == 'macOS')
-																archName = archNamesMac[arch]
-															dir("${dynarecNames[dynarec]}/$os - $archName") {
-																ret = runBuild("-b \"$packageName\" \"$arch\" ${presetFlags[preset]} ${dynarecFlags[dynarec]} ${osFlags[os]} $buildFlags")
+																archName = archNamesMac[archSlug]
+															dir(dynarecNames[dynarec]) {
+																dir("$os - $archName") {
+																	ret = runBuild("-b \"$packageName\" \"$arch\" ${presetFlags[preset]} ${dynarecFlags[dynarec]} ${osFlags[os]} $buildFlags")
+																	if (presets.size() == 1)
+																		writeFile file: '.forcedir', text: ''
+																}
+																if ((osArchs.size() == 1) && (thisOsArchs.size() == 1))
+																	writeFile file: '.forcedir', text: ''
 															}
 
 															if (ret == 0) {
 																/* Archive resulting artifacts. */
-																archiveArtifacts artifacts: "**/**/$packageName*"
+																archiveArtifacts artifacts: "**/$packageName*, **/.forcedir", defaultExcludes: false
 															} else {
 																/* Fail this stage. */
 																failStage()

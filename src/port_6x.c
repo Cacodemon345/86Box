@@ -1,17 +1,19 @@
 /*
- * 86Box	A hypervisor and IBM PC system emulator that specializes in
- *		running old operating systems and software designed for IBM
- *		PC systems and compatibles from 1981 through fairly recent
- *		system designs based on the PCI bus.
+ * 86Box    A hypervisor and IBM PC system emulator that specializes in
+ *          running old operating systems and software designed for IBM
+ *          PC systems and compatibles from 1981 through fairly recent
+ *          system designs based on the PCI bus.
  *
- *		This file is part of the 86Box distribution.
+ *          This file is part of the 86Box distribution.
  *
- *		Implementation of Ports 61, 62, and 63 used by various
- *		machines.
+ *          Implementation of Ports 61, 62, and 63 used by various
+ *          machines.
  *
- * Authors:	Miran Grca, <mgrca8@gmail.com>
  *
- *		Copyright 2021 Miran Grca.
+ *
+ * Authors: Miran Grca, <mgrca8@gmail.com>
+ *
+ *          Copyright 2021 Miran Grca.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -34,59 +36,70 @@
 #include <86box/ppi.h>
 #include <86box/video.h>
 #include <86box/port_6x.h>
+#include <86box/plat_unused.h>
+#include <86box/random.h>
 
+#define PS2_REFRESH_TIME (16 * TIMER_USEC)
 
-#define PS2_REFRESH_TIME	(16 * TIMER_USEC)
+#define PORT_6X_TURBO    1
+#define PORT_6X_EXT_REF  2
+#define PORT_6X_MIRROR   4
+#define PORT_6X_SWA      8
 
-#define PORT_6X_TURBO		1
-#define PORT_6X_EXT_REF		2
-#define PORT_6X_MIRROR		4
-#define PORT_6X_SWA		8
-
+static int cycles_sub = 0;
 
 static void
 port_6x_write(uint16_t port, uint8_t val, void *priv)
 {
-    port_6x_t *dev = (port_6x_t *) priv;
+    const port_6x_t *dev = (port_6x_t *) priv;
 
     port &= 3;
 
+    cycles -= cycles_sub;
+
     if ((port == 3) && (dev->flags & PORT_6X_MIRROR))
-	port = 1;
+        port = 1;
 
     switch (port) {
-	case 1:
-		ppi.pb = (ppi.pb & 0x10) | (val & 0x0f);
+        case 1:
+            ppi.pb = (ppi.pb & 0x10) | (val & 0x0f);
 
-		speaker_update();
-		speaker_gated = val & 1;
-		speaker_enable = val & 2;
-		if (speaker_enable)
-			was_speaker_enable = 1;
-		pit_ctr_set_gate(&pit->counters[2], val & 1);
+            speaker_update();
+            speaker_gated  = val & 1;
+            speaker_enable = val & 2;
+            if (speaker_enable)
+                was_speaker_enable = 1;
+            pit_devs[0].set_gate(pit_devs[0].data, 2, val & 1);
 
-		if (dev->flags & PORT_6X_TURBO)
-			xi8088_turbo_set(!!(val & 0x04));
-		break;
+            if (dev->flags & PORT_6X_TURBO)
+                xi8088_turbo_set(!!(val & 0x04));
+            break;
+
+        default:
+            break;
     }
 }
 
 static uint8_t
-port_61_read_simple(uint16_t port, void *priv)
+port_61_read_simple(UNUSED(uint16_t port), UNUSED(void *priv))
 {
     uint8_t ret = ppi.pb & 0x1f;
+
+    cycles -= cycles_sub;
 
     if (ppispeakon)
         ret |= 0x20;
 
-    return(ret);
+    return ret;
 }
 
 static uint8_t
-port_61_read(uint16_t port, void *priv)
+port_61_read(UNUSED(uint16_t port), void *priv)
 {
-    port_6x_t *dev = (port_6x_t *) priv;
-    uint8_t ret = 0xff;
+    const port_6x_t *dev = (port_6x_t *) priv;
+    uint8_t          ret = 0xff;
+
+    cycles -= cycles_sub;
 
     if (dev->flags & PORT_6X_EXT_REF) {
         ret = ppi.pb & 0x0f;
@@ -102,11 +115,11 @@ port_61_read(uint16_t port, void *priv)
     if (dev->flags & PORT_6X_TURBO)
         ret = (ret & 0xfb) | (xi8088_turbo_get() ? 0x04 : 0x00);
 
-    return(ret);
+    return ret;
 }
 
 static uint8_t
-port_62_read(uint16_t port, void *priv)
+port_62_read(UNUSED(uint16_t port), UNUSED(void *priv))
 {
     uint8_t ret = 0xff;
 
@@ -114,8 +127,8 @@ port_62_read(uint16_t port, void *priv)
     ret = 0x00;
     if (ppi.pb & 0x8) {
         /* Switches 4, 5 - floppy drives (number) */
-        int i, fdd_count = 0;
-        for (i = 0; i < FDD_NUM; i++) {
+        int fdd_count = 0;
+        for (uint8_t i = 0; i < FDD_NUM; i++) {
             if (fdd_get_flags(i))
                 fdd_count++;
         }
@@ -138,7 +151,7 @@ port_62_read(uint16_t port, void *priv)
             ret |= 0x02;
     }
 
-    return(ret);
+    return ret;
 }
 
 static void
@@ -150,7 +163,6 @@ port_6x_refresh(void *priv)
     timer_advance_u64(&dev->refresh_timer, PS2_REFRESH_TIME);
 }
 
-
 static void
 port_6x_close(void *priv)
 {
@@ -160,7 +172,6 @@ port_6x_close(void *priv)
 
     free(dev);
 }
-
 
 void *
 port_6x_init(const device_t *info)
@@ -173,76 +184,78 @@ port_6x_init(const device_t *info)
     if (dev->flags & (PORT_6X_TURBO | PORT_6X_EXT_REF)) {
         io_sethandler(0x0061, 1, port_61_read, NULL, NULL, port_6x_write, NULL, NULL, dev);
 
-	if (dev->flags & PORT_6X_EXT_REF)
-		timer_add(&dev->refresh_timer, port_6x_refresh, dev, 1);
+        if (dev->flags & PORT_6X_EXT_REF)
+            timer_add(&dev->refresh_timer, port_6x_refresh, dev, 1);
 
-	if (dev->flags & PORT_6X_MIRROR)
-		io_sethandler(0x0063, 1, port_61_read, NULL, NULL, port_6x_write, NULL, NULL, dev);
+        if (dev->flags & PORT_6X_MIRROR)
+            io_sethandler(0x0063, 1, port_61_read, NULL, NULL, port_6x_write, NULL, NULL, dev);
     } else {
         io_sethandler(0x0061, 1, port_61_read_simple, NULL, NULL, port_6x_write, NULL, NULL, dev);
 
-	if (dev->flags & PORT_6X_MIRROR)
-		io_sethandler(0x0063, 1, port_61_read_simple, NULL, NULL, port_6x_write, NULL, NULL, dev);
+        if (dev->flags & PORT_6X_MIRROR)
+            io_sethandler(0x0063, 1, port_61_read_simple, NULL, NULL, port_6x_write, NULL, NULL, dev);
     }
 
     if (dev->flags & PORT_6X_SWA)
         io_sethandler(0x0062, 1, port_62_read, NULL, NULL, NULL, NULL, NULL, dev);
 
+    cycles_sub = is486 ? ISA_CYCLES(8) : 0;
+
     return dev;
 }
 
 const device_t port_6x_device = {
-    .name = "Port 6x Registers",
+    .name          = "Port 6x Registers",
     .internal_name = "port_6x",
-    .flags = 0,
-    .local = 0,
-    .init = port_6x_init,
-    .close = port_6x_close,
-    .reset = NULL,
-    { .available = NULL },
+    .flags         = 0,
+    .local         = 0,
+    .init          = port_6x_init,
+    .close         = port_6x_close,
+    .reset         = NULL,
+    .available     = NULL,
     .speed_changed = NULL,
-    .force_redraw = NULL,
-    .config = NULL
+    .force_redraw  = NULL,
+    .config        = NULL
 };
 
 const device_t port_6x_xi8088_device = {
-    .name = "Port 6x Registers (Xi8088)",
+    .name          = "Port 6x Registers (Xi8088)",
     .internal_name = "port_6x_xi8088",
-    .flags = 0,
-    .local = PORT_6X_TURBO | PORT_6X_EXT_REF | PORT_6X_MIRROR,
-    .init = port_6x_init,
-    .close = port_6x_close,
-    .reset = NULL,
-    { .available = NULL },
+    .flags         = 0,
+    .local         = PORT_6X_TURBO | PORT_6X_EXT_REF | PORT_6X_MIRROR,
+    .init          = port_6x_init,
+    .close         = port_6x_close,
+    .reset         = NULL,
+    .available     = NULL,
     .speed_changed = NULL,
-    .force_redraw = NULL,
-    .config = NULL
+    .force_redraw  = NULL,
+    .config        = NULL
 };
 
 const device_t port_6x_ps2_device = {
-    .name = "Port 6x Registers (IBM PS/2)",
+    .name          = "Port 6x Registers (IBM PS/2)",
     .internal_name = "port_6x_ps2",
-    .flags = 0,
-    .local = PORT_6X_EXT_REF,
-    .init = port_6x_init,
-    .close = port_6x_close,
-    .reset = NULL,
-    { .available = NULL },
+    .flags         = 0,
+    .local         = PORT_6X_EXT_REF,
+    .init          = port_6x_init,
+    .close         = port_6x_close,
+    .reset         = NULL,
+    .available     = NULL,
     .speed_changed = NULL,
-    .force_redraw = NULL,
-    .config = NULL
+    .force_redraw  = NULL,
+    .config        = NULL
 };
 
 const device_t port_6x_olivetti_device = {
-    .name = "Port 6x Registers (Olivetti)",
+    .name          = "Port 6x Registers (Olivetti)",
     .internal_name = "port_6x_olivetti",
-    .flags = 0,
-    .local = PORT_6X_SWA,
-    .init = port_6x_init,
-    .close = port_6x_close,
-    .reset = NULL,
-    { .available = NULL },
+    .flags         = 0,
+    .local         = PORT_6X_SWA,
+    .init          = port_6x_init,
+    .close         = port_6x_close,
+    .reset         = NULL,
+    .available     = NULL,
     .speed_changed = NULL,
-    .force_redraw = NULL,
-    .config = NULL
+    .force_redraw  = NULL,
+    .config        = NULL
 };

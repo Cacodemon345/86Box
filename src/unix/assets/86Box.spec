@@ -12,28 +12,33 @@
 # After a successful build, you can install the RPMs as follows:
 #  sudo dnf install RPMS/$(uname -m)/86Box-3* RPMS/noarch/86Box-roms*
 
-%global romver 20220701
+%global romver 4.1
 
 Name:		86Box
-Version:	3.6
+Version:	4.3
 Release:	1%{?dist}
 Summary:	Classic PC emulator
 License:	GPLv2+
 URL:		https://86box.net
 
-Source0:	https://github.com/86Box/86Box/archive/refs/tags/v%%{version}.tar.gz
-Source1:	https://github.com/86Box/roms/archive/refs/tags/%{romver}.tar.gz
+Source0:	https://github.com/86Box/86Box/archive/refs/tags/v%{version}.tar.gz
+Source1:	https://github.com/86Box/roms/archive/refs/tags/v%{romver}.zip
 
 BuildRequires: cmake
 BuildRequires: desktop-file-utils
 BuildRequires: extra-cmake-modules
+BuildRequires: fluidsynth-devel
 BuildRequires: freetype-devel
 BuildRequires: gcc-c++
 BuildRequires: libFAudio-devel
 BuildRequires: libappstream-glib
+BuildRequires: libatomic
 BuildRequires: libevdev-devel
+BuildRequires: libslirp-devel
+BuildRequires: libxkbcommon-x11-devel
 BuildRequires: libXi-devel
 BuildRequires: ninja-build
+BuildRequires: openal-soft-devel
 BuildRequires: qt5-linguist
 BuildRequires: qt5-qtconfiguration-devel
 BuildRequires: qt5-qtbase-private-devel
@@ -100,9 +105,6 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/net.86box.86Bo
 pushd roms-%{romver}
   mkdir -p %{buildroot}%{_datadir}/%{name}/roms
   cp -a * %{buildroot}%{_datadir}/%{name}/roms/
-  # hack to create symlink in /usr/bin
-  cd %{buildroot}%{_bindir}
-  ln -s ../share/%{name}/roms roms
 popd
 
 # files part of the main package
@@ -117,8 +119,7 @@ popd
 %files roms
 %license  roms-%{romver}/LICENSE
 %{_datadir}/%{name}/roms
-%{_bindir}/roms
 
 %changelog
-* Fri Jul 01 2022 Robert de Rooy <robert.de.rooy[AT]gmail.com> 3.6-1
+* Sat Aug 31 Jasmine Iwanek <jriwanek[AT]gmail.com> 4.3-1
 - Bump release

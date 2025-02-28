@@ -28,285 +28,164 @@
 
 #include "cpu.h"
 #include <86box/86box.h>
+#include <86box/device.h>
 #include <86box/io.h>
-#include <86box/timer.h>
 #include <86box/sound.h>
 #include <86box/snd_opl.h>
-#include <86box/snd_opl_nuked.h>
 
-enum {
-    FLAG_CYCLES = 0x02,
-    FLAG_OPL3   = 0x01
-};
+static uint32_t fm_dev_inst[FM_DRV_MAX][FM_MAX];
 
-enum {
-    STAT_TMR_OVER  = 0x60,
-    STAT_TMR1_OVER = 0x40,
-    STAT_TMR2_OVER = 0x20,
-    STAT_TMR_ANY   = 0x80
-};
-
-enum {
-    CTRL_RESET      = 0x80,
-    CTRL_TMR_MASK   = 0x60,
-    CTRL_TMR1_MASK  = 0x40,
-    CTRL_TMR2_MASK  = 0x20,
-    CTRL_TMR2_START = 0x02,
-    CTRL_TMR1_START = 0x01
-};
-
-#ifdef ENABLE_OPL_LOG
-int opl_do_log = ENABLE_OPL_LOG;
-
-static void
-opl_log(const char *fmt, ...)
+uint8_t
+fm_driver_get(int chip_id, fm_drv_t *drv)
 {
-    va_list ap;
+    switch (chip_id) {
+        case FM_YM2149: /* SSG */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ym2149_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
 
-    if (opl_do_log) {
-        va_start(ap, fmt);
-        pclog_ex(fmt, ap);
-        va_end(ap);
-    }
-}
-#else
-#    define opl_log(fmt, ...)
+        case FM_YM3526: /* OPL */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ym3526_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_Y8950: /* MSX-Audio (OPL with ADPCM) */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&y8950_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YM3812: /* OPL2 */
+            if (fm_driver == FM_DRV_NUKED) {
+                *drv      = nuked_opl_drv;
+                drv->priv = device_add_inst(&ym3812_nuked_device, fm_dev_inst[fm_driver][chip_id]++);
+            } else {
+                *drv      = ymfm_drv;
+                drv->priv = device_add_inst(&ym3812_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            }
+            break;
+
+        case FM_YMF262: /* OPL3 */
+            if (fm_driver == FM_DRV_NUKED) {
+                *drv      = nuked_opl_drv;
+                drv->priv = device_add_inst(&ymf262_nuked_device, fm_dev_inst[fm_driver][chip_id]++);
+            } else {
+                *drv      = ymfm_drv;
+                drv->priv = device_add_inst(&ymf262_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            }
+            break;
+
+        case FM_YMF289B: /* OPL3-L */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ymf289b_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YMF278B: /* OPL4 */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ymf278b_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YM2413: /* OPLL */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ym2413_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YM2423: /* OPLL-X */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ym2423_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YMF281: /* OPLLP */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ymf281_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_DS1001: /* Konami VRC7 MMC */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ds1001_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YM2151: /* OPM */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ym2151_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YM2203: /* OPN */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ym2203_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YM2608: /* OPNA */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ym2608_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YMF288: /* OPN3L */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ymf288_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YM2610: /* OPNB */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ym2610_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YM2610B: /* OPNB2 */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ym2610b_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YM2612: /* OPN2 */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ym2612_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YM3438: /* OPN2C */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ym3438_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YMF276: /* OPN2L */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ymf276_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YM2164: /* OPP */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ym2164_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+        case FM_YM3806: /* OPQ */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ym3806_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+
+#if 0
+        case FM_YMF271: /* OPX */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ymf271_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
 #endif
 
-static void
-timer_tick(opl_t *dev, int tmr)
-{
-    dev->timer_cur_count[tmr] = (dev->timer_cur_count[tmr] + 1) & 0xff;
+        case FM_YM2414: /* OPZ */
+            *drv      = ymfm_drv;
+            drv->priv = device_add_inst(&ym2414_ymfm_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
+        
+        case FM_ESFM:
+            *drv      = esfmu_opl_drv;
+            drv->priv = device_add_inst(&esfm_esfmu_device, fm_dev_inst[fm_driver][chip_id]++);
+            break;
 
-    opl_log("Ticking timer %i, count now %02X...\n", tmr, dev->timer_cur_count[tmr]);
+#ifdef USE_LIBSERIALPORT
+        case FM_OPL2BOARD:
+            *drv      = ymfm_opl2board_drv;
+            drv->priv = device_add_inst(&ym_opl2board_device, fm_dev_inst[fm_driver][chip_id]++);  
+            break;
+#endif
 
-    if (dev->timer_cur_count[tmr] == 0x00) {
-        dev->status |= ((STAT_TMR1_OVER >> tmr) & ~dev->timer_ctrl);
-        dev->timer_cur_count[tmr] = dev->timer_count[tmr];
-
-        opl_log("Count wrapped around to zero, reloading timer %i (%02X), status = %02X...\n", tmr, (STAT_TMR1_OVER >> tmr), dev->status);
+        default:
+            return 0;
     }
 
-    timer_on_auto(&dev->timers[tmr], (tmr == 1) ? 320.0 : 80.0);
-}
-
-static void
-timer_control(opl_t *dev, int tmr, int start)
-{
-    timer_on_auto(&dev->timers[tmr], 0.0);
-
-    if (start) {
-        opl_log("Loading timer %i count: %02X = %02X\n", tmr, dev->timer_cur_count[tmr], dev->timer_count[tmr]);
-        dev->timer_cur_count[tmr] = dev->timer_count[tmr];
-        if (dev->flags & FLAG_OPL3)
-            timer_tick(dev, tmr); /* Per the YMF 262 datasheet, OPL3 starts counting immediately, unlike OPL2. */
-        else
-            timer_on_auto(&dev->timers[tmr], (tmr == 1) ? 320.0 : 80.0);
-    } else {
-        opl_log("Timer %i stopped\n", tmr);
-        if (tmr == 1) {
-            dev->status &= ~STAT_TMR2_OVER;
-        } else
-            dev->status &= ~STAT_TMR1_OVER;
-    }
-}
-
-static void
-timer_1(void *priv)
-{
-    opl_t *dev = (opl_t *) priv;
-
-    timer_tick(dev, 0);
-}
-
-static void
-timer_2(void *priv)
-{
-    opl_t *dev = (opl_t *) priv;
-
-    timer_tick(dev, 1);
-}
-
-static uint8_t
-opl_read(opl_t *dev, uint16_t port)
-{
-    uint8_t ret = 0xff;
-
-    if ((port & 0x0003) == 0x0000) {
-        ret = dev->status;
-        if (dev->status & STAT_TMR_OVER)
-            ret |= STAT_TMR_ANY;
-    }
-
-    opl_log("OPL statret = %02x, status = %02x\n", ret, dev->status);
-
-    return ret;
-}
-
-static void
-opl_write(opl_t *dev, uint16_t port, uint8_t val)
-{
-    if ((port & 0x0001) == 0x0001) {
-        nuked_write_reg_buffered(dev->opl, dev->port, val);
-
-        switch (dev->port) {
-            case 0x02: /* Timer 1 */
-                dev->timer_count[0] = val;
-                opl_log("Timer 0 count now: %i\n", dev->timer_count[0]);
-                break;
-
-            case 0x03: /* Timer 2 */
-                dev->timer_count[1] = val;
-                opl_log("Timer 1 count now: %i\n", dev->timer_count[1]);
-                break;
-
-            case 0x04: /* Timer control */
-                if (val & CTRL_RESET) {
-                    opl_log("Resetting timer status...\n");
-                    dev->status &= ~STAT_TMR_OVER;
-                } else {
-                    dev->timer_ctrl = val;
-                    timer_control(dev, 0, val & CTRL_TMR1_START);
-                    timer_control(dev, 1, val & CTRL_TMR2_START);
-                    opl_log("Status mask now %02X (val = %02X)\n", (val & ~CTRL_TMR_MASK) & CTRL_TMR_MASK, val);
-                }
-                break;
-        }
-    } else {
-        dev->port = nuked_write_addr(dev->opl, port, val) & 0x01ff;
-
-        if (!(dev->flags & FLAG_OPL3))
-            dev->port &= 0x00ff;
-    }
-}
-
-void
-opl_set_do_cycles(opl_t *dev, int8_t do_cycles)
-{
-    if (do_cycles)
-        dev->flags |= FLAG_CYCLES;
-    else
-        dev->flags &= ~FLAG_CYCLES;
-}
-
-static void
-opl_init(opl_t *dev, int is_opl3)
-{
-    memset(dev, 0x00, sizeof(opl_t));
-
-    dev->flags = FLAG_CYCLES;
-    if (is_opl3)
-        dev->flags |= FLAG_OPL3;
-    else
-        dev->status = 0x06;
-
-    /* Create a NukedOPL object. */
-    dev->opl = nuked_init(48000);
-
-    timer_add(&dev->timers[0], timer_1, dev, 0);
-    timer_add(&dev->timers[1], timer_2, dev, 0);
-}
-
-void
-opl_close(opl_t *dev)
-{
-    /* Release the NukedOPL object. */
-    if (dev->opl) {
-        nuked_close(dev->opl);
-        dev->opl = NULL;
-    }
-}
-
-uint8_t
-opl2_read(uint16_t port, void *priv)
-{
-    opl_t *dev = (opl_t *) priv;
-
-    if (dev->flags & FLAG_CYCLES)
-        cycles -= ((int) (isa_timing * 8));
-
-    opl2_update(dev);
-    opl_log("OPL2 port read = %04x\n", port);
-
-    return (opl_read(dev, port));
-}
-
-void
-opl2_write(uint16_t port, uint8_t val, void *priv)
-{
-    opl_t *dev = (opl_t *) priv;
-
-    opl2_update(dev);
-
-    opl_log("OPL2 port write = %04x\n", port);
-    opl_write(dev, port, val);
-}
-
-void
-opl2_init(opl_t *dev)
-{
-    opl_init(dev, 0);
-}
-
-void
-opl2_update(opl_t *dev)
-{
-    if (dev->pos >= sound_pos_global) {
-        return;
-    }
-
-    nuked_generate_stream(dev->opl,
-                          &dev->buffer[dev->pos * 2],
-                          sound_pos_global - dev->pos);
-
-    for (; dev->pos < sound_pos_global; dev->pos++) {
-        dev->buffer[dev->pos * 2] /= 2;
-        dev->buffer[(dev->pos * 2) + 1] = dev->buffer[dev->pos * 2];
-    }
-}
-
-uint8_t
-opl3_read(uint16_t port, void *priv)
-{
-    opl_t *dev = (opl_t *) priv;
-
-    if (dev->flags & FLAG_CYCLES)
-        cycles -= ((int) (isa_timing * 8));
-
-    opl3_update(dev);
-
-    return (opl_read(dev, port));
-}
-
-void
-opl3_write(uint16_t port, uint8_t val, void *priv)
-{
-    opl_t *dev = (opl_t *) priv;
-
-    opl3_update(dev);
-
-    opl_write(dev, port, val);
-}
-
-void
-opl3_init(opl_t *dev)
-{
-    opl_init(dev, 1);
-}
-
-/* API to sound interface. */
-void
-opl3_update(opl_t *dev)
-{
-    if (dev->pos >= sound_pos_global)
-        return;
-
-    nuked_generate_stream(dev->opl,
-                          &dev->buffer[dev->pos * 2],
-                          sound_pos_global - dev->pos);
-
-    for (; dev->pos < sound_pos_global; dev->pos++) {
-        dev->buffer[dev->pos * 2] /= 2;
-        dev->buffer[(dev->pos * 2) + 1] /= 2;
-    }
-}
+    return 1;
+};

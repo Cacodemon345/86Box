@@ -10,7 +10,7 @@
  *
  *
  *
- * Authors:  Sarah Walker, <http://pcem-emulator.co.uk/>
+ * Authors:  Sarah Walker, <https://pcem-emulator.co.uk/>
  *           Miran Grca, <mgrca8@gmail.com>
  *
  *           Copyright 2008-2019 Sarah Walker.
@@ -26,11 +26,16 @@
 #include <86box/pit.h>
 #include <86box/snd_speaker.h>
 #include <86box/sound.h>
+#include <86box/plat_unused.h>
 
-int speaker_mute = 0, speaker_gated = 0;
-int speaker_enable = 0, was_speaker_enable = 0;
+int speaker_mute       = 0;
+int speaker_gated      = 0;
+int speaker_enable     = 0;
+int was_speaker_enable = 0;
 
-int gated, speakval, speakon;
+int gated;
+int speakval;
+int speakon;
 
 static int32_t speaker_buffer[SOUNDBUFLEN];
 static int     speaker_pos = 0;
@@ -81,17 +86,22 @@ speaker_update(void)
 }
 
 void
-speaker_get_buffer(int32_t *buffer, int len, void *p)
+speaker_get_buffer(int32_t *buffer, int len, UNUSED(void *priv))
 {
-    int32_t c, val;
+    double val_l, val_r;
 
     speaker_update();
 
     if (!speaker_mute) {
-        for (c = 0; c < len * 2; c += 2) {
-            val = speaker_buffer[c >> 1];
-            buffer[c] += val;
-            buffer[c + 1] += val;
+        for (int c = 0; c < len * 2; c += 2) {
+            val_l = val_r = (double) speaker_buffer[c >> 1];
+            /* Apply PC speaker volume and filters */
+            if (filter_pc_speaker != NULL) {
+                filter_pc_speaker(0, &val_l, filter_pc_speaker_p);
+                filter_pc_speaker(1, &val_r, filter_pc_speaker_p);
+            }
+            buffer[c] += (int32_t) val_l;
+            buffer[c + 1] += (int32_t) val_r;
         }
     }
 

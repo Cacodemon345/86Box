@@ -7,15 +7,17 @@
 #include "cpu.h"
 #include <86box/86box.h>
 #include <86box/filters.h>
+#include <86box/timer.h>
 #include <86box/lpt.h>
 #include <86box/machine.h>
 #include <86box/sound.h>
-#include <86box/timer.h>
+#include <86box/plat_unused.h>
 
 typedef struct lpt_dac_t {
     void *lpt;
 
-    uint8_t dac_val_l, dac_val_r;
+    uint8_t dac_val_l;
+    uint8_t dac_val_r;
 
     int is_stereo;
     int channel;
@@ -34,9 +36,9 @@ dac_update(lpt_dac_t *lpt_dac)
 }
 
 static void
-dac_write_data(uint8_t val, void *p)
+dac_write_data(uint8_t val, void *priv)
 {
-    lpt_dac_t *lpt_dac = (lpt_dac_t *) p;
+    lpt_dac_t *lpt_dac = (lpt_dac_t *) priv;
 
     if (lpt_dac->is_stereo) {
         if (lpt_dac->channel)
@@ -49,29 +51,28 @@ dac_write_data(uint8_t val, void *p)
 }
 
 static void
-dac_write_ctrl(uint8_t val, void *p)
+dac_write_ctrl(uint8_t val, void *priv)
 {
-    lpt_dac_t *lpt_dac = (lpt_dac_t *) p;
+    lpt_dac_t *lpt_dac = (lpt_dac_t *) priv;
 
     if (lpt_dac->is_stereo)
         lpt_dac->channel = val & 0x01;
 }
 
 static uint8_t
-dac_read_status(void *p)
+dac_read_status(UNUSED(void *priv))
 {
     return 0x0f;
 }
 
 static void
-dac_get_buffer(int32_t *buffer, int len, void *p)
+dac_get_buffer(int32_t *buffer, int len, void *priv)
 {
-    lpt_dac_t *lpt_dac = (lpt_dac_t *) p;
-    int        c;
+    lpt_dac_t *lpt_dac = (lpt_dac_t *) priv;
 
     dac_update(lpt_dac);
 
-    for (c = 0; c < len; c++) {
+    for (int c = 0; c < len; c++) {
         buffer[c * 2] += dac_iir(0, lpt_dac->buffer[0][c]);
         buffer[c * 2 + 1] += dac_iir(1, lpt_dac->buffer[1][c]);
     }
@@ -81,8 +82,7 @@ dac_get_buffer(int32_t *buffer, int len, void *p)
 static void *
 dac_init(void *lpt)
 {
-    lpt_dac_t *lpt_dac = malloc(sizeof(lpt_dac_t));
-    memset(lpt_dac, 0, sizeof(lpt_dac_t));
+    lpt_dac_t *lpt_dac = calloc(1, sizeof(lpt_dac_t));
 
     lpt_dac->lpt = lpt;
 
@@ -101,33 +101,33 @@ dac_stereo_init(void *lpt)
     return lpt_dac;
 }
 static void
-dac_close(void *p)
+dac_close(void *priv)
 {
-    lpt_dac_t *lpt_dac = (lpt_dac_t *) p;
+    lpt_dac_t *lpt_dac = (lpt_dac_t *) priv;
 
     free(lpt_dac);
 }
 
 const lpt_device_t lpt_dac_device = {
-    .name = "LPT DAC / Covox Speech Thing",
+    .name          = "LPT DAC / Covox Speech Thing",
     .internal_name = "lpt_dac",
-    .init = dac_init,
-    .close = dac_close,
-    .write_data = dac_write_data,
-    .write_ctrl = dac_write_ctrl,
-    .read_data = NULL,
-    .read_status = dac_read_status,
-    .read_ctrl = NULL
+    .init          = dac_init,
+    .close         = dac_close,
+    .write_data    = dac_write_data,
+    .write_ctrl    = dac_write_ctrl,
+    .read_data     = NULL,
+    .read_status   = dac_read_status,
+    .read_ctrl     = NULL
 };
 
 const lpt_device_t lpt_dac_stereo_device = {
-    .name = "Stereo LPT DAC",
+    .name          = "Stereo LPT DAC",
     .internal_name = "lpt_dac_stereo",
-    .init = dac_stereo_init,
-    .close = dac_close,
-    .write_data = dac_write_data,
-    .write_ctrl = dac_write_ctrl,
-    .read_data = NULL,
-    .read_status = dac_read_status,
-    .read_ctrl = NULL
+    .init          = dac_stereo_init,
+    .close         = dac_close,
+    .write_data    = dac_write_data,
+    .write_ctrl    = dac_write_ctrl,
+    .read_data     = NULL,
+    .read_status   = dac_read_status,
+    .read_ctrl     = NULL
 };

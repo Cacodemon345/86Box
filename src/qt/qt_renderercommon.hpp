@@ -22,22 +22,27 @@ public:
 
     virtual uint32_t getBytesPerRow() { return 2048 * 4; }
 
-    virtual std::vector<std::tuple<uint8_t *, std::atomic_flag *>> getBuffers() { std::vector<std::tuple<uint8_t*, std::atomic_flag*>> buffers; return buffers; }
+    virtual std::vector<std::tuple<uint8_t *, std::atomic_flag *>> getBuffers()
+    {
+        std::vector<std::tuple<uint8_t *, std::atomic_flag *>> buffers;
+        return buffers;
+    }
 
     /* Does renderer implement options dialog */
     virtual bool hasOptions() const { return false; }
     /* Returns options dialog for renderer */
     virtual QDialog *getOptions(QWidget *parent) { return nullptr; }
     /* Reloads options of renderer */
-    virtual void reloadOptions() {}
+    virtual void reloadOptions() { }
 
-    virtual bool hasBlitFunc() { return false; }
-    virtual void blit(int x, int y, int w, int h) {}
+    int      r_monitor_index = 0;
 
 protected:
-    bool eventDelegate(QEvent *event, bool &result);
+    bool     eventDelegate(QEvent *event, bool &result);
+    void      drawStatusBarIcons(QPainter* painter);
 
-    QRect    source, destination;
+    QRect    source { 0, 0, 0, 0 };
+    QRect    destination;
     QWidget *parentWidget { nullptr };
 
     std::vector<std::atomic_flag> buf_usage;

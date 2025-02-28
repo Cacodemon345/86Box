@@ -10,15 +10,16 @@
 #include <86box/io.h>
 #include <86box/snd_cms.h>
 #include <86box/sound.h>
+#include <86box/plat_unused.h>
 
 void
 cms_update(cms_t *cms)
 {
     for (; cms->pos < sound_pos_global; cms->pos++) {
-        int     c, d;
-        int16_t out_l = 0, out_r = 0;
+        int16_t out_l = 0;
+        int16_t out_r = 0;
 
-        for (c = 0; c < 4; c++) {
+        for (uint8_t c = 0; c < 4; c++) {
             switch (cms->noisetype[c >> 1][c & 1]) {
                 case 0:
                     cms->noisefreq[c >> 1][c & 1] = MASTER_CLOCK / 256;
@@ -32,11 +33,14 @@ cms_update(cms_t *cms)
                 case 3:
                     cms->noisefreq[c >> 1][c & 1] = cms->freq[c >> 1][(c & 1) * 3];
                     break;
+
+                default:
+                    break;
             }
         }
-        for (c = 0; c < 2; c++) {
+        for (uint8_t c = 0; c < 2; c++) {
             if (cms->regs[c][0x1C] & 1) {
-                for (d = 0; d < 6; d++) {
+                for (uint8_t d = 0; d < 6; d++) {
                     if (cms->regs[c][0x14] & (1 << d)) {
                         if (cms->stat[c][d])
                             out_l += (cms->vol[c][d][0] * 90);
@@ -54,7 +58,7 @@ cms_update(cms_t *cms)
                             out_r += (cms->vol[c][d][0] * 90);
                     }
                 }
-                for (d = 0; d < 2; d++) {
+                for (uint8_t d = 0; d < 2; d++) {
                     cms->noisecount[c][d] += cms->noisefreq[c][d];
                     while (cms->noisecount[c][d] >= 24000) {
                         cms->noisecount[c][d] -= 24000;
@@ -65,43 +69,41 @@ cms_update(cms_t *cms)
                 }
             }
         }
-        cms->buffer[(cms->pos << 1)]     = out_l;
+        cms->buffer[cms->pos << 1]       = out_l;
         cms->buffer[(cms->pos << 1) + 1] = out_r;
     }
 }
 
 void
-cms_get_buffer(int32_t *buffer, int len, void *p)
+cms_get_buffer(int32_t *buffer, int len, void *priv)
 {
-    cms_t *cms = (cms_t *) p;
-
-    int c;
+    cms_t *cms = (cms_t *) priv;
 
     cms_update(cms);
 
-    for (c = 0; c < len * 2; c++)
+    for (int c = 0; c < len * 2; c++)
         buffer[c] += cms->buffer[c];
 
     cms->pos = 0;
 }
 
 void
-cms_write(uint16_t addr, uint8_t val, void *p)
+cms_write(uint16_t addr, uint8_t val, void *priv)
 {
-    cms_t *cms = (cms_t *) p;
+    cms_t *cms = (cms_t *) priv;
     int    voice;
     int    chip = (addr & 2) >> 1;
 
     switch (addr & 0xf) {
-        case 1:
+        case 0x1: /* SAA #1 Register Select Port */
             cms->addrs[0] = val & 31;
             break;
-        case 3:
+        case 0x3: /* SAA #2 Register Select Port */
             cms->addrs[1] = val & 31;
             break;
 
-        case 0:
-        case 2:
+        case 0x0: /* SAA #1 Data Port */
+        case 0x2: /* SAA #2 Data Port */
             cms_update(cms);
             cms->regs[chip][cms->addrs[chip] & 31] = val;
             switch (cms->addrs[chip] & 31) {
@@ -138,39 +140,48 @@ cms_write(uint16_t addr, uint8_t val, void *p)
                     cms->noisetype[chip][0] = val & 3;
                     cms->noisetype[chip][1] = (val >> 4) & 3;
                     break;
+
+                default:
+                    break;
             }
             break;
-        case 0x6:
-        case 0x7:
+
+        case 0x6: /* GameBlaster Write Port */
+        case 0x7: /* GameBlaster Write Port */
             cms->latched_data = val;
+            break;
+
+        default:
             break;
     }
 }
 
 uint8_t
-cms_read(uint16_t addr, void *p)
+cms_read(uint16_t addr, void *priv)
 {
-    cms_t *cms = (cms_t *) p;
+    const cms_t *cms = (cms_t *) priv;
 
     switch (addr & 0xf) {
-        case 0x1:
+        case 0x1: /* SAA #1 Register Select Port */
             return cms->addrs[0];
-        case 0x3:
+        case 0x3: /* SAA #2 Register Select Port */
             return cms->addrs[1];
-        case 0x4:
+        case 0x4: /* GameBlaster Read port (Always returns 0x7F) */
             return 0x7f;
-        case 0xa:
-        case 0xb:
+        case 0xa: /* GameBlaster Read Port */
+        case 0xb: /* GameBlaster Read Port */
             return cms->latched_data;
+
+        default:
+            break;
     }
     return 0xff;
 }
 
 void *
-cms_init(const device_t *info)
+cms_init(UNUSED(const device_t *info))
 {
-    cms_t *cms = malloc(sizeof(cms_t));
-    memset(cms, 0, sizeof(cms_t));
+    cms_t *cms = calloc(1, sizeof(cms_t));
 
     uint16_t addr = device_get_config_hex16("base");
     io_sethandler(addr, 0x0010, cms_read, NULL, NULL, cms_write, NULL, NULL, cms);
@@ -179,9 +190,9 @@ cms_init(const device_t *info)
 }
 
 void
-cms_close(void *p)
+cms_close(void *priv)
 {
-    cms_t *cms = (cms_t *) p;
+    cms_t *cms = (cms_t *) priv;
 
     free(cms);
 }
@@ -189,57 +200,38 @@ cms_close(void *p)
 static const device_config_t cms_config[] = {
   // clang-format off
     {
-        .name = "base",
-        .description = "Address",
-        .type = CONFIG_HEX16,
-        .default_string = "",
-        .default_int = 0x220,
-        .file_filter = "",
-        .spinner = { 0 },
-        .selection = {
-            {
-                .description = "0x210",
-                .value = 0x210
-            },
-            {
-                .description = "0x220",
-                .value = 0x220
-            },
-            {
-                .description = "0x230",
-                .value = 0x230
-            },
-            {
-                .description = "0x240",
-                .value = 0x240
-            },
-            {
-                .description = "0x250",
-                .value = 0x250
-            },
-            {
-                .description = "0x260",
-                .value = 0x260
-            },
-            {
-                .description = ""
-            }
-        }
+        .name           = "base",
+        .description    = "Address",
+        .type           = CONFIG_HEX16,
+        .default_string = NULL,
+        .default_int    = 0x220,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "0x210", .value = 0x210 },
+            { .description = "0x220", .value = 0x220 },
+            { .description = "0x230", .value = 0x230 },
+            { .description = "0x240", .value = 0x240 },
+            { .description = "0x250", .value = 0x250 },
+            { .description = "0x260", .value = 0x260 },
+            { .description = ""                      }
+        },
+        .bios           = { { 0 } }
     },
     { .name = "", .description = "", .type = CONFIG_END }
   // clang-format on
 };
 
 const device_t cms_device = {
-    .name = "Creative Music System / Game Blaster",
+    .name          = "Creative Music System / Game Blaster",
     .internal_name = "cms",
-    .flags = DEVICE_ISA,
-    .local = 0,
-    .init = cms_init,
-    .close = cms_close,
-    .reset = NULL,
-    { .available = NULL },
+    .flags         = DEVICE_ISA,
+    .local         = 0,
+    .init          = cms_init,
+    .close         = cms_close,
+    .reset         = NULL,
+    .available     = NULL,
     .speed_changed = NULL,
-    .force_redraw = NULL,
-    .config = cms_config
+    .force_redraw  = NULL,
+    .config        = cms_config
 };
