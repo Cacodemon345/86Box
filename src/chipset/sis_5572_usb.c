@@ -53,6 +53,8 @@
 #include <86box/chipset.h>
 #include <86box/usb.h>
 
+#include "cpu.h"
+
 #ifdef ENABLE_SIS_5572_USB_LOG
 int sis_5572_usb_do_log = ENABLE_SIS_5572_USB_LOG;
 
