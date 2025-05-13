@@ -72,3 +72,41 @@ machine_at_vpc2007_init(const machine_t *model)
 
     return ret;
 }
+
+void
+bx_out(uint16_t port, uint8_t data, void* priv)
+{
+    fprintf(stderr, "%c", data);
+}
+
+int
+machine_at_bochs_init(const machine_t *model)
+{
+    int ret;
+
+    ret = bios_load_linear("roms/machines/bochs/i440fx.bin",
+                           0x000e0000, 131072, 0);
+
+    if (bios_only || !ret)
+        return ret;
+
+    machine_at_common_init_ex(model, 2);
+
+    pci_init(PCI_CONFIG_TYPE_1);
+    pci_register_slot(0x00, PCI_CARD_NORTHBRIDGE, 1, 2, 3, 4);
+    pci_register_slot(0x01, PCI_CARD_SOUTHBRIDGE, 1, 2, 3, 4);
+    pci_register_slot(0x02, PCI_CARD_NORMAL, 2, 3, 4, 1);
+    pci_register_slot(0x03, PCI_CARD_NORMAL, 3, 4, 1, 2);
+    pci_register_slot(0x04, PCI_CARD_NORMAL, 4, 1, 2, 3);
+    pci_register_slot(0x05, PCI_CARD_NORMAL, 1, 2, 3, 4);
+    pci_register_slot(0x06, PCI_CARD_NORMAL, 2, 3, 4, 1);
+    device_add(&i440fx_device);
+    device_add(&piix4_device);
+    device_add(&w83977f_370_device);
+    device_add(&keyboard_ps2_holtek_device);
+    device_add(&intel_flash_bxt_device);
+
+    io_sethandler(0x402, 1, NULL, NULL, NULL, bx_out, NULL, NULL, NULL);
+
+    return ret;
+}
