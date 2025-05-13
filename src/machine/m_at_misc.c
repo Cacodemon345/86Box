@@ -101,7 +101,7 @@ machine_at_bochs_init(const machine_t *model)
     pci_register_slot(0x05, PCI_CARD_NORMAL, 1, 2, 3, 4);
     pci_register_slot(0x06, PCI_CARD_NORMAL, 2, 3, 4, 1);
     device_add(&i440fx_device);
-    device_add(&piix4_device);
+    device_add(&piix3_device);
     device_add(&w83977f_370_device);
     device_add(&keyboard_ps2_holtek_device);
     device_add(&intel_flash_bxt_device);
