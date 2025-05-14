@@ -3724,7 +3724,7 @@ keyboard_at_write(void *priv)
             case 0xff: /* reset */
                 keyboard_set_in_reset(1);
                 kbc_at_dev_reset(dev, 1);
-                bat_counter = 1000;
+                bat_counter = (!!strstr(machine_getname(), "i440fx")) ? 250 : 1000;
                 break;
 
             default:
