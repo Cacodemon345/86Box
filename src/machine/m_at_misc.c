@@ -38,6 +38,8 @@
 #include <86box/machine.h>
 #include <86box/sound.h>
 
+extern const device_t at_nvr_old_device;
+
 int
 machine_at_vpc2007_init(const machine_t *model)
 {
@@ -105,6 +107,7 @@ machine_at_bochs_init(const machine_t *model)
     device_add(&w83977f_370_device);
     device_add(&keyboard_ps2_holtek_device);
     device_add(&intel_flash_bxt_device);
+    device_add_params(&at_nvr_old_device, (void*)(9));
 
     io_sethandler(0x402, 1, NULL, NULL, NULL, bx_out, NULL, NULL, NULL);
 

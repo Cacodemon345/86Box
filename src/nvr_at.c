@@ -297,13 +297,14 @@
 #define FLAG_PIIX4         0x20
 #define FLAG_MULTI_BANK    0x40
 #define FLAG_MARTIN_HACK   0x80
+#define FLAG_BOCHS_HACK    0x100
 
 typedef struct local_t {
     int8_t stat;
 
     uint8_t cent;
     uint8_t def;
-    uint8_t flags;
+    uint16_t flags;
     uint8_t read_addr;
     uint8_t wp_0d;
     uint8_t wp_32;
@@ -596,6 +597,9 @@ nvr_reg_write(uint16_t reg, uint8_t val, void *priv)
     struct tm tm;
     uint8_t   old;
 
+    if ((local->flags & FLAG_BOCHS_HACK) && reg == RTC_CENTURY_AT)
+        reg = RTC_CENTURY_PS;
+
     old = nvr->regs[reg];
     switch (reg) {
         case RTC_SECONDS: /* bit 7 of seconds is read-only */
@@ -842,6 +846,13 @@ nvr_read(uint16_t addr, void *priv)
                     ret = nvr->regs[local->addr[addr_id]];
                 break;
 
+            case RTC_CENTURY_AT:
+            {
+                if (local->flags & FLAG_BOCHS_HACK) {
+                    ret = nvr->regs[local->cent];
+                    break;
+                }
+            }
             default:
                 if (!(local->lock[local->addr[addr_id]] & 0x02))
                     ret = nvr->regs[local->addr[addr_id]];
@@ -1159,6 +1170,15 @@ nvr_at_init(const device_t *info)
         case 8: /* Epson Equity LT */
             nvr->irq    = -1;
             local->cent = RTC_CENTURY_ELT;
+            break;
+        
+        case 9: /* Bochs */
+            nvr->irq    = 8;
+            local->cent = RTC_CENTURY_PS;
+            local->def  = 0x00;
+            local->flags |= FLAG_BOCHS_HACK;
+            if (info->local & 0x10)
+                local->flags |= FLAG_NO_NMI;
             break;
 
         default:
