@@ -449,7 +449,7 @@ outb(uint16_t port, uint8_t val)
     if (!found || (port == 0x84)) {
         cycles -= io_delay;
 #ifdef USE_DYNAREC
-        if (cpu_use_dynarec && ((port == 0x84) || (port == 0xeb) || (port == 0xed)))
+        if (cpu_use_dynarec && ((port == 0x84) || (port == 0xeb) || (port == 0xed) || (port == 0x80)))
             update_tsc();
 #endif
     }
