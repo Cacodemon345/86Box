@@ -243,6 +243,10 @@ add_library(ui STATIC
 
     qt_iconindicators.hpp
     qt_iconindicators.cpp
+
+    # GROSS HACK!
+    qt_dummygl.cpp
+    qt_dummygl.hpp
 )
 
 if(RTMIDI)
