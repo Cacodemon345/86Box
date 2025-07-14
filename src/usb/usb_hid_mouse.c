@@ -409,7 +409,7 @@ static uint8_t bx_mouse_config_descriptor0[] = {
     0x81,       /*  u8  ep_bEndpointAddress; IN Endpoint 1 */
     0x03,       /*  u8  ep_bmAttributes; Interrupt */
     0x08, 0x00, /*  u16 ep_wMaxPacketSize; */
-    0x04,       /*  u8  ep_bInterval; */
+    0x0a,       /*  u8  ep_bInterval; */
 };
 
 #define HID_PHYS_DESC_SET_LEN 7
