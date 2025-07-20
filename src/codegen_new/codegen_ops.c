@@ -291,7 +291,7 @@ RecompOpFn recomp_opcodes_d9[512] = {
 
 /*c0*/  ropFLD,         ropFLD,         ropFLD,         ropFLD,         ropFLD,         ropFLD,         ropFLD,         ropFLD,         ropFXCH,        ropFXCH,        ropFXCH,        ropFXCH,        ropFXCH,        ropFXCH,        ropFXCH,        ropFXCH,
 /*d0*/  NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           ropFSTP,        ropFSTP,        ropFSTP,        ropFSTP,        ropFSTP,        ropFSTP,        ropFSTP,        ropFSTP,
-/*e0*/  ropFCHS,        ropFABS,        NULL,           NULL,           ropFTST,        NULL,           NULL,           NULL,           ropFLD1,        NULL,           NULL,           NULL,           NULL,           NULL,           ropFLDZ,        NULL,
+/*e0*/  NULL,           ropFABS,        NULL,           NULL,           ropFTST,        NULL,           NULL,           NULL,           ropFLD1,        NULL,           NULL,           NULL,           NULL,           NULL,           ropFLDZ,        NULL,
 /*f0*/  NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           ropFSQRT,       NULL,           NULL,           NULL,           NULL,           NULL,
 
         /*32-bit data*/
@@ -313,7 +313,7 @@ RecompOpFn recomp_opcodes_d9[512] = {
 
 /*c0*/  ropFLD,         ropFLD,         ropFLD,         ropFLD,         ropFLD,         ropFLD,         ropFLD,         ropFLD,         ropFXCH,        ropFXCH,        ropFXCH,        ropFXCH,        ropFXCH,        ropFXCH,        ropFXCH,        ropFXCH,
 /*d0*/  NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           ropFSTP,        ropFSTP,        ropFSTP,        ropFSTP,        ropFSTP,        ropFSTP,        ropFSTP,        ropFSTP,
-/*e0*/  ropFCHS,        ropFABS,        NULL,           NULL,           ropFTST,        NULL,           NULL,           NULL,           ropFLD1,        NULL,           NULL,           NULL,           NULL,           NULL,           ropFLDZ,        NULL,
+/*e0*/  NULL,           ropFABS,        NULL,           NULL,           ropFTST,        NULL,           NULL,           NULL,           ropFLD1,        NULL,           NULL,           NULL,           NULL,           NULL,           ropFLDZ,        NULL,
 /*f0*/  NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           NULL,           ropFSQRT,       NULL,           NULL,           NULL,           NULL,           NULL,
     // clang-format on
 };
