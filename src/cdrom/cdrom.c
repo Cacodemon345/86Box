@@ -2238,11 +2238,57 @@ cdrom_get_track_buffer(cdrom_t *dev, uint8_t *buf)
     buf[8] = 0x00;
 }
 
-/* TODO: Actually implement this properly. */
+#define CD_BCD(x)         (((x) % 10) | (((x) / 10) << 4))
+static void
+blk_to_msf_bcd(int blk, unsigned char *msf)
+{
+    blk = blk + 150;        /* 2 seconds skip required to
+                               reach ISO data */
+    msf[0] = CD_BCD(blk / 4500);
+    blk = blk % 4500;
+    msf[1] = CD_BCD(blk / 75);
+    msf[2] = CD_BCD(blk % 75);
+
+    return;
+}
+
 void
 cdrom_get_q(UNUSED(cdrom_t *dev), uint8_t *buf, UNUSED(int *curtoctrk), UNUSED(uint8_t mode))
 {
     memset(buf, 0x00, 10);
+    if (!(mode & 4)) { // MODE_GET_TOC (Mitsumi)
+        cdrom_get_current_subcodeq(dev, buf);
+    } else {
+        uint8_t                 rti[65536]  = { 0 };
+        uint8_t                 ti[65536]   = { 0 };
+        int                     num         = 0;
+        const raw_track_info_t *trti        = (raw_track_info_t *) rti;
+        track_info_t           *tti         = (track_info_t *) ti;
+
+        dev->ops->get_raw_track_info(dev->local, &num, rti);
+        buf[1] = 0xFF;
+        if (num > 0) {
+            uint32_t lba_start, lba_end, lba_size;
+            buf[0] = trti[*curtoctrk].adr_ctl;
+            buf[1] = 0;
+            buf[2] = CD_BCD(trti[*curtoctrk].point);
+            
+            dev->ops->get_track_info(dev->local, trti[*curtoctrk].point, 0, tti);
+            lba_start = MSFtoLBA(tti->m, tti->s, tti->f) - 150;
+            dev->ops->get_track_info(dev->local, trti[*curtoctrk].point, 1, tti);
+            lba_end = MSFtoLBA(tti->m, tti->s, tti->f) - 150;
+
+            lba_size = (lba_end - lba_start) + 1;
+
+            blk_to_msf_bcd(lba_size, &buf[3]);
+
+            buf[6] = 0;
+            buf[7] = CD_BCD(trti[*curtoctrk].pm);
+            buf[8] = CD_BCD(trti[*curtoctrk].ps);
+            buf[9] = CD_BCD(trti[*curtoctrk].pf);
+        }
+        (void)*curtoctrk++;
+    }
 }
 
 uint8_t

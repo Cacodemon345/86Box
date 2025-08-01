@@ -140,7 +140,7 @@ mitsumi_cdrom_log(const char *fmt, ...)
 static int
 mitsumi_cdrom_is_ready(const mcd_t *dev)
 {
-    return (dev->cdrom_dev->image_path[0] != 0x00);
+    return (dev->cdrom_dev->ops != NULL);
 }
 
 static void
@@ -238,8 +238,8 @@ mitsumi_cdrom_in(uint16_t port, void *priv)
                 ret |= FLAG_NODATA;
             if (!dev->cmdbuf_count || !dev->newstat)
                 ret |= FLAG_NOSTAT;
-            pclog("Read port 1: ret = %02x\n", ret | FLAG_UNK);
-            return ret | FLAG_UNK;
+            pclog("Read port 1: ret = %02x\n", ret | FLAG_UNK | 1);
+            return ret | FLAG_UNK | 1;
         case 2:
             break;
         default:
@@ -264,6 +264,9 @@ mitsumi_cdrom_out(uint16_t port, uint8_t val, void *priv)
                         dev->mode         = val;
                         dev->cmdbuf[1]    = 0;
                         dev->cmdbuf_count = 2;
+                        if (dev->mode & MODE_GET_TOC) {
+                            dev->cur_toc_track = 0;
+                        }
                         break;
                     case CMD_LOCK:
                         dev->locked       = val & 1;
