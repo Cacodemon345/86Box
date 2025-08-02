@@ -2323,15 +2323,18 @@ cdrom_mitsumi_audio_play(cdrom_t *dev, uint32_t pos, uint32_t len)
                 } else {
                     cdrom_log(dev->log, "LBA %08X not on an audio track\n", pos);
                     cdrom_stop(dev);
+                    ret = 0;
                 }
             } else {
                 cdrom_log(dev->log, "Unable to get the ending position for track %08X\n",
                           len);
                 cdrom_stop(dev);
+                ret = 0;
             }
         } else {
             cdrom_log(dev->log, "Unable to get the starting position for track %08X\n", pos);
             cdrom_stop(dev);
+            ret = 0;
         }
     }
 

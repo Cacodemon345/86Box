@@ -92,7 +92,7 @@ typedef struct mcd_t {
     int      change;
     int      data;
     uint8_t  stat;
-    uint8_t  buf[RAW_SECTOR_SIZE];
+    uint8_t  buf[RAW_SECTOR_SIZE * 512];
     int      buf_count;
     int      buf_idx;
     uint8_t  cmdbuf[16];
@@ -183,7 +183,7 @@ mitsumi_cdrom_read_sector(mcd_t *dev, int first)
         return 0;
     }
     cdrom_stop(dev->cdrom_dev);
-    ret = cdrom_readsector_raw(dev->cdrom_dev, dev->buf, dev->cdrom_dev->seek_pos, 0, 2, 0x10, (int *) &dev->readcount, 0);
+    ret = cdrom_readsector_raw(dev->cdrom_dev, dev->buf, dev->cdrom_dev->seek_pos, 0, 0x08 | (1 << 4), 0x10, (int *) &dev->readcount, 0);
     if (ret <= 0)
         return 0;
     if (dev->mode & 0x40) {
