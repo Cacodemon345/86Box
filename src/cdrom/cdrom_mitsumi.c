@@ -107,6 +107,7 @@ typedef struct mcd_t {
     uint16_t dmalen;
     uint32_t readmsf;
     uint32_t readcount;
+    uint32_t readindex;
     int      locked;
     int      drvmode;
     int      cur_toc_track;
@@ -166,6 +167,7 @@ mitsumi_cdrom_read_sector(mcd_t *dev, int first)
 {
     uint8_t  status;
     int      ret = 0;
+    int      len = 0;
 
     if (dev->drvmode == DRV_MODE_CDDA) {
         status = cdrom_mitsumi_audio_play(dev->cdrom_dev, dev->readmsf, dev->readcount);
@@ -183,14 +185,14 @@ mitsumi_cdrom_read_sector(mcd_t *dev, int first)
         return 0;
     }
     cdrom_stop(dev->cdrom_dev);
-    ret = cdrom_readsector_raw(dev->cdrom_dev, dev->buf, dev->cdrom_dev->seek_pos, 0, 0x08 | (1 << 4), 0x10, (int *) &dev->readcount, 0);
+    ret = cdrom_readsector_raw(dev->cdrom_dev, dev->buf, (MSFtoLBA(CD_DCB((dev->readmsf >> 16) & 0xFF), CD_DCB((dev->readmsf >> 8) & 0xFF), CD_DCB(dev->readmsf & 0xFF)) - 150) + dev->readindex, 0, 0x08 | (1 << 4), 0x10, (int *) &len, 0);
     if (ret <= 0)
         return 0;
     if (dev->mode & 0x40) {
         dev->buf[12] = CD_BCD((dev->readmsf >> 16) & 0xff);
         dev->buf[13] = CD_BCD((dev->readmsf >> 8) & 0xff);
     }
-    dev->readmsf   = cdrom_lba_to_msf_accurate(dev->cdrom_dev->seek_pos + 1);
+    //dev->readmsf   = cdrom_lba_to_msf_accurate(dev->cdrom_dev->seek_pos + 1);
     dev->buf_count = dev->dmalen + 1;
     dev->buf_idx   = 0;
     dev->data      = 1;
@@ -202,6 +204,7 @@ mitsumi_cdrom_read_sector(mcd_t *dev, int first)
         dev->pos = 0;
     }
     dev->readcount--;
+    dev->readindex++;
     if ((dev->enable_irq & IRQ_DATAREADY) && first)
         picint(1 << dev->irq);
     return 1;
@@ -312,6 +315,7 @@ mitsumi_cdrom_out(uint16_t port, uint8_t val, void *priv)
                         switch (dev->cmdrd_count) {
                             case 0:
                                 dev->readcount |= val;
+                                dev->readindex = 0;
                                 mitsumi_cdrom_read_sector(dev, 1);
                                 dev->cmdbuf_count = 1;
                                 dev->cmdbuf[0]    = STAT_SPIN | STAT_READY;
