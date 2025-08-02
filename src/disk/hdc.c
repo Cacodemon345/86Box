@@ -63,6 +63,7 @@ static const struct {
     { &xtide_device                },
     { &st506_xt_st11_m_device      },
     { &st506_xt_st11_r_device      },
+    { &xta_st50x_device            },
     { &st506_xt_victor_v86p_device },
     { &st506_xt_wd1002a_27x_device },
     { &st506_xt_wd1002a_wx1_device },
@@ -130,7 +131,7 @@ hdc_get_internal_name(int hdc)
 }
 
 int
-hdc_get_from_internal_name(char *s)
+hdc_get_from_internal_name(const char *s)
 {
     int c = 0;
 
