@@ -1236,7 +1236,26 @@ sb_exec_command(sb_dsp_t *dsp)
         dsp->sb_8051_ram[0x20] = dsp->sb_command;
     }
 
-    if (IS_ESS(dsp) && dsp->sb_command >= 0xA0 && dsp->sb_command <= 0xCF) {
+    if (IS_JAZZ16(dsp)) {
+        if (dsp->sb_command == 0xfa) { // Board revision.
+            sb_add_data(dsp, 0x03);
+            sb_add_data(dsp, 0x01);
+            return;
+        }
+        if (dsp->sb_command == 0xfb) { // DMA/IRQ config.
+            sb_dsp_setdma16(dsp, (dsp->sb_data[0] >> 4) & 0xf);
+            sb_dsp_setdma8(dsp, (dsp->sb_data[0]) & 0xf);
+            sb_dsp_setirq(dsp, (dsp->sb_data[1]) & 0xf);
+            mpu401_setirq(dsp->mpu, (dsp->sb_data[1] >> 4) & 0xf);
+            return;
+        }
+        if (dsp->sb_command == 0xfe) { // Board model.
+            sb_add_data(dsp, 0x1);
+            sb_add_data(dsp, 0x1);
+            return;
+        }
+    }
+    else if (IS_ESS(dsp) && dsp->sb_command >= 0xA0 && dsp->sb_command <= 0xCF) {
         if (dsp->sb_command == 0xC6 || dsp->sb_command == 0xC7) {
             dsp->ess_extended_mode = !!(dsp->sb_command == 0xC6);
             return;
@@ -1925,6 +1944,15 @@ sb_write(uint16_t addr, uint8_t val, void *priv)
                         sb_commands[dsp->sb_command] = 3;
                     else if (dsp->sb_command == 0x08 && dsp->sb_data_stat == 1 && dsp->sb_data[0] == 0x07)
                         sb_commands[dsp->sb_command] = 2;
+                }
+                if (IS_JAZZ16(dsp) && dsp->sb_command == 0xfa) {
+                    sb_commands[dsp->sb_command] = -1;
+                } else
+                    sb_commands[dsp->sb_command] = 2;
+                if (IS_JAZZ16(dsp) && dsp->sb_command == 0xfb) {
+                    sb_commands[dsp->sb_command] = 2;
+                } else {
+                    sb_commands[dsp->sb_command] = -1;
                 }
                 if (IS_ESS(dsp) && dsp->sb_command >= 0x64 && dsp->sb_command <= 0x6F) {
                     sb_commands[dsp->sb_command] = 2;

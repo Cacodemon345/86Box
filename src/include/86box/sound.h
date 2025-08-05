@@ -150,6 +150,7 @@ extern const device_t sb_mcv_device;
 extern const device_t sb_2_device;
 extern const device_t sb_pro_v1_device;
 extern const device_t sb_pro_v2_device;
+extern const device_t jazz16_device;
 extern const device_t sb_pro_mcv_device;
 extern const device_t sb_pro_compat_device;
 extern const device_t sb_16_device;

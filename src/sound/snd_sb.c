@@ -127,6 +127,8 @@ static const double sb_att_3dbstep_3bits[] = {
 static const uint16_t sb_mcv_addr[8]     = { 0x200, 0x210, 0x220, 0x230, 0x240, 0x250, 0x260, 0x270 };
 static const int      sb_pro_mcv_irqs[4] = { 7, 5, 3, 3 };
 
+static int jazz16_installed_index = 0;
+
 #ifdef ENABLE_SB_LOG
 int sb_do_log = ENABLE_SB_LOG;
 
@@ -3052,6 +3054,127 @@ sb_pro_v1_init(UNUSED(const device_t *info))
     return sb;
 }
 
+void
+jazz16_port_out(uint16_t addr, uint8_t val, void* priv)
+{
+    sb_t *sb = (sb_t*)priv;
+
+    if (sb->jazz16_seq == 2) {
+        sb->jazz16_seq = 0;
+        addr = sb->dsp.sb_addr;
+
+        if (addr != 0) {
+            io_removehandler(addr, 0x0004,
+                            sb->opl.read, NULL, NULL,
+                            sb->opl.write, NULL, NULL,
+                            sb->opl.priv);
+            io_removehandler(addr + 8, 0x0002,
+                            sb->opl.read, NULL, NULL,
+                            sb->opl.write, NULL, NULL,
+                            sb->opl.priv);
+            io_removehandler(addr + 4, 0x0002,
+                            sb_ct1345_mixer_read, NULL, NULL,
+                            sb_ct1345_mixer_write, NULL, NULL,
+                            sb);
+
+            sb_dsp_setaddr(&sb->dsp, 0);
+        }
+
+        addr = 0x200 | (val & 0x70);
+
+        if (addr != 0x200) {
+            io_sethandler(addr, 0x0004,
+                            sb->opl.read, NULL, NULL,
+                            sb->opl.write, NULL, NULL,
+                            sb->opl.priv);
+            io_sethandler(addr + 8, 0x0002,
+                            sb->opl.read, NULL, NULL,
+                            sb->opl.write, NULL, NULL,
+                            sb->opl.priv);
+            io_sethandler(addr + 4, 0x0002,
+                            sb_ct1345_mixer_read, NULL, NULL,
+                            sb_ct1345_mixer_write, NULL, NULL,
+                            sb);
+
+            sb_dsp_setaddr(&sb->dsp, addr);
+        }
+
+        mpu401_change_addr(sb->mpu, 0x300 | ((val & 0x3) << 4));
+        return;
+    }
+    if (sb->jazz16_seq == 1 && val == (0x50 + sb->jazz16_index)) {
+        sb->jazz16_seq = 2;
+        return;
+    }
+    if (sb->jazz16_seq == 0 && val == (0xAF - sb->jazz16_index)) {
+        sb->jazz16_seq = 1;
+        return;
+    }
+}
+
+static void *
+jazz16_init(UNUSED(const device_t *info))
+{
+    /* SB Pro 2 port mappings, 220h or 240h.
+       2x0 to 2x3 -> FM chip (18 voices)
+       2x4 to 2x5 -> Mixer interface
+       2x6, 2xA, 2xC, 2xE -> DSP chip
+       2x8, 2x9, 388 and 389 FM chip (9 voices)
+       2x0+10 to 2x0+13 CDROM interface. */
+    sb_t    *sb   = calloc(1, sizeof(sb_t));
+
+    sb->opl_enabled = 1;
+    if (sb->opl_enabled)
+        fm_driver_get(FM_YMF262, &sb->opl);
+
+    sb_dsp_set_real_opl(&sb->dsp, 1);
+    sb_dsp_init(&sb->dsp, SBPRO2_DSP_302, SB_SUBTYPE_MVD_JAZZ, sb);
+    sb_dsp_setaddr(&sb->dsp, 0);
+    sb_ct1345_mixer_reset(sb);
+    /* DSP I/O handler is activated in sb_dsp_setaddr */
+    //if (sb->opl_enabled) {
+    //    io_sethandler(addr, 0x0004,
+    //                  sb->opl.read, NULL, NULL,
+    //                  sb->opl.write, NULL, NULL,
+    //                  sb->opl.priv);
+    //    io_sethandler(addr + 8, 0x0002,
+    //                  sb->opl.read, NULL, NULL,
+    //                  sb->opl.write, NULL, NULL,
+    //                  sb->opl.priv);
+    io_sethandler(0x0388, 0x0004,
+                  sb->opl.read, NULL, NULL,
+                  sb->opl.write, NULL, NULL,
+                  sb->opl.priv);
+    //}
+
+    sb->mixer_enabled = 1;
+    //io_sethandler(addr + 4, 0x0002,
+    //             sb_ct1345_mixer_read, NULL, NULL,
+    //             sb_ct1345_mixer_write, NULL, NULL,
+    //             sb);
+    sound_add_handler(sb_get_buffer_sbpro, sb);
+    if (sb->opl_enabled)
+        music_add_handler(sb_get_music_buffer_sbpro, sb);
+    sound_set_cd_audio_filter(sbpro_filter_cd_audio, sb);
+
+    sb_dsp_setaddr(&sb->dsp, 0);
+    sb_dsp_setirq(&sb->dsp, 0);
+    sb_dsp_setdma8(&sb->dsp, ISAPNP_DMA_DISABLED);
+    sb_dsp_setdma16(&sb->dsp, ISAPNP_DMA_DISABLED);
+
+    if (device_get_config_int("receive_input"))
+        midi_in_handler(1, sb_dsp_input_msg, sb_dsp_input_sysex, &sb->dsp);
+
+    if (device_get_config_int("gameport")) {
+        sb->gameport      = gameport_add(&gameport_200_device);
+        sb->gameport_addr = 0x200;
+    }
+
+    io_sethandler(0x201, 1, NULL, NULL, NULL, jazz16_port_out, NULL, NULL, sb);
+    jazz16_installed_index++;
+    return sb;
+}
+
 static void *
 sb_pro_v2_init(UNUSED(const device_t *info))
 {
@@ -4083,6 +4206,8 @@ sb_close(void *priv)
     sb_dsp_close(&sb->dsp);
 
     free(sb);
+
+    jazz16_installed_index = 0;
 }
 
 static void
@@ -4502,6 +4627,33 @@ static const device_config_t sb_pro_config[] = {
         .type           = CONFIG_BINARY,
         .default_string = NULL,
         .default_int    = 1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "receive_input",
+        .description    = "Receive MIDI input",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+};
+
+// All Jazz16 cards came with OPL3 if I remember correctly --Cacodemon345
+static const device_config_t jazz16_config[] = {
+    {
+        .name           = "gameport",
+        .description    = "Enable Game port",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 0,
         .file_filter    = NULL,
         .spinner        = { 0 },
         .selection      = { { 0 } },
@@ -5543,6 +5695,20 @@ const device_t sb_pro_v1_device = {
     .speed_changed = sb_speed_changed,
     .force_redraw  = NULL,
     .config        = sb_pro_config
+};
+
+const device_t jazz16_device = {
+    .name          = "Media Vision Deluxe 16 (Jazz16)",
+    .internal_name = "jazz16",
+    .flags         = DEVICE_ISA,
+    .local         = 0,
+    .init          = jazz16_init,
+    .close         = sb_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = sb_speed_changed,
+    .force_redraw  = NULL,
+    .config        = jazz16_config
 };
 
 const device_t sb_pro_v2_device = {

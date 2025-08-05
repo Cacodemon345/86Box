@@ -198,6 +198,8 @@ typedef struct sb_t {
     uint16_t midi_addr;
     uint16_t gameport_addr;
 
+    uint8_t jazz16_seq, jazz16_index;
+
     void   *opl_mixer;
     void  (*opl_mix)(void*, double*, double*);
 } sb_t;

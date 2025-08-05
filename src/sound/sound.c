@@ -123,6 +123,7 @@ static const SOUND_CARD sound_cards[] = {
     { &sb_2_device                  },
     { &sb_pro_v1_device             },
     { &sb_pro_v2_device             },
+    { &jazz16_device                },
     { &entertainer_device           },
     { &pssj_isa_device              },
     { &tndy_device                  },
