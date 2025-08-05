@@ -3171,6 +3171,7 @@ jazz16_init(UNUSED(const device_t *info))
     }
 
     io_sethandler(0x201, 1, NULL, NULL, NULL, jazz16_port_out, NULL, NULL, sb);
+    sb->jazz16_index = jazz16_installed_index;
     jazz16_installed_index++;
     return sb;
 }
