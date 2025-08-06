@@ -1983,14 +1983,18 @@ sb_write(uint16_t addr, uint8_t val, void *priv)
                     else if (dsp->sb_command == 0x08 && dsp->sb_data_stat == 1 && dsp->sb_data[0] == 0x07)
                         sb_commands[dsp->sb_command] = 2;
                 }
-                if (IS_JAZZ16(dsp) && dsp->sb_command == 0xfa) {
-                    sb_commands[dsp->sb_command] = -1;
-                } else
-                    sb_commands[dsp->sb_command] = 2;
-                if (IS_JAZZ16(dsp) && dsp->sb_command == 0xfb) {
-                    sb_commands[dsp->sb_command] = 2;
-                } else {
-                    sb_commands[dsp->sb_command] = -1;
+                if (dsp->sb_command == 0xfa) {
+                    if (IS_JAZZ16(dsp)) {
+                        sb_commands[dsp->sb_command] = -1;
+                    } else
+                        sb_commands[dsp->sb_command] = 2;
+                }
+                if (dsp->sb_command == 0xfb) {
+                    if (IS_JAZZ16(dsp)) {
+                        sb_commands[dsp->sb_command] = 2;
+                    } else {
+                        sb_commands[dsp->sb_command] = -1;
+                    }
                 }
                 if (IS_ESS(dsp) && dsp->sb_command >= 0x64 && dsp->sb_command <= 0x6F) {
                     sb_commands[dsp->sb_command] = 2;
