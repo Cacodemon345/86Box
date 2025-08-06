@@ -1276,8 +1276,8 @@ sb_exec_command(sb_dsp_t *dsp)
 
     if (IS_JAZZ16(dsp)) {
         if (dsp->sb_command == 0xfa) { // Board revision.
-            sb_add_data(dsp, 0x03);
-            sb_add_data(dsp, 0x01);
+            sb_add_data(dsp, 0x10);
+            pclog("Jazz16 board revision (return 0x10)\n");
             return;
         }
         if (dsp->sb_command == 0xfb) { // DMA/IRQ config.
@@ -1285,11 +1285,13 @@ sb_exec_command(sb_dsp_t *dsp)
             sb_dsp_setdma8(dsp, sb_jazz16_dmaval((dsp->sb_data[0]) & 0xf));
             sb_dsp_setirq(dsp, sb_jazz16_irqval((dsp->sb_data[1]) & 0xf));
             mpu401_setirq(dsp->mpu, sb_jazz16_irqval((dsp->sb_data[1] >> 4) & 0xf));
+            pclog("Jazz16 DMAINTR\n");
             return;
         }
         if (dsp->sb_command == 0xfe) { // Board model.
             sb_add_data(dsp, 0x1);
             sb_add_data(dsp, 0x1);
+            pclog("Jazz16 board model\n");
             return;
         }
     }
@@ -1910,7 +1912,7 @@ sb_exec_command(sb_dsp_t *dsp)
              */
 
         default:
-            sb_dsp_log("Unknown DSP command: %02X\n", dsp->sb_command);
+            pclog("Unknown DSP command: %02X\n", dsp->sb_command);
             break;
     }
 

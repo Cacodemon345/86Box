@@ -129,6 +129,7 @@ static const int      sb_pro_mcv_irqs[4] = { 7, 5, 3, 3 };
 
 static int jazz16_installed_index = 0;
 
+#define ENABLE_SB_LOG 1
 #ifdef ENABLE_SB_LOG
 int sb_do_log = ENABLE_SB_LOG;
 
@@ -3059,6 +3060,7 @@ jazz16_port_out(uint16_t addr, uint8_t val, void* priv)
 {
     sb_t *sb = (sb_t*)priv;
 
+    pclog("Seq out: 0x%02X\n", val);
     if (sb->jazz16_seq == 2) {
         sb->jazz16_seq = 0;
         addr = sb->dsp.sb_addr;
