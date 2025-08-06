@@ -1960,7 +1960,7 @@ sb_exec_command(sb_dsp_t *dsp)
              */
 
         default:
-            pclog("Unknown DSP command: %02X\n", dsp->sb_command);
+            sb_dsp_log("Unknown DSP command: %02X\n", dsp->sb_command);
             break;
     }
 
