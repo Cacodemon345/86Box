@@ -3161,6 +3161,14 @@ jazz16_init(UNUSED(const device_t *info))
     sb_dsp_setirq(&sb->dsp, 0);
     sb_dsp_setdma8(&sb->dsp, ISAPNP_DMA_DISABLED);
     sb_dsp_setdma16(&sb->dsp, ISAPNP_DMA_DISABLED);
+    
+    // Apparently it supports 16-bit DMA if Linux sources are anything to go by.
+    sb_dsp_setdma16_supported(&sb->dsp, 1);
+    sb_dsp_setdma16_enabled(&sb->dsp, 1);
+
+    sb->mpu = (mpu_t *) calloc(1, sizeof(mpu_t));
+    mpu401_init(sb->mpu, 0, 0, M_UART, device_get_config_int("receive_input401"));
+    sb_dsp_set_mpu(&sb->dsp, sb->mpu);
 
     if (device_get_config_int("receive_input"))
         midi_in_handler(1, sb_dsp_input_msg, sb_dsp_input_sysex, &sb->dsp);
@@ -4666,6 +4674,17 @@ static const device_config_t jazz16_config[] = {
         .type           = CONFIG_BINARY,
         .default_string = NULL,
         .default_int    = 1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "receive_input401",
+        .description    = "Receive MIDI input (MPU-401)",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 0,
         .file_filter    = NULL,
         .spinner        = { 0 },
         .selection      = { { 0 } },
