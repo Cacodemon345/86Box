@@ -1239,7 +1239,7 @@ sb_jazz16_dmaval(uint8_t val)
     }
 }
 
-inline uint8_t
+uint8_t
 sb_jazz16_from_dmaval(uint8_t val)
 {
     switch (val & 0xF) {
@@ -1256,7 +1256,7 @@ sb_jazz16_from_dmaval(uint8_t val)
     }
 }
 
-inline uint8_t
+uint8_t
 sb_jazz16_from_irqval(uint8_t val)
 {
     switch (val & 0xF) {
