@@ -1222,6 +1222,44 @@ sb_ess_write_reg(sb_dsp_t *dsp, const uint8_t reg, uint8_t data)
     }
 }
 
+inline uint8_t
+sb_jazz16_dmaval(uint8_t val)
+{
+    switch (val & 0xF) {
+        case 1:
+            return 1;
+        case 2:
+            return 3;
+        case 3:
+            return 5;
+        case 4:
+            return 7;
+        default:
+            return 0;
+    }
+}
+
+inline uint8_t
+sb_jazz16_irqval(uint8_t val)
+{
+    switch (val & 0xF) {
+        case 1:
+            return 5;
+        case 2:
+            return 2;
+        case 3:
+            return 3;
+        case 4:
+            return 7;
+        case 5:
+            return 10;
+        case 6:
+            return 15;
+        default:
+            return 0;
+    }
+}
+
 void
 sb_exec_command(sb_dsp_t *dsp)
 {
@@ -1243,10 +1281,10 @@ sb_exec_command(sb_dsp_t *dsp)
             return;
         }
         if (dsp->sb_command == 0xfb) { // DMA/IRQ config.
-            sb_dsp_setdma16(dsp, (dsp->sb_data[0] >> 4) & 0xf);
-            sb_dsp_setdma8(dsp, (dsp->sb_data[0]) & 0xf);
-            sb_dsp_setirq(dsp, (dsp->sb_data[1]) & 0xf);
-            mpu401_setirq(dsp->mpu, (dsp->sb_data[1] >> 4) & 0xf);
+            sb_dsp_setdma16(dsp, sb_jazz16_dmaval((dsp->sb_data[0] >> 4) & 0xf));
+            sb_dsp_setdma8(dsp, sb_jazz16_dmaval((dsp->sb_data[0]) & 0xf));
+            sb_dsp_setirq(dsp, sb_jazz16_irqval((dsp->sb_data[1]) & 0xf));
+            mpu401_setirq(dsp->mpu, sb_jazz16_irqval((dsp->sb_data[1] >> 4) & 0xf));
             return;
         }
         if (dsp->sb_command == 0xfe) { // Board model.
