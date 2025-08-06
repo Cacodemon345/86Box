@@ -1222,7 +1222,7 @@ sb_ess_write_reg(sb_dsp_t *dsp, const uint8_t reg, uint8_t data)
     }
 }
 
-inline uint8_t
+uint8_t
 sb_jazz16_dmaval(uint8_t val)
 {
     switch (val & 0xF) {
@@ -1277,7 +1277,7 @@ sb_jazz16_from_irqval(uint8_t val)
     }
 }
 
-inline uint8_t
+uint8_t
 sb_jazz16_irqval(uint8_t val)
 {
     switch (val & 0xF) {
