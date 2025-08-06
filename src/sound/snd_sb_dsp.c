@@ -1342,6 +1342,9 @@ sb_exec_command(sb_dsp_t *dsp)
             pclog("Jazz16 board model\n");
             return;
         }
+        if (dsp->sb_command == 0xac || dsp->sb_command == 0xa4) {
+            dsp->sb_command &= ~4;
+        }
     }
     else if (IS_ESS(dsp) && dsp->sb_command >= 0xA0 && dsp->sb_command <= 0xCF) {
         if (dsp->sb_command == 0xC6 || dsp->sb_command == 0xC7) {
