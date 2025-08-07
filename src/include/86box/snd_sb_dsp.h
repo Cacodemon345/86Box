@@ -169,6 +169,9 @@ typedef struct sb_dsp_t {
     uint8_t  ess_irq_generic;
     uint8_t  ess_irq_dmactr;
 
+    /* Jazz16 */
+    uint8_t   audio_format_jazz16;
+
     /* ESPCM */
     fifo64_t *espcm_fifo;
     uint8_t   espcm_fifo_reset;

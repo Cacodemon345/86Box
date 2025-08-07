@@ -529,6 +529,7 @@ sb_dsp_reset(sb_dsp_t *dsp)
     dsp->sbe2count                    = 0;
 
     dsp->sbreset = 0;
+    dsp->audio_format_jazz16 = 0xa0;
 
     dsp->record_pos_read  = 0;
     dsp->record_pos_write = SB_DSP_REC_SAFEFTY_MARGIN;
@@ -602,8 +603,10 @@ sb_ess_get_dma_len(const sb_dsp_t *dsp)
 }
 
 static void
-sb_resume_dma(const sb_dsp_t *dsp, const int is_8)
+sb_resume_dma(const sb_dsp_t *dsp, int is_8)
 {
+    if (IS_JAZZ16(dsp) && is_8 && (dsp->audio_format_jazz16 & 4) && (dsp->sb_8_format & 0xF) == 0)
+        is_8 = 0;
     if IS_ESS(dsp)
     {
         dma_set_drq(dsp->sb_8_dmanum, 1);
@@ -629,6 +632,27 @@ sb_start_dma(sb_dsp_t *dsp, int dma8, int autoinit, uint8_t format, int len)
     sb_stop_dma(dsp);
 
     dsp->sb_pausetime = -1;
+
+    if (format == 0 && IS_JAZZ16(dsp)) {
+        switch (dsp->audio_format_jazz16) {
+            case 0xA0:
+                format = 0;
+                break;
+            case 0xA8:
+                format = 0x20;
+                break;
+            case 0xA4:
+                format = 0;
+                if (dma8)
+                    dma8 = 0;
+                break;
+            case 0xAC:
+                format = 0x20;
+                if (dma8)
+                    dma8 = 0;
+                break;
+        }
+    }
 
     if (dma8) {
         dsp->sb_8_length = dsp->sb_8_origlength = len;
@@ -1337,13 +1361,13 @@ sb_exec_command(sb_dsp_t *dsp)
             return;
         }
         if (dsp->sb_command == 0xfe) { // Board model.
-            sb_add_data(dsp, 0x1);
-            sb_add_data(dsp, 0x1);
+            sb_add_data(dsp, 0x2);
+            sb_add_data(dsp, 0x2);
             pclog("Jazz16 board model\n");
             return;
         }
-        if (dsp->sb_command == 0xac || dsp->sb_command == 0xa4) {
-            dsp->sb_command &= ~4;
+        if (dsp->sb_command == 0xac || dsp->sb_command == 0xa4 || dsp->sb_command == 0xa8 || dsp->sb_command == 0xa0) {
+            dsp->audio_format_jazz16 = dsp->sb_command;
         }
     }
     else if (IS_ESS(dsp) && dsp->sb_command >= 0xA0 && dsp->sb_command <= 0xCF) {
