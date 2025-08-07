@@ -1621,6 +1621,8 @@ sb_exec_command(sb_dsp_t *dsp)
         case 0x48: /* Set DSP block transfer size */
             if (dsp->sb_type >= SB_DSP_200)
                 dsp->sb_8_autolen = dsp->sb_data[0] + (dsp->sb_data[1] << 8);
+            if (IS_JAZZ16(dsp))
+                dsp->sb_16_autolen = dsp->sb_8_autolen;
             break;
         case 0x65: /* 4-bit ESPCM output with reference */
         case 0x64: /* 4-bit ESPCM output */
@@ -1795,6 +1797,9 @@ sb_exec_command(sb_dsp_t *dsp)
             break;
         case 0xD0: /* Pause 8-bit DMA */
             dsp->sb_8_pause = 1;
+            if (IS_JAZZ16(dsp) && (dsp->audio_format_jazz16 & 4)) {
+                dsp->sb_16_pause = 1;
+            }
             sb_stop_dma(dsp);
             break;
         case 0xD1: /* Speaker on */
@@ -1819,6 +1824,9 @@ sb_exec_command(sb_dsp_t *dsp)
             break;
         case 0xD4: /* Continue 8-bit DMA */
             dsp->sb_8_pause = 0;
+            if (IS_JAZZ16(dsp) && (dsp->audio_format_jazz16 & 4)) {
+                dsp->sb_16_pause = 0;
+            }
             sb_resume_dma(dsp, 1);
             break;
         case 0xD5: /* Pause 16-bit DMA */
