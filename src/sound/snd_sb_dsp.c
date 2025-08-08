@@ -636,18 +636,12 @@ sb_start_dma(sb_dsp_t *dsp, int dma8, int autoinit, uint8_t format, int len)
     if (format == 0 && IS_JAZZ16(dsp)) {
         switch (dsp->audio_format_jazz16) {
             case 0xA0:
-                format = 0;
-                break;
             case 0xA8:
-                format = 0x20;
+                format = 0;
                 break;
             case 0xA4:
-                format = 0;
-                if (dma8)
-                    dma8 = 0;
-                break;
             case 0xAC:
-                format = 0x20;
+                format = 0x10;
                 if (dma8)
                     dma8 = 0;
                 break;
@@ -1361,8 +1355,8 @@ sb_exec_command(sb_dsp_t *dsp)
             return;
         }
         if (dsp->sb_command == 0xfe) { // Board model.
-            sb_add_data(dsp, 0x2);
-            sb_add_data(dsp, 0x2);
+            sb_add_data(dsp, 0x1);
+            sb_add_data(dsp, 0x1);
             pclog("Jazz16 board model\n");
             return;
         }
@@ -1591,7 +1585,11 @@ sb_exec_command(sb_dsp_t *dsp)
             dsp->sblatcho = dsp->sblatchi = (double) (TIMER_USEC * (256 - dsp->sb_data[0]));
             temp                          = 256 - dsp->sb_data[0];
             temp                          = 1000000 / temp;
-            sb_dsp_log("Sample rate - %ihz (%f)\n", temp, dsp->sblatcho);
+            if (IS_JAZZ16(dsp))
+                dsp->sblatcho /= 0.75;
+            if (IS_JAZZ16(dsp))
+                dsp->sblatchi /= 0.75;
+            pclog("Sample rate - %ihz (%f), 0x%02X\n", temp, dsp->sblatcho, dsp->sb_data[0]);
             if ((dsp->sb_freq != temp) && (dsp->sb_type >= SB16_DSP_404))
                 recalc_sb16_filter(0, temp);
             dsp->sb_freq = temp;
@@ -2490,7 +2488,7 @@ pollsb(void *priv)
                     if (data[0] == DMA_NODATA)
                         break;
                     dsp->sbdat = (int16_t) ((data[0] ^ 0x80) << 8);
-                    if (dsp->stereo) {
+                    if (dsp->stereo || (IS_JAZZ16(dsp) && dsp->audio_format_jazz16 == 0xa8)) {
                         sb_dsp_log("pollsb: Mono unsigned, dsp->stereo, %s channel, %04X\n",
                                    dsp->sbleftright ? "left" : "right", dsp->sbdat);
                         if (dsp->sbleftright)
@@ -2908,7 +2906,16 @@ pollsb(void *priv)
                 data[0] = dsp->dma_readw(dsp->dma_priv);
                 if (data[0] == DMA_NODATA)
                     break;
-                dsp->sbdatl = dsp->sbdatr = (int16_t) (data[0] & 0xffff);
+                if (IS_JAZZ16(dsp) && dsp->audio_format_jazz16 == 0xAC) {
+                    sb_dsp_log("pollsb: JAZZ16 16, dsp->stereo, %s channel, %04X\n",
+                               dsp->sbleftright ? "left" : "right", dsp->sbdat);
+                    if (dsp->sbleftright)
+                        dsp->sbdatl = (int16_t) (data[0] & 0xffff);
+                    else
+                        dsp->sbdatr = (int16_t) (data[0] & 0xffff);
+                    dsp->sbleftright = !dsp->sbleftright;
+                } else
+                    dsp->sbdatl = dsp->sbdatr = (int16_t) (data[0] & 0xffff);
                 dsp->sb_16_length--;
                 dsp->ess_dma_counter += 2;
                 break;
