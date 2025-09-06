@@ -176,6 +176,10 @@ extern void     plat_get_cpu_string(char *outbuf, uint8_t len);
 extern void     plat_set_thread_name(void *thread, const char *name);
 extern void     plat_break(void);
 
+/* File mapping */
+extern plat_file_mapping_t plat_mmap_file(FILE *file);
+extern void plat_munmap_file(plat_file_mapping_t *file);
+
 /* Resource management. */
 extern wchar_t *plat_get_string(int id);
 
