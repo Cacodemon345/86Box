@@ -136,6 +136,14 @@ extern int kbd_req_capture;
 extern int hide_status_bar;
 extern int hide_tool_bar;
 
+struct plat_file_mapping_t {
+    void              *map_handle;
+    uint8_t           *mapped;
+    unsigned long long size;
+};
+
+typedef struct plat_file_mapping_t plat_file_mapping_t;
+
 /* System-related functions. */
 extern FILE    *plat_fopen(const char *path, const char *mode);
 extern FILE    *plat_fopen64(const char *path, const char *mode);
