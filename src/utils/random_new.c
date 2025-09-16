@@ -7,6 +7,8 @@
 #include <time.h>
 #endif
 
+/* Original code written by David Blackman (xorshiro256**) and Sebastiano Vigna (vigna@acm.org) (xorshiro256** and splitmix64) */
+
 // SplitMix64 generator.
 static uint64_t splitmix64_x = 0;
 

@@ -674,30 +674,11 @@ main(int argc, char *argv[])
     pc_init_modules();
 
     {
-        uint64_t benchmark_counter_old = 0;
-        uint64_t benchmark_counter_new = 0;
-        auto start_ms = elapsed_timer.elapsed();
-
-        while ((elapsed_timer.elapsed() - start_ms) < 1000) {
-            (void)random_generate();
-            (void)random_generate();
-            (void)random_generate();
-            (void)random_generate();
-            (void)random_generate();
-            (void)random_generate();
-            (void)random_generate();
-            (void)random_generate();
-            benchmark_counter_old++;
-        }
         random_init_new();
-        start_ms = elapsed_timer.elapsed();
-
-        while ((elapsed_timer.elapsed() - start_ms) < 1000) {
-            (void)random_generate_64_new();
-            benchmark_counter_new++;
-        }
-
-        pclog("OLD (64): %llu, NEW (64): %llu\n", benchmark_counter_old, benchmark_counter_new);
+        pclog("0: 0x%016llX\n", (unsigned long long)random_generate_64_new());
+        pclog("1: 0x%016llX\n", (unsigned long long)random_generate_64_new());
+        pclog("2: 0x%016llX\n", (unsigned long long)random_generate_64_new());
+        pclog("3: 0x%016llX\n", (unsigned long long)random_generate_64_new());
     }
 
     // UUID / copy / move detection
