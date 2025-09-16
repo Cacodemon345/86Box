@@ -23,6 +23,5 @@ add_library(utils OBJECT
     fifo8.c
     ini.c
     log.c
-    random.c
     random_new.c
 )

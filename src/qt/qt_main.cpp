@@ -673,14 +673,6 @@ main(int argc, char *argv[])
 
     pc_init_modules();
 
-    {
-        random_init_new();
-        pclog("0: 0x%016llX\n", (unsigned long long)random_generate_64_new());
-        pclog("1: 0x%016llX\n", (unsigned long long)random_generate_64_new());
-        pclog("2: 0x%016llX\n", (unsigned long long)random_generate_64_new());
-        pclog("3: 0x%016llX\n", (unsigned long long)random_generate_64_new());
-    }
-
     // UUID / copy / move detection
     if(!util::compareUuid()) {
         QMessageBox movewarnbox;

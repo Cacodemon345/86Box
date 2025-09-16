@@ -1,3 +1,20 @@
+/*
+ * 86Box    A hypervisor and IBM PC system emulator that specializes in
+ *          running old operating systems and software designed for IBM
+ *          PC systems and compatibles from 1981 through fairly recent
+ *          system designs based on the PCI bus.
+ *
+ *          This file is part of the 86Box distribution.
+ *
+ *          Pseudo-random number generator implementation.
+ *
+ * Authors: David Blackman
+ *          Sebastiano Vigna, <vigna@acm.org>
+ *          Cacodemon345
+ * 
+ *          This file is in public domain.
+ */
+
 #include <stdint.h>
 #include <86box/random.h>
 
@@ -6,8 +23,6 @@
 #else
 #include <time.h>
 #endif
-
-/* Original code written by David Blackman (xorshiro256**) and Sebastiano Vigna (vigna@acm.org) (xorshiro256** and splitmix64) */
 
 // SplitMix64 generator.
 static uint64_t splitmix64_x = 0;
@@ -44,7 +59,7 @@ static uint64_t next(void) {
 }
 
 uint64_t
-random_generate_64_new(void)
+random_generate_64(void)
 {
     return next();
 }
@@ -54,10 +69,10 @@ static uint64_t cur_res = 0;
 static uint8_t cur_cntr = 7;
 
 uint8_t
-random_generate_new(void)
+random_generate(void)
 {
     if (cur_cntr >= 7) {
-        cur_res = random_generate_64_new();
+        cur_res = random_generate_64();
         cur_cntr = 0;
     } else {
         cur_cntr++;
@@ -68,7 +83,7 @@ random_generate_new(void)
 }
 
 void
-random_init_new(void)
+random_init(void)
 {
 #ifdef _WIN32
     LARGE_INTEGER res;
@@ -76,8 +91,8 @@ random_init_new(void)
     splitmix64_x = (uint64_t)res.QuadPart;
 #else
     struct timespec cur_time;
-    clock_gettime(CLOCK_MONOTONIC, &cur_time);
-    splitmix64_x = (uint64_t)cur_time.tv_nsec + ((uint64_t)cur_time.tv_sec * (uint64_t)1000000000ull);
+    int res = clock_gettime(CLOCK_MONOTONIC, &cur_time);
+    splitmix64_x = (res < -1) ? time(NULL) : ((uint64_t)cur_time.tv_nsec + ((uint64_t)cur_time.tv_sec * (uint64_t)1000000000ull));
 #endif
     s[0] = splitmix64_next();
     s[1] = splitmix64_next();
