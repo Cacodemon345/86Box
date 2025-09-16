@@ -75,7 +75,7 @@ random_init_new(void)
 #else
     struct timespec cur_time;
     clock_gettime(CLOCK_MONOTONIC, &cur_time);
-    splitmix64_x = (uint64_t)curtime.tv_nsec + ((uint64_t)curtime.tv_sec * (uint64_t)1000000000ull);
+    splitmix64_x = (uint64_t)cur_time.tv_nsec + ((uint64_t)cur_time.tv_sec * (uint64_t)1000000000ull);
 #endif
     s[0] = splitmix64_next();
     s[1] = splitmix64_next();
