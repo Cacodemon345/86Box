@@ -24,4 +24,5 @@ add_library(utils OBJECT
     ini.c
     log.c
     random.c
+    random_new.c
 )
