@@ -635,6 +635,10 @@ mach64_updatemapping(mach64_t *mach64)
             break;
     }
 
+    if (mach64->type >= MACH64_GTB) {
+        mach64->linear_base &= 0xff000000;
+    }
+
     if (mach64->linear_base) {
         if (mach64->type == MACH64_GX) {
             if ((mach64->config_cntl & 3) == 2) {
@@ -649,9 +653,9 @@ mach64_updatemapping(mach64_t *mach64)
             }
         } else {
             /*2*8 MB aperture*/
-            mem_mapping_set_addr(&mach64->linear_mapping, mach64->linear_base, (8 << 20) - 0x4000);
-            mem_mapping_set_addr(&mach64->mmio_linear_mapping, mach64->linear_base + ((8 << 20) - 0x4000), 0x4000);
-            mem_mapping_set_addr(&mach64->mmio_linear_mapping_2, mach64->linear_base + ((16 << 20) - 0x4000), 0x4000);
+            mem_mapping_set_addr(&mach64->linear_mapping, mach64->linear_base, (8 << 20) - 4096);
+            mem_mapping_set_addr(&mach64->mmio_linear_mapping, mach64->linear_base + ((8 << 20) - 4096), 4096);
+            //mem_mapping_set_addr(&mach64->mmio_linear_mapping_2, mach64->linear_base + ((16 << 20) - 0x4000), 0x4000);
         }
     } else {
         mem_mapping_disable(&mach64->linear_mapping);
@@ -3618,6 +3622,9 @@ mach64_ext_inb(uint16_t port, void *priv)
         case 0x6aee:
         case 0x6aef:
             mach64->config_cntl = (mach64->config_cntl & ~0x3ff0) | ((mach64->linear_base >> 22) << 4);
+            if (mach64->type >= MACH64_GTB) {
+                mach64->config_cntl = (mach64->config_cntl & ~0x3ffc) | 2;
+            }
             READ8(port, mach64->config_cntl);
             break;
 
@@ -4393,7 +4400,7 @@ mach64_io_remove(mach64_t *mach64)
     io_removehandler(0x01ce, 0x0002, mach64_in, NULL, NULL, mach64_out, NULL, NULL, mach64);
 
     if (mach64->block_decoded_io && mach64->block_decoded_io < 0x10000)
-        io_removehandler(mach64->block_decoded_io, 0x0400, mach64_block_inb, mach64_block_inw, mach64_block_inl, mach64_block_outb, mach64_block_outw, mach64_block_outl, mach64);
+        io_removehandler(mach64->block_decoded_io, 0x0100, mach64_block_inb, mach64_block_inw, mach64_block_inl, mach64_block_outb, mach64_block_outw, mach64_block_outl, mach64);
 }
 
 static void
@@ -4433,7 +4440,7 @@ mach64_io_set(mach64_t *mach64)
     io_sethandler(0x01ce, 0x0002, mach64_in, NULL, NULL, mach64_out, NULL, NULL, mach64);
 
     if (mach64->use_block_decoded_io && mach64->block_decoded_io && mach64->block_decoded_io < 0x10000)
-        io_sethandler(mach64->block_decoded_io, 0x0400, mach64_block_inb, mach64_block_inw, mach64_block_inl, mach64_block_outb, mach64_block_outw, mach64_block_outl, mach64);
+        io_sethandler(mach64->block_decoded_io, 0x0100, mach64_block_inb, mach64_block_inw, mach64_block_inl, mach64_block_outb, mach64_block_outw, mach64_block_outl, mach64);
 }
 
 static uint8_t
@@ -4637,7 +4644,7 @@ mach64_pci_write(UNUSED(int func), int addr, uint8_t val, void *priv)
             if (mach64->type >= MACH64_VT2) {
                 if (mach64->pci_regs[PCI_REG_COMMAND] & PCI_COMMAND_IO)
                     mach64_io_remove(mach64);
-                mach64->block_decoded_io = (mach64->block_decoded_io & 0xffff0000) | ((val & 0xfc) << 8);
+                mach64->block_decoded_io = (mach64->block_decoded_io & 0xffff0000) | ((val & 0xff) << 8);
                 if (mach64->pci_regs[PCI_REG_COMMAND] & PCI_COMMAND_IO)
                     mach64_io_set(mach64);
             }
