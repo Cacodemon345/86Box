@@ -384,7 +384,7 @@ void     mach64_ext_writeb(uint32_t addr, uint8_t val, void *priv);
 void     mach64_ext_writew(uint32_t addr, uint16_t val, void *priv);
 void     mach64_ext_writel(uint32_t addr, uint32_t val, void *priv);
 
-#define ENABLE_MACH64_LOG 1
+#define ENABLE_MACH64_LOG 0
 #ifdef ENABLE_MACH64_LOG
 int mach64_do_log = ENABLE_MACH64_LOG;
 
@@ -5014,7 +5014,7 @@ const device_t mach64vt2_device = {
     .config        = mach64vt2_config
 };
 
-const device_t mach64gt2_device = {
+const device_t mach64gt2_onboard_device = {
     .name          = "ATI Mach64 GT-B (ATI Rage II) (On-Board)",
     .internal_name = "mach64gt2_onboard",
     .flags         = DEVICE_PCI,

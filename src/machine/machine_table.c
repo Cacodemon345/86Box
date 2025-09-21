@@ -14230,7 +14230,7 @@ const machine_t machines[] = {
         .kbd_device = NULL,
         .fdc_device = NULL,
         .sio_device = NULL,
-        .vid_device = &mach64gt2_device,
+        .vid_device = &mach64gt2_onboard_device,
         .snd_device = &ymf701_device,
         .net_device = NULL
     },
