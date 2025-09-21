@@ -2588,6 +2588,8 @@ mach64_ext_readb(uint32_t addr, void *priv)
             case 0xdf:
                 if (mach64->type == MACH64_GX)
                     mach64->config_cntl = (mach64->config_cntl & ~0x3ff0) | ((mach64->linear_base >> 22) << 4);
+                else if (mach64->type == MACH64_GTB)
+                    mach64->config_cntl = (mach64->config_cntl & ~0x3ff0) | ((mach64->linear_base >> 24) << 6);
                 else
                     mach64->config_cntl = (mach64->config_cntl & ~0x3ff0) | ((mach64->linear_base >> 24) << 4);
 
@@ -3622,9 +3624,6 @@ mach64_ext_inb(uint16_t port, void *priv)
         case 0x6aee:
         case 0x6aef:
             mach64->config_cntl = (mach64->config_cntl & ~0x3ff0) | ((mach64->linear_base >> 22) << 4);
-            if (mach64->type >= MACH64_GTB) {
-                mach64->config_cntl = (mach64->config_cntl & ~0x3ffc) | 2;
-            }
             READ8(port, mach64->config_cntl);
             break;
 
