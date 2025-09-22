@@ -163,6 +163,8 @@ typedef struct mach64_t {
     uint32_t ovr_wid_left_right;
     uint32_t ovr_wid_top_bottom;
 
+    uint32_t vga_dsp_config;
+
     uint32_t pat_cntl;
     uint32_t pat_reg0;
     uint32_t pat_reg1;
@@ -384,7 +386,6 @@ void     mach64_ext_writeb(uint32_t addr, uint8_t val, void *priv);
 void     mach64_ext_writew(uint32_t addr, uint16_t val, void *priv);
 void     mach64_ext_writel(uint32_t addr, uint32_t val, void *priv);
 
-#define ENABLE_MACH64_LOG 0
 #ifdef ENABLE_MACH64_LOG
 int mach64_do_log = ENABLE_MACH64_LOG;
 
@@ -2399,6 +2400,7 @@ mach64_ext_readb(uint32_t addr, void *priv)
                 break;
 
             default:
+                //fprintf(stderr, "mach64_ext_readb : addr %08X ret %08X\n", addr, (uint32_t)ret);
                 ret = 0xff;
                 break;
         }
@@ -2453,6 +2455,18 @@ mach64_ext_readb(uint32_t addr, void *priv)
             case 0x1f:
                 READ8(addr, mach64->crtc_gen_cntl);
                 break;
+            
+            case 0x78:
+            case 0x79:
+                {
+                    if (mach64->type < MACH64_GTB && (addr & 0x3ff) == 0x79)
+                        ret = 0x30;
+                        break;
+                }
+            case 0x7A:
+            case 0x7B:
+                READ8(addr, mach64->vga_dsp_config);
+                break;
 
             case 0x40:
             case 0x41:
@@ -2502,10 +2516,6 @@ mach64_ext_readb(uint32_t addr, void *priv)
             case 0x72:
             case 0x73:
                 READ8(addr, mach64->cur_horz_vert_off);
-                break;
-
-            case 0x79:
-                ret = 0x30;
                 break;
 
             case 0x80:
@@ -2951,6 +2961,7 @@ mach64_ext_readb(uint32_t addr, void *priv)
                 break;
 
             default:
+                //fprintf(stderr, "mach64_ext_readb : addr %08X ret %08X\n", addr, (uint32_t)ret);
                 ret = 0;
                 break;
         }
@@ -3127,6 +3138,7 @@ mach64_ext_writeb(uint32_t addr, uint8_t val, void *priv)
                 break;
 
             default:
+                //fprintf(stderr, "mach64_ext_writeb: addr=%04x val=%02x\n", addr, (uint32_t)val);
                 break;
         }
 
@@ -3267,6 +3279,13 @@ mach64_ext_writeb(uint32_t addr, uint8_t val, void *priv)
                 }
                 break;
 
+            case 0x78:
+            case 0x79:
+            case 0x7A:
+            case 0x7B:
+                WRITE8(addr, mach64->vga_dsp_config, val);
+                break;
+
             case 0x80:
             case 0x81:
             case 0x82:
@@ -3387,6 +3406,7 @@ mach64_ext_writeb(uint32_t addr, uint8_t val, void *priv)
                 break;
 
             default:
+                //fprintf(stderr, "mach64_ext_writeb: addr=%04x val=%02x\n", addr, (uint32_t)val);
                 break;
         }
     }
@@ -4227,7 +4247,7 @@ mach64_overlay_draw(svga_t *svga, int displine)
                 break;
 
             default:
-                mach64_log("Unknown Mach64 scaler format %x\n", mach64->scaler_format);
+                pclog("Unknown Mach64 scaler format %x\n", mach64->scaler_format);
                 /*Fill buffer with something recognisably wrong*/
                 for (x = 0; x < mach64->svga.overlay_latch.cur_xsize; x++)
                     mach64->overlay_dat[x] = 0xff00ff;
