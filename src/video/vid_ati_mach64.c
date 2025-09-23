@@ -190,6 +190,8 @@ typedef struct mach64_t {
     uint32_t linear_base;
     uint32_t io_base;
     uint32_t reg_base;
+    // TODO: Implement CRT trapping.
+    uint32_t crt_trap;
 
     struct {
         int op;
@@ -2471,6 +2473,13 @@ mach64_ext_readb(uint32_t addr, void *priv)
                 READ8(addr, mach64->crtc_gen_cntl);
                 break;
             
+            case 0x38:
+            case 0x39:
+            case 0x3a:
+            case 0x3b:
+                READ8(addr, mach64->crt_trap);
+                break;
+
             case 0x78:
             case 0x79:
                 {
@@ -2974,6 +2983,10 @@ mach64_ext_readb(uint32_t addr, void *priv)
 
                 ret = FIFO_EMPTY ? 0 : 1;
                 break;
+            
+            case 0x33a:
+                ret = ((FIFO_SIZE - FIFO_ENTRIES) >> 11);
+                break;
 
             default:
                 //fprintf(stderr, "mach64_ext_readb : addr %08X ret %08X\n", addr, (uint32_t)ret);
@@ -3226,6 +3239,13 @@ mach64_ext_writeb(uint32_t addr, uint8_t val, void *priv)
                 svga->dpms = !!(mach64->crtc_gen_cntl & 0x0c);
                 svga_recalctimings(&mach64->svga);
                 svga->fullchange = svga->monitor->mon_changeframecount;
+                break;
+
+            case 0x38:
+            case 0x39:
+            case 0x3a:
+            case 0x3b:
+                WRITE8(addr, mach64->crt_trap, val);
                 break;
 
             case 0x40:
@@ -4569,13 +4589,13 @@ mach64_writel_linear(uint32_t addr, uint32_t val, void *priv)
 uint8_t
 mach64_readb_be(uint32_t addr, void *priv)
 {
-    return ((addr & 0x7FFFFF) >= (8 << 20) - 2048) ? (mach64_ext_readb(addr ^ 0x3, priv)) : mach64_read_linear(addr ^ 0x3, priv);
+    return ((addr & 0x7FFFFF) >= (8 << 20) - 2048) ? mach64_ext_readb(addr, priv) : mach64_read_linear(addr ^ 0x3, priv);
 }
 
 void
 mach64_writeb_be(uint32_t addr, uint8_t val, void *priv)
 {
-    return ((addr & 0x7FFFFF) >= (8 << 20) - 2048) ? mach64_ext_writeb(addr ^ 0x3, val, priv) : mach64_write_linear(addr ^ 0x3, val, priv);
+    return ((addr & 0x7FFFFF) >= (8 << 20) - 2048) ? mach64_ext_writeb(addr, val, priv) : mach64_write_linear(addr ^ 0x3, val, priv);
 }
 
 uint8_t
