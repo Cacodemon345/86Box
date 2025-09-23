@@ -81,6 +81,7 @@ enum {
 typedef struct mach64_t {
     mem_mapping_t linear_mapping;
     mem_mapping_t mmio_mapping;
+    mem_mapping_t linear_mapping_big_endian;
     mem_mapping_t mmio_linear_mapping;
     mem_mapping_t mmio_linear_mapping_2;
 
@@ -386,6 +387,9 @@ void     mach64_ext_writeb(uint32_t addr, uint8_t val, void *priv);
 void     mach64_ext_writew(uint32_t addr, uint16_t val, void *priv);
 void     mach64_ext_writel(uint32_t addr, uint32_t val, void *priv);
 
+uint8_t  mach64_readb_be(uint32_t addr, void *priv);
+void     mach64_writeb_be(uint32_t addr, uint8_t val, void *priv);
+
 #ifdef ENABLE_MACH64_LOG
 int mach64_do_log = ENABLE_MACH64_LOG;
 
@@ -596,6 +600,7 @@ mach64_updatemapping(mach64_t *mach64)
         mach64_log("Update mapping - PCI disabled\n");
         mem_mapping_disable(&svga->mapping);
         mem_mapping_disable(&mach64->linear_mapping);
+        mem_mapping_disable(&mach64->linear_mapping_big_endian);
         mem_mapping_disable(&mach64->mmio_mapping);
         mem_mapping_disable(&mach64->mmio_linear_mapping);
         mem_mapping_disable(&mach64->mmio_linear_mapping_2);
@@ -656,12 +661,14 @@ mach64_updatemapping(mach64_t *mach64)
             /*2*8 MB aperture*/
             mem_mapping_set_addr(&mach64->linear_mapping, mach64->linear_base, (8 << 20) - 4096);
             mem_mapping_set_addr(&mach64->mmio_linear_mapping, mach64->linear_base + ((8 << 20) - 4096), 4096);
+            mem_mapping_set_addr(&mach64->linear_mapping_big_endian, mach64->linear_base + (8 << 20), (8 << 20));
             //mem_mapping_set_addr(&mach64->mmio_linear_mapping_2, mach64->linear_base + ((16 << 20) - 0x4000), 0x4000);
         }
     } else {
         mem_mapping_disable(&mach64->linear_mapping);
         mem_mapping_disable(&mach64->mmio_linear_mapping);
         mem_mapping_disable(&mach64->mmio_linear_mapping_2);
+        mem_mapping_disable(&mach64->linear_mapping_big_endian);
     }
 }
 
@@ -4550,6 +4557,18 @@ mach64_writel_linear(uint32_t addr, uint32_t val, void *priv)
 }
 
 uint8_t
+mach64_readb_be(uint32_t addr, void *priv)
+{
+    return ((addr & 0x7FFFFF) >= (8 << 20) - 2048) ? (mach64_ext_readb(addr ^ 0x3, priv)) : mach64_read_linear(addr ^ 0x3, priv);
+}
+
+void
+mach64_writeb_be(uint32_t addr, uint8_t val, void *priv)
+{
+    return ((addr & 0x7FFFFF) >= (8 << 20) - 2048) ? mach64_ext_writeb(addr ^ 0x3, val, priv) : mach64_write_linear(addr ^ 0x3, val, priv);
+}
+
+uint8_t
 mach64_pci_read(UNUSED(int func), int addr, void *priv)
 {
     const mach64_t *mach64 = (mach64_t *) priv;
@@ -4748,9 +4767,10 @@ mach64_common_init(const device_t *info)
                   mach64_overlay_draw);
 
     mem_mapping_add(&mach64->linear_mapping, 0, 0, mach64_read_linear, mach64_readw_linear, mach64_readl_linear, mach64_write_linear, mach64_writew_linear, mach64_writel_linear, NULL, MEM_MAPPING_EXTERNAL, svga);
+    mem_mapping_add(&mach64->linear_mapping_big_endian, 0, 0, mach64_readb_be, NULL, NULL, mach64_writeb_be, NULL, NULL, NULL, MEM_MAPPING_EXTERNAL, svga);
     mem_mapping_add(&mach64->mmio_linear_mapping, 0, 0, mach64_ext_readb, mach64_ext_readw, mach64_ext_readl, mach64_ext_writeb, mach64_ext_writew, mach64_ext_writel, NULL, MEM_MAPPING_EXTERNAL, mach64);
     mem_mapping_add(&mach64->mmio_linear_mapping_2, 0, 0, mach64_ext_readb, mach64_ext_readw, mach64_ext_readl, mach64_ext_writeb, mach64_ext_writew, mach64_ext_writel, NULL, MEM_MAPPING_EXTERNAL, mach64);
-    mem_mapping_add(&mach64->mmio_mapping, 0xbc000, 0x04000, mach64_ext_readb, mach64_ext_readw, mach64_ext_readl, mach64_ext_writeb, mach64_ext_writew, mach64_ext_writel, NULL, MEM_MAPPING_EXTERNAL, mach64);
+    mem_mapping_add(&mach64->mmio_mapping, 0xbf000, 0x1000, mach64_ext_readb, mach64_ext_readw, mach64_ext_readl, mach64_ext_writeb, mach64_ext_writew, mach64_ext_writel, NULL, MEM_MAPPING_EXTERNAL, mach64);
     mem_mapping_disable(&mach64->mmio_mapping);
 
     mach64_io_set(mach64);
