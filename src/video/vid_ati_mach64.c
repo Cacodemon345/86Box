@@ -2993,7 +2993,8 @@ mach64_ext_readw(uint32_t addr, void *priv)
 
     if (!(addr & 0x400)) {
         mach64_log("mach64_ext_readw: addr=%04x\n", addr);
-        ret = 0xffff;
+        ret = mach64_ext_readb(addr, priv);
+        ret |= mach64_ext_readb(addr + 1, priv) << 8;
     } else
         switch (addr & 0x3ff) {
             case 0xb4:
@@ -3022,7 +3023,8 @@ mach64_ext_readl(uint32_t addr, void *priv)
 
     if (!(addr & 0x400)) {
         mach64_log("mach64_ext_readl: addr=%04x\n", addr);
-        ret = 0xffffffff;
+        ret = mach64_ext_readw(addr, priv);
+        ret |= mach64_ext_readw(addr + 2, priv) << 16;
     } else
         switch (addr & 0x3ff) {
             case 0x18:
