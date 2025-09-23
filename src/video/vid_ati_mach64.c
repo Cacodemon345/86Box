@@ -84,6 +84,7 @@ typedef struct mach64_t {
     mem_mapping_t linear_mapping_big_endian;
     mem_mapping_t mmio_linear_mapping;
     mem_mapping_t mmio_linear_mapping_2;
+    mem_mapping_t mmio_mapping_reg;
 
     ati_eeprom_t eeprom;
     svga_t       svga;
@@ -188,6 +189,7 @@ typedef struct mach64_t {
 
     uint32_t linear_base;
     uint32_t io_base;
+    uint32_t reg_base;
 
     struct {
         int op;
@@ -604,8 +606,14 @@ mach64_updatemapping(mach64_t *mach64)
         mem_mapping_disable(&mach64->mmio_mapping);
         mem_mapping_disable(&mach64->mmio_linear_mapping);
         mem_mapping_disable(&mach64->mmio_linear_mapping_2);
+        mem_mapping_disable(&mach64->mmio_mapping_reg);
         return;
     }
+    
+    if (mach64->reg_base)
+        mem_mapping_set_addr(&mach64->mmio_mapping_reg, mach64->reg_base, 4096);
+    else
+        mem_mapping_disable(&mach64->mmio_mapping_reg);
 
     mem_mapping_disable(&mach64->mmio_mapping);
     switch (svga->gdcreg[6] & 0xc) {
@@ -4629,6 +4637,18 @@ mach64_pci_read(UNUSED(int func), int addr, void *priv)
                 return mach64->block_decoded_io >> 24;
             return 0x00;
 
+        case 0x18:
+            return 0x00;
+        
+        case 0x19:
+            return mach64->reg_base >> 8;
+        
+        case 0x1a:
+            return mach64->reg_base >> 16;
+        
+        case 0x1b:
+            return mach64->reg_base >> 24;
+
         case 0x30:
             return (mach64->on_board) ? 0 : mach64->pci_regs[0x30] & 0x01; /*BIOS ROM address*/
         case 0x31:
@@ -4705,6 +4725,27 @@ mach64_pci_write(UNUSED(int func), int addr, uint8_t val, void *priv)
                     mach64_io_set(mach64);
             }
             break;
+        
+        case 0x19:
+            if (mach64->type >= MACH64_GTB) {
+                mach64->reg_base = (mach64->reg_base & 0xffff0000) | ((val & 0xf0) << 8);
+                mach64_updatemapping(mach64);
+            }
+            break;
+        
+        case 0x1a:
+            if (mach64->type >= MACH64_GTB) {
+                mach64->reg_base = (mach64->reg_base & 0xff00f000) | (val << 16);
+                mach64_updatemapping(mach64);
+            }
+            break;
+        
+        case 0x1b:
+            if (mach64->type >= MACH64_GTB) {
+                mach64->reg_base = (mach64->reg_base & 0x00fff000) | (val << 24);
+                mach64_updatemapping(mach64);
+            }
+            break;
 
         case 0x30:
         case 0x32:
@@ -4770,6 +4811,7 @@ mach64_common_init(const device_t *info)
     mem_mapping_add(&mach64->linear_mapping_big_endian, 0, 0, mach64_readb_be, NULL, NULL, mach64_writeb_be, NULL, NULL, NULL, MEM_MAPPING_EXTERNAL, svga);
     mem_mapping_add(&mach64->mmio_linear_mapping, 0, 0, mach64_ext_readb, mach64_ext_readw, mach64_ext_readl, mach64_ext_writeb, mach64_ext_writew, mach64_ext_writel, NULL, MEM_MAPPING_EXTERNAL, mach64);
     mem_mapping_add(&mach64->mmio_linear_mapping_2, 0, 0, mach64_ext_readb, mach64_ext_readw, mach64_ext_readl, mach64_ext_writeb, mach64_ext_writew, mach64_ext_writel, NULL, MEM_MAPPING_EXTERNAL, mach64);
+    mem_mapping_add(&mach64->mmio_mapping_reg, 0, 0, mach64_ext_readb, mach64_ext_readw, mach64_ext_readl, mach64_ext_writeb, mach64_ext_writew, mach64_ext_writel, NULL, MEM_MAPPING_EXTERNAL, mach64);
     mem_mapping_add(&mach64->mmio_mapping, 0xbf000, 0x1000, mach64_ext_readb, mach64_ext_readw, mach64_ext_readl, mach64_ext_writeb, mach64_ext_writew, mach64_ext_writel, NULL, MEM_MAPPING_EXTERNAL, mach64);
     mem_mapping_disable(&mach64->mmio_mapping);
 
