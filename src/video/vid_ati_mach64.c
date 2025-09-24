@@ -39,6 +39,7 @@
 #include <86box/vid_svga.h>
 #include <86box/vid_svga_render.h>
 #include <86box/vid_ati_eeprom.h>
+#include <86box/bswap.h>
 
 #ifdef CLAMP
 #    undef CLAMP
@@ -296,6 +297,7 @@ typedef struct mach64_t {
     uint32_t scaler_height_width;
     int      scaler_format;
     int      scaler_update;
+    int      scaler_yuv_aper;
 
     uint32_t buf_offset[2];
     uint32_t buf_pitch[2];
@@ -2415,6 +2417,10 @@ mach64_ext_readb(uint32_t addr, void *priv)
             case 0x4a:
                 ret = mach64->scaler_format;
                 break;
+            
+            case 0x4b:
+                ret = mach64->scaler_yuv_aper;
+                break;
 
             default:
                 //fprintf(stderr, "mach64_ext_readb : addr %08X ret %08X\n", addr, (uint32_t)ret);
@@ -3137,6 +3143,10 @@ mach64_ext_writeb(uint32_t addr, uint8_t val, void *priv)
 
             case 0x4a:
                 mach64->scaler_format = val & 0xf;
+                break;
+            
+            case 0x4b:
+                mach64->scaler_yuv_aper = val;
                 break;
 
             case 0x80:
@@ -4544,9 +4554,19 @@ mach64_readl_linear(uint32_t addr, void *priv)
 static void
 mach64_write_linear(uint32_t addr, uint8_t val, void *priv)
 {
-    svga_t *svga = (svga_t *) priv;
+    svga_t   *svga   = (svga_t *) priv;
+    //mach64_t *mach64 = (mach64_t *) svga->priv;
 
     cycles -= svga->monitor->mon_video_timing_write_b;
+    
+    //if ((mach64->scaler_yuv_aper >> 4) & 0xc) {
+    //    uint32_t aperture_offset = addr & 0x7FFFFF;
+//
+    //    if (((mach64->scaler_yuv_aper & (1 << 5)) && aperture_offset >= 0x400000)
+    //        || (!(mach64->scaler_yuv_aper & (1 << 5)) && aperture_offset < 0x400000)) {
+    //        pclog("aperture_offset = 0x%X, scaler_buf0 = 0x%x, scaler_buf1 = 0x%x, scaler_yuv_aper = 0x%x\n", aperture_offset, mach64->buf_offset[0], mach64->buf_offset[1], mach64->scaler_yuv_aper);
+    //    }
+    //}
 
     addr &= svga->decode_mask;
     if (addr >= svga->vram_max)
@@ -4559,9 +4579,19 @@ mach64_write_linear(uint32_t addr, uint8_t val, void *priv)
 static void
 mach64_writew_linear(uint32_t addr, uint16_t val, void *priv)
 {
-    svga_t *svga = (svga_t *) priv;
+    svga_t   *svga   = (svga_t *) priv;
+    //mach64_t *mach64 = (mach64_t *) svga->priv;
 
     cycles -= svga->monitor->mon_video_timing_write_w;
+
+    //if ((mach64->scaler_yuv_aper >> 4) & 0xc) {
+    //    uint32_t aperture_offset = addr & 0x7FFFFF;
+//
+    //    if (((mach64->scaler_yuv_aper & (1 << 5)) && aperture_offset >= 0x400000)
+    //        || (!(mach64->scaler_yuv_aper & (1 << 5)) && aperture_offset < 0x400000)) {
+    //        pclog("aperture_offset = 0x%X, scaler_buf0 = 0x%x, scaler_buf1 = 0x%x, scaler_yuv_aper = 0x%x\n", aperture_offset, mach64->buf_offset[0], mach64->buf_offset[1], mach64->scaler_yuv_aper);
+    //    }
+    //}
 
     addr &= svga->decode_mask;
     if (addr >= svga->vram_max)
@@ -4574,9 +4604,26 @@ mach64_writew_linear(uint32_t addr, uint16_t val, void *priv)
 static void
 mach64_writel_linear(uint32_t addr, uint32_t val, void *priv)
 {
-    svga_t *svga = (svga_t *) priv;
+    svga_t   *svga   = (svga_t *) priv;
+    //mach64_t *mach64 = (mach64_t *) svga->priv;
 
     cycles -= svga->monitor->mon_video_timing_write_l;
+
+    //if ((mach64->scaler_yuv_aper >> 4) & 0xc) {
+    //    uint32_t aperture_offset = addr & 0x7FFFFF;
+//
+    //    if (((mach64->scaler_yuv_aper & (1 << 5)) && aperture_offset >= 0x400000)
+    //        || (!(mach64->scaler_yuv_aper & (1 << 5)) && aperture_offset < 0x400000)) {
+    //        static uint32_t old_scaler_buf = -1;
+    //        static uint8_t old_yuv_aper = 0xFF;
+//
+    //        if (old_scaler_buf != mach64->buf_offset[0] || old_yuv_aper != mach64->scaler_yuv_aper) {
+    //            old_scaler_buf = mach64->buf_offset[0];
+    //            old_yuv_aper = mach64->scaler_yuv_aper;
+    //            pclog("aperture_offset = 0x%X, scaler_buf0 = 0x%x, scaler_yuv_aper = 0x%x, pitch = %u\n", aperture_offset, mach64->buf_offset[0], mach64->scaler_yuv_aper, mach64->buf_pitch[0]);
+    //        }
+    //    }
+    //}
 
     addr &= svga->decode_mask;
     if (addr >= svga->vram_max)
@@ -4589,13 +4636,37 @@ mach64_writel_linear(uint32_t addr, uint32_t val, void *priv)
 uint8_t
 mach64_readb_be(uint32_t addr, void *priv)
 {
-    return ((addr & 0x7FFFFF) >= (8 << 20) - 2048) ? mach64_ext_readb(addr, priv) : mach64_read_linear(addr ^ 0x3, priv);
+    return mach64_read_linear(addr, priv);
+}
+
+uint16_t
+mach64_readw_be(uint32_t addr, void *priv)
+{
+    return bswap16(mach64_readw_linear(addr, priv));
+}
+
+uint32_t
+mach64_readl_be(uint32_t addr, void *priv)
+{
+    return bswap32(mach64_readl_linear(addr, priv));
 }
 
 void
 mach64_writeb_be(uint32_t addr, uint8_t val, void *priv)
 {
-    return ((addr & 0x7FFFFF) >= (8 << 20) - 2048) ? mach64_ext_writeb(addr, val, priv) : mach64_write_linear(addr ^ 0x3, val, priv);
+    return mach64_write_linear(addr, val, priv);
+}
+
+void
+mach64_writew_be(uint32_t addr, uint16_t val, void *priv)
+{
+    return mach64_writew_linear(addr, bswap16(val), priv);
+}
+
+void
+mach64_writel_be(uint32_t addr, uint32_t val, void *priv)
+{
+    return mach64_writel_linear(addr, bswap32(val), priv);
 }
 
 uint8_t
@@ -4830,7 +4901,7 @@ mach64_common_init(const device_t *info)
                   mach64_overlay_draw);
 
     mem_mapping_add(&mach64->linear_mapping, 0, 0, mach64_read_linear, mach64_readw_linear, mach64_readl_linear, mach64_write_linear, mach64_writew_linear, mach64_writel_linear, NULL, MEM_MAPPING_EXTERNAL, svga);
-    mem_mapping_add(&mach64->linear_mapping_big_endian, 0, 0, mach64_readb_be, NULL, NULL, mach64_writeb_be, NULL, NULL, NULL, MEM_MAPPING_EXTERNAL, svga);
+    mem_mapping_add(&mach64->linear_mapping_big_endian, 0, 0, mach64_readb_be, mach64_readw_be, mach64_readl_be, mach64_writeb_be, mach64_writew_be, mach64_writel_be, NULL, MEM_MAPPING_EXTERNAL, svga);
     mem_mapping_add(&mach64->mmio_linear_mapping, 0, 0, mach64_ext_readb, mach64_ext_readw, mach64_ext_readl, mach64_ext_writeb, mach64_ext_writew, mach64_ext_writel, NULL, MEM_MAPPING_EXTERNAL, mach64);
     mem_mapping_add(&mach64->mmio_linear_mapping_2, 0, 0, mach64_ext_readb, mach64_ext_readw, mach64_ext_readl, mach64_ext_writeb, mach64_ext_writew, mach64_ext_writel, NULL, MEM_MAPPING_EXTERNAL, mach64);
     mem_mapping_add(&mach64->mmio_mapping_reg, 0, 0, mach64_ext_readb, mach64_ext_readw, mach64_ext_readl, mach64_ext_writeb, mach64_ext_writew, mach64_ext_writel, NULL, MEM_MAPPING_EXTERNAL, mach64);
