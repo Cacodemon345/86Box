@@ -4627,36 +4627,31 @@ mach64_writel_linear(uint32_t addr, uint32_t val, void *priv)
 
     cycles -= svga->monitor->mon_video_timing_write_l;
 
-    if ((mach64->scaler_yuv_aper >> 4) & 0xc) {
-        uint32_t aperture_offset = addr & 0x7FFFFF;
-
-        {
-            uint32_t offset_from_base = aperture_offset & 0x7FFFFF;
-            if (((mach64->scaler_yuv_aper >> 4) & 0xc) == 0x4) { // Y plane
-                offset_from_base <<= 1;
-                val = bswap32(val);
-                svga->vram[offset_from_base & svga->vram_mask] = (val & 0xFF);
-                svga->vram[(offset_from_base + 1) & svga->vram_mask] = ((val >> 8) & 0xFF);
-                svga->vram[(offset_from_base + 4) & svga->vram_mask] = ((val >> 16) & 0xFF);
-                svga->vram[(offset_from_base + 5) & svga->vram_mask] = ((val >> 24) & 0xFF);
-            }
-            if (((mach64->scaler_yuv_aper >> 4) & 0xc) == 0x8 || ((mach64->scaler_yuv_aper >> 4) & 0xc) == 0xc) {
-                offset_from_base <<= 2;
-                val = bswap32(val);
-                if (((mach64->scaler_yuv_aper >> 4) & 0xc) == 0x8) { // U plane
-                    svga->vram[(offset_from_base + 3) & svga->vram_mask] = (val & 0xFF);
-                    svga->vram[(offset_from_base + 7) & svga->vram_mask] = ((val >> 8) & 0xFF);
-                    svga->vram[(offset_from_base + 11) & svga->vram_mask] = ((val >> 16) & 0xFF);
-                    svga->vram[(offset_from_base + 15) & svga->vram_mask] = ((val >> 24) & 0xFF);
-                } else { // V plane
-                    svga->vram[(offset_from_base + 2) & svga->vram_mask] = (val & 0xFF);
-                    svga->vram[(offset_from_base + 6) & svga->vram_mask] = ((val >> 8) & 0xFF);
-                    svga->vram[(offset_from_base + 10) & svga->vram_mask] = ((val >> 16) & 0xFF);
-                    svga->vram[(offset_from_base + 14) & svga->vram_mask] = ((val >> 24) & 0xFF);
-                }
-            }
-            return;
+    if (((mach64->scaler_yuv_aper >> 4) & 0xc) && !!(addr & 0x800000) == !(mach64->scaler_yuv_aper & 0x20)) {
+        uint32_t offset_from_base = addr & 0x7FFFFF;
+        if (addr & 0x800000) bswap32s(&val);
+        if (((mach64->scaler_yuv_aper >> 4) & 0xc) == 0x4) { // Y plane
+            offset_from_base <<= 1;
+            svga->vram[offset_from_base & svga->vram_mask] = (val & 0xFF);
+            svga->vram[(offset_from_base + 1) & svga->vram_mask] = ((val >> 8) & 0xFF);
+            svga->vram[(offset_from_base + 4) & svga->vram_mask] = ((val >> 16) & 0xFF);
+            svga->vram[(offset_from_base + 5) & svga->vram_mask] = ((val >> 24) & 0xFF);
         }
+        else if (((mach64->scaler_yuv_aper >> 4) & 0xc) == 0x8 || ((mach64->scaler_yuv_aper >> 4) & 0xc) == 0xc) {
+            offset_from_base <<= 2;
+            if (((mach64->scaler_yuv_aper >> 4) & 0xc) == 0x8) { // U plane
+                svga->vram[(offset_from_base + 3) & svga->vram_mask] = (val & 0xFF);
+                svga->vram[(offset_from_base + 7) & svga->vram_mask] = ((val >> 8) & 0xFF);
+                svga->vram[(offset_from_base + 11) & svga->vram_mask] = ((val >> 16) & 0xFF);
+                svga->vram[(offset_from_base + 15) & svga->vram_mask] = ((val >> 24) & 0xFF);
+            } else { // V plane
+                svga->vram[(offset_from_base + 2) & svga->vram_mask] = (val & 0xFF);
+                svga->vram[(offset_from_base + 6) & svga->vram_mask] = ((val >> 8) & 0xFF);
+                svga->vram[(offset_from_base + 10) & svga->vram_mask] = ((val >> 16) & 0xFF);
+                svga->vram[(offset_from_base + 14) & svga->vram_mask] = ((val >> 24) & 0xFF);
+            }
+        }
+        return;
     }
 
     addr &= svga->decode_mask;
