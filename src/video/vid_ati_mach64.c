@@ -4255,6 +4255,42 @@ mach64_int_hwcursor_draw(svga_t *svga, int displine)
         }                                                               \
     } while (0)
 
+#define DECODE_YUV12_PACKED()                                           \
+    do {                                                                \
+        for (x = 0; x < mach64->svga.overlay_latch.cur_xsize; x += 2) { \
+            uint8_t y1, y2;                                             \
+            int8_t  u, v;                                               \
+            int     dR, dG, dB;                                         \
+            int     r, g, b;                                            \
+                                                                        \
+            u  = src[3] - 0x80;                                         \
+            y1 = src[0];                                                \
+            v  = src[2] - 0x80;                                         \
+            y2 = src[1];                                                \
+            src += 4;                                                   \
+                                                                        \
+            dR = (359 * v) >> 8;                                        \
+            dG = (88 * u + 183 * v) >> 8;                               \
+            dB = (453 * u) >> 8;                                        \
+                                                                        \
+            r = y1 + dR;                                                \
+            CLAMP(r);                                                   \
+            g = y1 - dG;                                                \
+            CLAMP(g);                                                   \
+            b = y1 + dB;                                                \
+            CLAMP(b);                                                   \
+            mach64->overlay_dat[x] = (r << 16) | (g << 8) | b;          \
+                                                                        \
+            r = y2 + dR;                                                \
+            CLAMP(r);                                                   \
+            g = y2 - dG;                                                \
+            CLAMP(g);                                                   \
+            b = y2 + dB;                                                \
+            CLAMP(b);                                                   \
+            mach64->overlay_dat[x + 1] = (r << 16) | (g << 8) | b;      \
+        }                                                               \
+    } while (0)
+
 void
 mach64_overlay_draw(svga_t *svga, int displine)
 {
@@ -4285,6 +4321,9 @@ mach64_overlay_draw(svga_t *svga, int displine)
                 break;
             case 0x6:
                 DECODE_ARGB8888();
+                break;
+            case 0xa:
+                DECODE_YUV12_PACKED();
                 break;
             case 0xb:
                 DECODE_VYUY422();
@@ -4555,18 +4594,7 @@ static void
 mach64_write_linear(uint32_t addr, uint8_t val, void *priv)
 {
     svga_t   *svga   = (svga_t *) priv;
-    //mach64_t *mach64 = (mach64_t *) svga->priv;
-
     cycles -= svga->monitor->mon_video_timing_write_b;
-    
-    //if ((mach64->scaler_yuv_aper >> 4) & 0xc) {
-    //    uint32_t aperture_offset = addr & 0x7FFFFF;
-//
-    //    if (((mach64->scaler_yuv_aper & (1 << 5)) && aperture_offset >= 0x400000)
-    //        || (!(mach64->scaler_yuv_aper & (1 << 5)) && aperture_offset < 0x400000)) {
-    //        pclog("aperture_offset = 0x%X, scaler_buf0 = 0x%x, scaler_buf1 = 0x%x, scaler_yuv_aper = 0x%x\n", aperture_offset, mach64->buf_offset[0], mach64->buf_offset[1], mach64->scaler_yuv_aper);
-    //    }
-    //}
 
     addr &= svga->decode_mask;
     if (addr >= svga->vram_max)
@@ -4580,18 +4608,8 @@ static void
 mach64_writew_linear(uint32_t addr, uint16_t val, void *priv)
 {
     svga_t   *svga   = (svga_t *) priv;
-    //mach64_t *mach64 = (mach64_t *) svga->priv;
 
     cycles -= svga->monitor->mon_video_timing_write_w;
-
-    //if ((mach64->scaler_yuv_aper >> 4) & 0xc) {
-    //    uint32_t aperture_offset = addr & 0x7FFFFF;
-//
-    //    if (((mach64->scaler_yuv_aper & (1 << 5)) && aperture_offset >= 0x400000)
-    //        || (!(mach64->scaler_yuv_aper & (1 << 5)) && aperture_offset < 0x400000)) {
-    //        pclog("aperture_offset = 0x%X, scaler_buf0 = 0x%x, scaler_buf1 = 0x%x, scaler_yuv_aper = 0x%x\n", aperture_offset, mach64->buf_offset[0], mach64->buf_offset[1], mach64->scaler_yuv_aper);
-    //    }
-    //}
 
     addr &= svga->decode_mask;
     if (addr >= svga->vram_max)
@@ -4605,25 +4623,41 @@ static void
 mach64_writel_linear(uint32_t addr, uint32_t val, void *priv)
 {
     svga_t   *svga   = (svga_t *) priv;
-    //mach64_t *mach64 = (mach64_t *) svga->priv;
+    mach64_t *mach64 = (mach64_t *) svga->priv;
 
     cycles -= svga->monitor->mon_video_timing_write_l;
 
-    //if ((mach64->scaler_yuv_aper >> 4) & 0xc) {
-    //    uint32_t aperture_offset = addr & 0x7FFFFF;
-//
-    //    if (((mach64->scaler_yuv_aper & (1 << 5)) && aperture_offset >= 0x400000)
-    //        || (!(mach64->scaler_yuv_aper & (1 << 5)) && aperture_offset < 0x400000)) {
-    //        static uint32_t old_scaler_buf = -1;
-    //        static uint8_t old_yuv_aper = 0xFF;
-//
-    //        if (old_scaler_buf != mach64->buf_offset[0] || old_yuv_aper != mach64->scaler_yuv_aper) {
-    //            old_scaler_buf = mach64->buf_offset[0];
-    //            old_yuv_aper = mach64->scaler_yuv_aper;
-    //            pclog("aperture_offset = 0x%X, scaler_buf0 = 0x%x, scaler_yuv_aper = 0x%x, pitch = %u\n", aperture_offset, mach64->buf_offset[0], mach64->scaler_yuv_aper, mach64->buf_pitch[0]);
-    //        }
-    //    }
-    //}
+    if ((mach64->scaler_yuv_aper >> 4) & 0xc) {
+        uint32_t aperture_offset = addr & 0x7FFFFF;
+
+        {
+            uint32_t offset_from_base = aperture_offset & 0x7FFFFF;
+            if (((mach64->scaler_yuv_aper >> 4) & 0xc) == 0x4) { // Y plane
+                offset_from_base <<= 1;
+                val = bswap32(val);
+                svga->vram[offset_from_base & svga->vram_mask] = (val & 0xFF);
+                svga->vram[(offset_from_base + 1) & svga->vram_mask] = ((val >> 8) & 0xFF);
+                svga->vram[(offset_from_base + 4) & svga->vram_mask] = ((val >> 16) & 0xFF);
+                svga->vram[(offset_from_base + 5) & svga->vram_mask] = ((val >> 24) & 0xFF);
+            }
+            if (((mach64->scaler_yuv_aper >> 4) & 0xc) == 0x8 || ((mach64->scaler_yuv_aper >> 4) & 0xc) == 0xc) {
+                offset_from_base <<= 2;
+                val = bswap32(val);
+                if (((mach64->scaler_yuv_aper >> 4) & 0xc) == 0x8) { // U plane
+                    svga->vram[(offset_from_base + 3) & svga->vram_mask] = (val & 0xFF);
+                    svga->vram[(offset_from_base + 7) & svga->vram_mask] = ((val >> 8) & 0xFF);
+                    svga->vram[(offset_from_base + 11) & svga->vram_mask] = ((val >> 16) & 0xFF);
+                    svga->vram[(offset_from_base + 15) & svga->vram_mask] = ((val >> 24) & 0xFF);
+                } else { // V plane
+                    svga->vram[(offset_from_base + 2) & svga->vram_mask] = (val & 0xFF);
+                    svga->vram[(offset_from_base + 6) & svga->vram_mask] = ((val >> 8) & 0xFF);
+                    svga->vram[(offset_from_base + 10) & svga->vram_mask] = ((val >> 16) & 0xFF);
+                    svga->vram[(offset_from_base + 14) & svga->vram_mask] = ((val >> 24) & 0xFF);
+                }
+            }
+            return;
+        }
+    }
 
     addr &= svga->decode_mask;
     if (addr >= svga->vram_max)
