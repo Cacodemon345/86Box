@@ -76,7 +76,7 @@ typedef struct fifo_entry_t {
 enum {
     MACH64_GX = 0,
     MACH64_VT2,
-    MACH64_GTB
+    MACH64_GT
 };
 
 typedef struct mach64_t {
@@ -303,6 +303,10 @@ typedef struct mach64_t {
     uint32_t buf_pitch[2];
 
     int overlay_v_acc;
+
+    uint32_t overlay_uv_addr;
+    uint32_t overlay_cur_y;
+    uint32_t overlay_base;
 
     uint8_t thread_run;
     void   *i2c;
@@ -653,7 +657,7 @@ mach64_updatemapping(mach64_t *mach64)
             break;
     }
 
-    if (mach64->type >= MACH64_GTB) {
+    if (mach64->type >= MACH64_GT) {
         mach64->linear_base &= 0xff000000;
     }
 
@@ -2338,8 +2342,11 @@ mach64_vblank_start(svga_t *svga)
 
     svga->overlay.ena = (mach64->overlay_scale_cntl & OVERLAY_EN) && (overlay_cmp_mix != 1);
 
-    mach64->overlay_v_acc = 0;
-    mach64->scaler_update = 1;
+    mach64->overlay_v_acc   = 0;
+    mach64->scaler_update   = 1;
+    mach64->overlay_uv_addr = svga->overlay.addr;
+    mach64->overlay_cur_y   = 0;
+    mach64->overlay_base    = svga->overlay.addr;
 }
 
 uint8_t
@@ -2489,7 +2496,7 @@ mach64_ext_readb(uint32_t addr, void *priv)
             case 0x78:
             case 0x79:
                 {
-                    if (mach64->type < MACH64_GTB && (addr & 0x3ff) == 0x79)
+                    if (mach64->type < MACH64_GT && (addr & 0x3ff) == 0x79)
                         ret = 0x30;
                         break;
                 }
@@ -2628,7 +2635,7 @@ mach64_ext_readb(uint32_t addr, void *priv)
             case 0xdf:
                 if (mach64->type == MACH64_GX)
                     mach64->config_cntl = (mach64->config_cntl & ~0x3ff0) | ((mach64->linear_base >> 22) << 4);
-                else if (mach64->type == MACH64_GTB)
+                else if (mach64->type == MACH64_GT)
                     mach64->config_cntl = (mach64->config_cntl & ~0x3ff0) | ((mach64->linear_base >> 24) << 6);
                 else
                     mach64->config_cntl = (mach64->config_cntl & ~0x3ff0) | ((mach64->linear_base >> 24) << 4);
@@ -4263,11 +4270,12 @@ mach64_int_hwcursor_draw(svga_t *svga, int displine)
             int     dR, dG, dB;                                         \
             int     r, g, b;                                            \
                                                                         \
-            u  = src[3] - 0x80;                                         \
+            u  = uvsrc[3] - 0x80;                                       \
             y1 = src[0];                                                \
-            v  = src[2] - 0x80;                                         \
+            v  = uvsrc[2] - 0x80;                                       \
             y2 = src[1];                                                \
             src += 4;                                                   \
+            uvsrc += 4;                                                 \
                                                                         \
             dR = (359 * v) >> 8;                                        \
             dG = (88 * u + 183 * v) >> 8;                               \
@@ -4303,6 +4311,7 @@ mach64_overlay_draw(svga_t *svga, int displine)
     int       v_inc = mach64->overlay_scale_inc & 0xffff;
     uint32_t *p;
     uint8_t  *src   = &svga->vram[svga->overlay.addr];
+    uint8_t  *uvsrc = src;
     int       old_y = mach64->overlay_v_acc;
     int       y_diff;
     int       video_key_fn    = mach64->overlay_key_cntl & 5;
@@ -4310,6 +4319,11 @@ mach64_overlay_draw(svga_t *svga, int displine)
     int       overlay_cmp_mix = (mach64->overlay_key_cntl >> 8) & 0xf;
 
     p = &buffer32->line[displine][svga->x_add + mach64->svga.overlay_latch.x];
+
+    if (mach64->overlay_cur_y >= 2) {
+        /* Avoid corrupt UV data on YUV12 packed modes */
+        uvsrc = &svga->vram[mach64->overlay_base + svga->overlay.pitch * 2 * (!(mach64->overlay_cur_y & 1) ? (mach64->overlay_cur_y + 1) : mach64->overlay_cur_y)];
+    }
 
     if (mach64->scaler_update) {
         switch (mach64->scaler_format) {
@@ -4344,6 +4358,11 @@ mach64_overlay_draw(svga_t *svga, int displine)
     if (overlay_cmp_mix == 2) {
         for (x = 0; x < mach64->svga.overlay_latch.cur_xsize; x++) {
             int h = h_acc >> 12;
+
+            if (mach64->type >= MACH64_GT) {
+                /* FIXME: Does not match Linux drivers? But it'd break Windows ones in turn the usual way. Not sure about the reason. */
+                h >>= 1;
+            }
 
             p[x] = mach64->overlay_dat[h];
 
@@ -4470,6 +4489,7 @@ mach64_overlay_draw(svga_t *svga, int displine)
         svga->overlay.addr += svga->overlay.pitch * 2 * y_diff;
 
     mach64->scaler_update = y_diff;
+    mach64->overlay_cur_y += y_diff;
 }
 
 static void
@@ -4849,21 +4869,21 @@ mach64_pci_write(UNUSED(int func), int addr, uint8_t val, void *priv)
             break;
         
         case 0x19:
-            if (mach64->type >= MACH64_GTB) {
+            if (mach64->type >= MACH64_GT) {
                 mach64->reg_base = (mach64->reg_base & 0xffff0000) | ((val & 0xf0) << 8);
                 mach64_updatemapping(mach64);
             }
             break;
         
         case 0x1a:
-            if (mach64->type >= MACH64_GTB) {
+            if (mach64->type >= MACH64_GT) {
                 mach64->reg_base = (mach64->reg_base & 0xff00f000) | (val << 16);
                 mach64_updatemapping(mach64);
             }
             break;
         
         case 0x1b:
-            if (mach64->type >= MACH64_GTB) {
+            if (mach64->type >= MACH64_GT) {
                 mach64->reg_base = (mach64->reg_base & 0x00fff000) | (val << 24);
                 mach64_updatemapping(mach64);
             }
@@ -5030,6 +5050,35 @@ mach64vt2_init(const device_t *info)
     rom_init(&mach64->bios_rom, BIOS_ROMVT2_PATH, 0xc0000, 0x8000, 0x7fff, 0, MEM_MAPPING_EXTERNAL);
 
     mem_mapping_disable(&mach64->bios_rom.mapping);
+
+    svga->vblank_start = mach64_vblank_start;
+
+    return mach64;
+}
+
+static void *
+mach64gt_onboard_init(const device_t *info)
+{
+    mach64_t *mach64 = mach64_common_init(info);
+    svga_t   *svga   = &mach64->svga;
+
+    svga->dac_hwcursor_draw = NULL;
+
+    svga->hwcursor.cur_ysize = 64;
+    svga->hwcursor.cur_xsize = 64;
+
+    video_inform(VIDEO_FLAG_TYPE_SPECIAL, &timing_mach64_pci);
+
+    mach64->pci                  = 1;
+    mach64->vlb                  = 0;
+    mach64->pci_id               = 0x4754;
+    mach64->config_chip_id       = 0x40004754;
+    mach64->dac_cntl             = 1 << 16; /*Internal 24-bit DAC*/
+    mach64->config_stat0         = 4;
+    mach64->use_block_decoded_io = 4;
+    mach64->on_board             = 1;
+
+    ati_eeprom_load(&mach64->eeprom, "mach64gt.nvr", 1);
 
     svga->vblank_start = mach64_vblank_start;
 
@@ -5218,12 +5267,12 @@ const device_t mach64vt2_device = {
     .config        = mach64vt2_config
 };
 
-const device_t mach64gt2_onboard_device = {
-    .name          = "ATI Mach64 GT-B (ATI Rage II) (On-Board)",
-    .internal_name = "mach64gt2_onboard",
+const device_t mach64gt_onboard_device = {
+    .name          = "ATI Mach64 GT (ATI 3D RAGE) (On-Board)",
+    .internal_name = "mach64gt_onboard",
     .flags         = DEVICE_PCI,
-    .local         = MACH64_GTB | (1 << 20),
-    .init          = mach64gt2_onboard_init,
+    .local         = MACH64_GT | (1 << 20),
+    .init          = mach64gt_onboard_init,
     .close         = mach64_close,
     .reset         = NULL,
     .available     = NULL,
