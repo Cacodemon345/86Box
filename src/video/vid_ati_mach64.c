@@ -4320,6 +4320,12 @@ mach64_overlay_draw(svga_t *svga, int displine)
 
     p = &buffer32->line[displine][svga->x_add + mach64->svga.overlay_latch.x];
 
+    if (mach64->type >= MACH64_GT) {
+        /* FIXME: Does not match Linux drivers? But it'd break Windows ones in turn the usual way. Not sure about the reason. */
+        h_inc >>= 1;
+        h_max <<= 1;
+    }
+
     if (mach64->overlay_cur_y >= 2) {
         /* Avoid corrupt UV data on YUV12 packed modes */
         uvsrc = &svga->vram[mach64->overlay_base + svga->overlay.pitch * 2 * (!(mach64->overlay_cur_y & 1) ? (mach64->overlay_cur_y + 1) : mach64->overlay_cur_y)];
@@ -4358,11 +4364,6 @@ mach64_overlay_draw(svga_t *svga, int displine)
     if (overlay_cmp_mix == 2) {
         for (x = 0; x < mach64->svga.overlay_latch.cur_xsize; x++) {
             int h = h_acc >> 12;
-
-            if (mach64->type >= MACH64_GT) {
-                /* FIXME: Does not match Linux drivers? But it'd break Windows ones in turn the usual way. Not sure about the reason. */
-                h >>= 1;
-            }
 
             p[x] = mach64->overlay_dat[h];
 
