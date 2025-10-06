@@ -345,7 +345,8 @@ enum {
     SRC_PATT_EN     = 1,
     SRC_PATT_ROT_EN = 2,
     SRC_LINEAR_EN   = 4,
-    SRC_BYTE_ALIGN  = 8
+    SRC_BYTE_ALIGN  = 8,
+    SRC_TRACK_DST   = 1 << 7
 };
 
 enum {
@@ -1646,7 +1647,6 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
         return;
     }
 
-    pclog("%d\n", mach64->dst_cntl & (1 << 17));
     switch (mach64->accel.op) {
         case OP_RECT:
             while (count) {
