@@ -562,6 +562,9 @@ machine_at_pcv90_init(const machine_t *model)
     if (sound_card_current[0] == SOUND_INTERNAL)
         machine_snd = device_add(machine_get_snd_device(machine));
 
+    if (gfxcard[0] == VID_INTERNAL)
+        device_add(machine_get_vid_device(machine));
+
     return ret;
 }
 
