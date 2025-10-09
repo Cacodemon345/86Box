@@ -28,6 +28,7 @@
 #include <86box/nvr.h>
 #include <86box/plat.h>
 
+#define FLAG_ST      8
 #define FLAG_WORD    4
 #define FLAG_BXB     2
 #define FLAG_INV_A16 1
@@ -96,7 +97,7 @@ flash_read(uint32_t addr, void *priv)
             if (addr & 1)
                 ret = dev->flash_id & 0xff;
             else
-                ret = 0x89;
+                ret = (dev->flags & FLAG_ST) ? 0x20 : 0x89;
             break;
 
         case CMD_READ_STATUS:
@@ -413,6 +414,8 @@ intel_flash_init(const device_t *info)
         case 0x3ffff:
             if (dev->flags & FLAG_WORD)
                 dev->flash_id = (dev->flags & FLAG_BXB) ? 0x2275 : 0x2274;
+            else if (dev->flags & FLAG_ST)
+                dev->flash_id = (dev->flags & FLAG_BXB) ? 0xE8 : 0xE4;
             else
                 dev->flash_id = (dev->flags & FLAG_BXB) ? 0x7D : 0x7C;
 
@@ -572,6 +575,20 @@ const device_t intel_flash_bxt_device = {
     .internal_name = "intel_flash_bxt",
     .flags         = DEVICE_PCI,
     .local         = 0,
+    .init          = intel_flash_init,
+    .close         = intel_flash_close,
+    .reset         = intel_flash_reset,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = NULL
+};
+
+const device_t st_flash_bxt_device = {
+    .name          = "STmicroelectronics M28F211 Flash BIOS",
+    .internal_name = "st_flash_bxt",
+    .flags         = DEVICE_PCI,
+    .local         = FLAG_ST,
     .init          = intel_flash_init,
     .close         = intel_flash_close,
     .reset         = intel_flash_reset,

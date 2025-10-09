@@ -22,6 +22,7 @@ extern const device_t catalyst_flash_device;
 
 extern const device_t intel_flash_bxt_ami_device;
 extern const device_t intel_flash_bxt_device;
+extern const device_t st_flash_bxt_device;
 extern const device_t intel_flash_bxb_device;
 
 extern const device_t sst_flash_29ee010_device;

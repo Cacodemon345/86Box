@@ -1000,6 +1000,7 @@ extern int             machine_at_d943_init(const machine_t *);
 
 /* i430VX */
 extern int             machine_at_gw2kma_init(const machine_t *);
+extern int             machine_at_iclx653_init(const machine_t *);
 
 /* SiS 5501 */
 #ifdef EMU_DEVICE_H

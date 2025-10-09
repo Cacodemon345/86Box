@@ -94,7 +94,7 @@ static int         pci_trc_reg = 0;
 static uint32_t    pci_enable = 0x00000000;
 
 static void        pci_reset_regs(void);
-
+#define ENABLE_PCI_LOG 1
 #ifdef ENABLE_PCI_LOG
 int pci_do_log = ENABLE_PCI_LOG;
 
