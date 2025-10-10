@@ -5265,3 +5265,17 @@ const device_t mach64vt2_device = {
     .force_redraw  = mach64_force_redraw,
     .config        = mach64vt2_config
 };
+
+const device_t mach64vt2_device_onboard = {
+    .name          = "ATI Mach64VT2 On-Board",
+    .internal_name = "mach64vt2_onboard",
+    .flags         = DEVICE_PCI,
+    .local         = MACH64_VT2 | (1 << 19),
+    .init          = mach64vt2_init,
+    .close         = mach64_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = mach64_speed_changed,
+    .force_redraw  = mach64_force_redraw,
+    .config        = mach64vt2_config
+};

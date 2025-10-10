@@ -13987,7 +13987,7 @@ const machine_t machines[] = {
             .max_multi   = 3.0
         },
         .bus_flags = MACHINE_PS2_PCI | MACHINE_BUS_USB,
-        .flags     = MACHINE_IDE_DUAL | MACHINE_SOUND | MACHINE_APM | MACHINE_USB, /* Machine has internal video: ATI Mach64VT3 */
+        .flags     = MACHINE_IDE_DUAL | MACHINE_SOUND | MACHINE_APM | MACHINE_USB | MACHINE_VIDEO, /* Machine has internal video: ATI Mach64VT3 */
         .ram       = {
             .min  = 8192,
             .max  = 131072,
@@ -14005,7 +14005,7 @@ const machine_t machines[] = {
         .kbd_device               = NULL,
         .fdc_device               = NULL,
         .sio_device               = NULL,
-        .vid_device               = NULL,
+        .vid_device               = &mach64vt2_device_onboard,
         .snd_device               = &cs4236b_onboard_device,
         .net_device               = NULL
     },
