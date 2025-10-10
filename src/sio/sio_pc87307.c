@@ -105,7 +105,7 @@ pc87307_gpio_write(uint16_t port, uint8_t val, void *priv)
     uint8_t    bank = !!(dev->regs[0x22] & 0x80);
 
     /* Bit 7 of SCNF2 = bank. */
-    pc87307_log("[%04X:%08X] [W] (%04X) Bank %i = %02X\n",
+    pclog("[%04X:%08X] [W] (%04X) Bank %i = %02X\n",
                 CS, cpu_state.pc, port, bank, val);
 
     dev->gpio[bank][port & 0x0007] = val;
@@ -147,7 +147,7 @@ pc87307_gpio_read(uint16_t port, void *priv)
     }
 
     /* Bit 7 of SCNF2 = bank. */
-    pc87307_log("[%04X:%08X] [R] (%04X) Bank %i = %02X\n",
+    pclog("[%04X:%08X] [R] (%04X) Bank %i = %02X\n",
                 CS, cpu_state.pc, port, bank, ret);
 
     return ret;
