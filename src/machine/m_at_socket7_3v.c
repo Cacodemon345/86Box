@@ -40,6 +40,7 @@
 #include <86box/nvr.h>
 #include <86box/plat_unused.h>
 #include <86box/sound.h>
+#include <86box/random.h>
 
 /* i430FX */
 static const device_config_t p54tp4xe_config[] = {
@@ -1173,6 +1174,26 @@ machine_at_gw2kma_init(const machine_t *model)
     return ret;
 }
 
+static void
+machine_at_iclx653_gpio_init(void)
+{
+    uint32_t gpio = 0xffffffff;
+    machine_set_gpio_default(gpio);
+}
+
+uint32_t
+machine_at_iclx653_gpio_handler(uint8_t write, uint32_t val)
+{
+    uint32_t ret = machine_get_gpio();
+
+    if (write) {
+        machine_set_gpio(val & 0xFFFF);
+    } else
+        ret = ((0x3F | (random_generate() & 0x40)) << 8) | (machine_get_gpio() & 0xFF);
+
+    return ret;
+}
+
 int
 machine_at_iclx653_init(const machine_t *model)
 {
@@ -1184,7 +1205,7 @@ machine_at_iclx653_init(const machine_t *model)
         return ret;
 
     machine_at_common_init_ex(model, 2);
-    machine_at_monaco_gpio_init();
+    machine_at_iclx653_gpio_init();
     device_add(&ami_1995_nvr_device);
 
     pci_init(PCI_CONFIG_TYPE_1);

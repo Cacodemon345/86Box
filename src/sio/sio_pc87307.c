@@ -127,14 +127,14 @@ pc87307_gpio_read(uint16_t port, void *priv)
         case 0x0000:
             if (bank == 0) {
                 uint8_t mask = dev->gpio[0][1];
-                pins = 0xFF;
+                pins = machine_handle_gpio(0, 0xFFFF) & 0xFF;
                 ret  = (ret & mask) | (pins & ~mask);
             }
             break;
         case 0x0004:
             if (bank == 0) {
                 uint8_t mask = dev->gpio[0][5];
-                pins = 0x3F | (random_generate() & 0x40);
+                pins = (machine_handle_gpio(0, 0xFFFF) >> 8) & 0xFF;
                 ret  = (ret & mask) | (pins & ~mask);
             } else
                 ret = 0xff;
