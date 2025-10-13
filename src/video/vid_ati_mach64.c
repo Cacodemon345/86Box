@@ -5021,7 +5021,8 @@ mach64vt_init(const device_t *info)
 
     ati_eeprom_load(&mach64->eeprom, "mach64vt1.nvr", 1);
 
-    rom_init(&mach64->bios_rom, BIOS_ROMVT_PATH, 0xc0000, 0x8000, 0x7fff, 0, MEM_MAPPING_EXTERNAL);
+    if (!(info->local & (1 << 19)))
+        rom_init(&mach64->bios_rom, BIOS_ROMVT_PATH, 0xc0000, 0x8000, 0x7fff, 0, MEM_MAPPING_EXTERNAL);
 
     mem_mapping_disable(&mach64->bios_rom.mapping);
 
@@ -5052,7 +5053,8 @@ mach64vt2_init(const device_t *info)
 
     ati_eeprom_load(&mach64->eeprom, "mach64vt.nvr", 1);
 
-    rom_init(&mach64->bios_rom, BIOS_ROMVT2_PATH, 0xc0000, 0x8000, 0x7fff, 0, MEM_MAPPING_EXTERNAL);
+    if (!(info->local & (1 << 19)))
+        rom_init(&mach64->bios_rom, BIOS_ROMVT2_PATH, 0xc0000, 0x8000, 0x7fff, 0, MEM_MAPPING_EXTERNAL);
 
     mem_mapping_disable(&mach64->bios_rom.mapping);
 
