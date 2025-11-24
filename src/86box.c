@@ -171,6 +171,7 @@ int      vid_api                                = 0;              /* (C) video r
 int      vid_cga_contrast                       = 0;              /* (C) video */
 int      video_fullscreen                       = 0;              /* (C) video */
 int      video_fullscreen_scale                 = 0;              /* (C) video */
+int      fullscreen_ui_visible                  = 0;              /* (C) video */
 int      enable_overscan                        = 0;              /* (C) video */
 int      force_43                               = 0;              /* (C) video */
 int      video_filter_method                    = 1;              /* (C) video */
@@ -261,6 +262,11 @@ struct accelKey def_acc_keys[NUM_ACCELS] = {
         .name="fullscreen",
         .desc="Toggle fullscreen",
         .seq="Ctrl+Alt+PgUp"
+    },
+    {
+        .name="toggle_ui_fullscreen",
+        .desc="Toggle UI in fullscreen",
+        .seq="Ctrl+Alt+PgDown"
     },
     {
         .name="screenshot",
@@ -1083,7 +1089,10 @@ usage:
     /* Build the global configuration file path. */
     if (global == NULL) {
         plat_get_global_config_dir(global_cfg_path, sizeof(global_cfg_path));
-        path_append_filename(global_cfg_path, global_cfg_path, GLOBAL_CONFIG_FILE);
+        // avoid strcpy global_cfg_path over itself (valgrind says it's bad...)
+        // path_append_filename(global_cfg_path, global_cfg_path, GLOBAL_CONFIG_FILE);
+        path_slash(global_cfg_path);
+        strcat(global_cfg_path, GLOBAL_CONFIG_FILE);
     } else {
         strncpy(global_cfg_path, global, sizeof(global_cfg_path) - 1);
     }
@@ -1737,19 +1746,19 @@ update_mouse_msg(void)
         *(wcp - 1) = L'\0';
     mbstowcs(wcpu, cpu_s->name, strlen(cpu_s->name) + 1);
 #ifdef _WIN32
-    swprintf(mouse_msg[0], sizeof_w(mouse_msg[0]), L"%%i.%%i%%%% - %ls",
+    swprintf(mouse_msg[0], sizeof_w(mouse_msg[0]), L"%%i%%%% - %ls",
              plat_get_string(STRING_MOUSE_CAPTURE));
-    swprintf(mouse_msg[1], sizeof_w(mouse_msg[1]), L"%%i.%%i%%%% - %ls",
+    swprintf(mouse_msg[1], sizeof_w(mouse_msg[1]), L"%%i%%%% - %ls",
              (mouse_get_buttons() > 2) ? plat_get_string(STRING_MOUSE_RELEASE) : plat_get_string(STRING_MOUSE_RELEASE_MMB));
-    wcsncpy(mouse_msg[2], L"%i.%i%%", sizeof_w(mouse_msg[2]));
+    wcsncpy(mouse_msg[2], L"%i%%", sizeof_w(mouse_msg[2]));
 #else
-    swprintf(mouse_msg[0], sizeof_w(mouse_msg[0]), L"%ls v%ls - %%i.%%i%%%% - %ls - %ls/%ls - %ls",
+    swprintf(mouse_msg[0], sizeof_w(mouse_msg[0]), L"%ls v%ls - %%i%%%% - %ls - %ls/%ls - %ls",
              EMU_NAME_W, EMU_VERSION_FULL_W, wmachine, wcpufamily, wcpu,
              plat_get_string(STRING_MOUSE_CAPTURE));
-    swprintf(mouse_msg[1], sizeof_w(mouse_msg[1]), L"%ls v%ls - %%i.%%i%%%% - %ls - %ls/%ls - %ls",
+    swprintf(mouse_msg[1], sizeof_w(mouse_msg[1]), L"%ls v%ls - %%i%%%% - %ls - %ls/%ls - %ls",
              EMU_NAME_W, EMU_VERSION_FULL_W, wmachine, wcpufamily, wcpu,
              (mouse_get_buttons() > 2) ? plat_get_string(STRING_MOUSE_RELEASE) : plat_get_string(STRING_MOUSE_RELEASE_MMB));
-    swprintf(mouse_msg[2], sizeof_w(mouse_msg[2]), L"%ls v%ls - %%i.%%i%%%% - %ls - %ls/%ls",
+    swprintf(mouse_msg[2], sizeof_w(mouse_msg[2]), L"%ls v%ls - %%i%%%% - %ls - %ls/%ls",
              EMU_NAME_W, EMU_VERSION_FULL_W, wmachine, wcpufamily, wcpu);
 #endif
 }
@@ -1884,7 +1893,7 @@ pc_run(void)
         else
             fps = ((fps + 20) / 50) * 50;
 #endif
-        swprintf(temp, sizeof_w(temp), mouse_msg[mouse_msg_idx], fps / (force_10ms ? 1 : 10), force_10ms ? 0 : (fps % 10));
+        swprintf(temp, sizeof_w(temp), mouse_msg[mouse_msg_idx], fps / (force_10ms ? 1 : 10));
 #ifdef __APPLE__
         /* Needed due to modifying the UI on the non-main thread is a big no-no. */
         dispatch_async_f(dispatch_get_main_queue(), wcsdup((const wchar_t *) temp), _ui_window_title);

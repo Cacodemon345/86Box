@@ -168,15 +168,16 @@ static const device_config_t lx6_config[] = {
         .bios           = {
             {
                 .name          = "Award Modular BIOS v4.51PG - Revision LY",
-                .internal_name = "lx6", .bios_type = BIOS_NORMAL, 
+                .internal_name = "lx6",
+                .bios_type     = BIOS_NORMAL, 
                 .files_no      = 1,
                 .local         = 0,
                 .size          = 131072,
-                .files         = { "roms/machines/lx6/LX6C_LY.BIN", "" }
+                .files         = { "roms/machines/lx6/LX6C_LY.bin", "" }
             },
             {
                 .name          = "Award Modular BIOS v4.51PG - Revision PZ (Beta)",
-                .internal_name = "lx6_beta",
+                .internal_name = "lx6_pz",
                 .bios_type     = BIOS_NORMAL, 
                 .files_no      = 1,
                 .local         = 0,
@@ -593,7 +594,16 @@ static const device_config_t ax6bc_config[] = {
                 .files         = { "roms/machines/ax6bc/ax6bc110.bin", "" }
             },
             {
-                .name          = "Award Modular BIOS v4.60PGM - Revision R2.59",
+                .name          = "Award Modular BIOS v4.60PGMA - Revision R2.20 (RM Accelerator 350P2XB/450P3XB)",
+                .internal_name = "ax6bc_rm",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 262144,
+                .files         = { "roms/machines/ax6bc/ax6bc220.bin", "" }
+            },
+            {
+                .name          = "Award Modular BIOS v4.60PGMA - Revision R2.59",
                 .internal_name = "ax6bc",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 1,
@@ -765,7 +775,7 @@ static const device_config_t ms6119_config[] = {
         .bios           = {
             {
                 .name          = "AMIBIOS 6 (071595) - Revision 1.72 (Packard Bell Tacoma with logo)",
-                .internal_name = "tacoma_logo",
+                .internal_name = "tacoma_172",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 1,
                 .local         = 0,
@@ -877,6 +887,15 @@ static const device_config_t ms6147_config[] = {
         .selection      = { { 0 } },
         .bios           = {
             {
+                .name          = "Award Modular BIOS v4.51PG - Revision 1.2 (Fujitsu ErgoPro e368)",
+                .internal_name = "ergoproe368",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 262144,
+                .files         = { "roms/machines/ms6147/W647F412.BIN", "" }
+            },
+            {
                 .name          = "Award Modular BIOS v4.51PG - Revision 1.8",
                 .internal_name = "ms6147",
                 .bios_type     = BIOS_NORMAL,
@@ -903,7 +922,7 @@ static const device_config_t ms6147_config[] = {
 
 const device_t ms6147_device = {
     .name          = "MSI MS-6147",
-    .internal_name = "ms6147_device",
+    .internal_name = "ms6147",
     .flags         = 0,
     .local         = 0,
     .init          = NULL,
@@ -954,16 +973,71 @@ machine_at_ms6147_init(const machine_t *model)
     return ret;
 }
 
+static const device_config_t p6sba_config[] = {
+    // clang-format off
+    {
+        .name           = "bios",
+        .description    = "BIOS Version",
+        .type           = CONFIG_BIOS,
+        .default_string = "p6sba",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = {
+            {
+                .name          = "AMIBIOS 6 (071595) - Revision R3.1",
+                .internal_name = "p6sba",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 262144,
+                .files         = { "roms/machines/p6sba/SBAB21.ROM", "" }
+            },
+            {
+                .name          = "Award Modular BIOS v4.60PGA - Revision 05/07/1999 (Leadtek WinFast 8000BX)",
+                .internal_name = "8000bx",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 262144,
+                .files         = { "roms/machines/p6sba/leadtek-8000bx-80000507.bin", "" }
+            },
+            { .files_no = 0 }
+        }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+    // clang-format on
+};
+
+const device_t p6sba_device = {
+    .name          = "Supermicro P6SBA",
+    .internal_name = "p6sba_device",
+    .flags         = 0,
+    .local         = 0,
+    .init          = NULL,
+    .close         = NULL,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = p6sba_config
+};
+
 int
 machine_at_p6sba_init(const machine_t *model)
 {
-    int ret;
+    int         ret = 0;
+    const char *fn;
 
-    ret = bios_load_linear("roms/machines/p6sba/SBAB21.ROM",
-                           0x000c0000, 262144, 0);
-
-    if (bios_only || !ret)
+    /* No ROMs available */
+    if (!device_available(model->device))
         return ret;
+
+    device_context(model->device);
+    fn  = device_get_bios_file(machine_get_device(machine), device_get_config_bios("bios"), 0);
+    ret = bios_load_linear(fn, 0x000c0000, 262144, 0);
+    device_context_restore();
 
     machine_at_common_init_ex(model, 2);
 
@@ -983,11 +1057,8 @@ machine_at_p6sba_init(const machine_t *model)
     device_add_params(&w83977_device, (void *) (W83977TF | W83977_AMI | W83977_NO_NVR));
     device_add(&intel_flash_bxt_device);
     spd_register(SPD_TYPE_SDRAM, 0x7, 256);
-    device_add(&w83781d_device);    /* fans: CPU1, CPU2, Thermal Control; temperatures: unused, CPU1, CPU2? */
-    hwm_values.fans[1]         = 0; /* no CPU2 fan */
-    hwm_values.temperatures[0] = 0; /* unused */
-    hwm_values.temperatures[2] = 0; /* CPU2? */
-    /* no CPU2 voltage */
+    device_add(&w83781d_device);    /* fans: CPU1, CPU2, Thermal Control; temperatures: unused, CPU1, CPU2 */
+    hwm_values.voltages[1] = 3300; /* Seems to be the I/O voltage, reported as "CPUi/o" in the Leadtek BIOS and "CPU2" in the SuperMicro BIOS */
 
     return ret;
 }
@@ -1085,17 +1156,72 @@ machine_at_s1846_init(const machine_t *model)
     return ret;
 }
 
+static const device_config_t vei8_config[] = {
+    // clang-format off
+    {
+        .name           = "bios",
+        .description    = "BIOS Version",
+        .type           = CONFIG_BIOS,
+        .default_string = "vei8",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = {
+            {
+                .name          = "Award Modular BIOS v6.00PG - Revision QHW.10.01 (HP Sherwood-B)",
+                .internal_name = "vei8",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 262144,
+                .files         = { "roms/machines/vei8/QHW1001.BIN", "" }
+            },
+            {
+                .name          = "Award Modular BIOS v6.00PG - Revision R804",
+                .internal_name = "6110zu",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 262144,
+                .files         = { "roms/machines/vei8/r804.bin", "" }
+            },
+            { .files_no = 0 }
+        }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+    // clang-format on
+};
+
+const device_t vei8_device = {
+    .name          = "MiTAC/Trigon 6110Zu",
+    .internal_name = "vei8_device",
+    .flags         = 0,
+    .local         = 0,
+    .init          = NULL,
+    .close         = NULL,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = vei8_config
+};
+
 /* i440ZX */
 int
 machine_at_vei8_init(const machine_t *model)
 {
-    int ret;
+    int         ret = 0;
+    const char *fn;
 
-    ret = bios_load_linear("roms/machines/vei8/QHW1001.BIN",
-                           0x000c0000, 262144, 0);
-
-    if (bios_only || !ret)
+    /* No ROMs available */
+    if (!device_available(model->device))
         return ret;
+
+    device_context(model->device);
+    fn  = device_get_bios_file(machine_get_device(machine), device_get_config_bios("bios"), 0);
+    ret = bios_load_linear(fn, 0x000c0000, 262144, 0);
+    device_context_restore();
 
     machine_at_common_init_ex(model, 2);
 
@@ -1278,6 +1404,119 @@ machine_at_p3v133_init(const machine_t *model)
     device_add(&w83781d_device);     /* fans: Chassis, CPU, Power; temperatures: MB, unused, CPU */
     hwm_values.temperatures[1] = 0;  /* unused */
     hwm_values.temperatures[2] -= 3; /* CPU offset */
+
+    return ret;
+}
+
+static const device_config_t ms6199va_config[] = {
+    // clang-format off
+    {
+        .name           = "bios",
+        .description    = "BIOS Version",
+        .type           = CONFIG_BIOS,
+        .default_string = "ms6199va",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = {
+            {
+                .name          = "Award Modular BIOS v4.51PG - Revision 3.5",
+                .internal_name = "ms6199va",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 262144,
+                .files         = { "roms/machines/ms6199va/w6199vms.350", "" }
+            },
+            {
+                .name          = "Award Modular BIOS v4.51PG - Revision 2.0 (Compaq OEM)",
+                .internal_name = "ms6199va_200",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 262144,
+                .files         = { "roms/machines/ms6199va/W6199VC8.BIN", "" }
+            },
+            {
+                .name          = "Award Modular BIOS v4.51PG - Revision 2.0 (Compaq OEM) [patched for large drives]",
+                .internal_name = "ms6199va_200p",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 262144,
+                .files         = { "roms/machines/ms6199va/W6199VC8.PCD", "" }
+            },
+            {
+                .name          = "Award Modular BIOS v4.51PG - Revision 3.7 (Packard Bell OEM)",
+                .internal_name = "ms6199va_370",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 262144,
+                .files         = { "roms/machines/ms6199va/w6199VP2.370", "" }
+            },
+            { .files_no = 0 }
+        }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+    // clang-format on
+};
+
+const device_t ms6199va_device = {
+    .name          = "MSI MS-6199VA",
+    .internal_name = "ms6199va_device",
+    .flags         = 0,
+    .local         = 0,
+    .init          = NULL,
+    .close         = NULL,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = ms6199va_config
+};
+
+int
+machine_at_ms6199va_init(const machine_t *model)
+{
+    int         ret = 0;
+    const char *fn;
+
+    /* No ROMs available */
+    if (!device_available(model->device))
+        return ret;
+
+    device_context(model->device);
+    fn  = device_get_bios_file(machine_get_device(machine), device_get_config_bios("bios"), 0);
+    ret = bios_load_linear(fn, 0x000c0000, 262144, 0);
+    device_context_restore();
+
+    machine_at_common_init_ex(model, 2);
+
+    pci_init(PCI_CONFIG_TYPE_1);
+    pci_register_slot(0x00, PCI_CARD_NORTHBRIDGE, 0, 0, 0, 0);
+    pci_register_slot(0x07, PCI_CARD_SOUTHBRIDGE, 0, 0, 3, 4);
+    pci_register_slot(0x0C, PCI_CARD_SOUND,       3, 4, 1, 2);
+    pci_register_slot(0x0E, PCI_CARD_NORMAL,      1, 2, 3, 4);
+    pci_register_slot(0x10, PCI_CARD_NORMAL,      2, 3, 4, 1);
+    pci_register_slot(0x12, PCI_CARD_NORMAL,      3, 4, 1, 2);
+    pci_register_slot(0x13, PCI_CARD_NORMAL,      2, 1, 4, 3);
+    pci_register_slot(0x14, PCI_CARD_NORMAL,      2, 1, 4, 3);
+    pci_register_slot(0x01, PCI_CARD_AGPBRIDGE,   1, 2, 3, 4);
+
+    device_add(&via_apro133a_device);
+    device_add(&via_vt82c596b_device);
+    device_add_params(&w83977_device, (void *) (W83977EF | W83977_AMI | W83977_NO_NVR));
+    device_add(&winbond_flash_w29c020_device);
+    spd_register(SPD_TYPE_SDRAM, 0x7, 512);
+    device_add(&w83782d_device); /* fans: Chassis, Power, CPU; temperatures: System, CPU, unused */
+    hwm_values.temperatures[2] = 0; /* unused */
+
+    if (sound_card_current[0] == SOUND_INTERNAL) {
+        device_add(machine_get_snd_device(machine));
+        device_add(&w83971d_device);
+    }
 
     return ret;
 }

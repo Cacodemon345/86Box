@@ -547,6 +547,7 @@ mach64_recalctimings(svga_t *svga)
         svga->rowcount                 = mach64->crtc_gen_cntl & 1;
         svga->lut_map                  = (mach64->type >= MACH64_VT);
         svga->rowoffset <<= 1;
+        svga->attrregs[0x13]          &= ~0x0f;
 
         if (mach64->type == MACH64_GX)
             ati68860_ramdac_set_render(svga->ramdac, svga);
@@ -5027,6 +5028,7 @@ mach64vt_init(const device_t *info)
     mem_mapping_disable(&mach64->bios_rom.mapping);
 
     svga->vblank_start = mach64_vblank_start;
+    svga->adv_flags   |= FLAG_PANNING_ATI;
 
     return mach64;
 }
@@ -5059,6 +5061,7 @@ mach64vt2_init(const device_t *info)
     mem_mapping_disable(&mach64->bios_rom.mapping);
 
     svga->vblank_start = mach64_vblank_start;
+    svga->adv_flags   |= FLAG_PANNING_ATI;
 
     return mach64;
 }

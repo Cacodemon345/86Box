@@ -143,6 +143,77 @@ machine_at_p65up5_cp55t2d_init(const machine_t *model)
     return ret;
 }
 
+static void
+machine_at_rubyusb_gpio_init(void)
+{
+    uint32_t gpio = 0xffffe3ff;
+
+    /* Register 0x0079: */
+    /* Bit 7: 0 = Clear password, 1 = Keep password. */
+    /* Bit 6: 0 = NVRAM cleared by jumper, 1 = NVRAM normal. */
+    /* Bit 5: 0 = CMOS Setup disabled, 1 = CMOS Setup enabled. */
+    /* Bit 4: External CPU clock (Switch 8). */
+    /* Bit 3: External CPU clock (Switch 7). */
+    /*        50 MHz: Switch 7 = Off, Switch 8 = Off. */
+    /*        60 MHz: Switch 7 = On, Switch 8 = Off. */
+    /*        66 MHz: Switch 7 = Off, Switch 8 = On. */
+    /* Bit 2: 0 = On-board audio absent, 1 = On-board audio present. */
+    /* Bit 1: 0 = Soft-off capable power supply present, 1 = Soft-off capable power supply absent. */
+    /* Bit 0: 0 = Reserved. */
+    /* NOTE: A bit is read as 1 if switch is off, and as 0 if switch is on. */
+    if (cpu_busspeed <= 50000000)
+        gpio |= 0xffff10ff;
+    else if ((cpu_busspeed > 50000000) && (cpu_busspeed <= 60000000))
+        gpio |= 0xffff18ff;
+    else if (cpu_busspeed > 60000000)
+        gpio |= 0xffff00ff;
+
+    if (sound_card_current[0] == SOUND_INTERNAL)
+        gpio |= 0xffff04ff;
+
+    machine_set_gpio_default(gpio);
+}
+
+int
+machine_at_rubyusb_init(const machine_t *model)
+{
+    int ret;
+
+    ret = bios_load_linear_combined2("roms/machines/rubyusb/1005DL0L.BIO",
+                                     "roms/machines/rubyusb/1005DL0L.BI1",
+                                     "roms/machines/rubyusb/1005DL0L.BI2",
+                                     "roms/machines/rubyusb/1005DL0L.BI3",
+                                     "roms/machines/rubyusb/1005DL0L.RCV",
+                                     /*NULL,*/
+                                     0x3a000, 128);
+
+    if (bios_only || !ret)
+        return ret;
+
+    machine_at_common_init_ex(model, 2);
+    machine_at_rubyusb_gpio_init();
+
+    pci_init(PCI_CONFIG_TYPE_1);
+    pci_register_slot(0x00, PCI_CARD_NORTHBRIDGE, 0, 0, 0, 0);
+    pci_register_slot(0x08, PCI_CARD_VIDEO,       4, 0, 0, 0);
+    pci_register_slot(0x11, PCI_CARD_NORMAL,      1, 2, 3, 4);
+    pci_register_slot(0x13, PCI_CARD_NORMAL,      2, 3, 4, 1);
+    pci_register_slot(0x07, PCI_CARD_SOUTHBRIDGE, 0, 0, 0, 0);
+
+    if (gfxcard[0] == VID_INTERNAL)
+        device_add(machine_get_vid_device(machine));
+
+    if (sound_card_current[0] == SOUND_INTERNAL)
+        machine_snd = device_add(machine_get_snd_device(machine));
+
+    device_add(&i430hx_device);
+    device_add(&piix3_device);
+    device_add_params(&pc87306_device, (void *) PCX730X_AMI);
+    device_add(&intel_flash_bxt_ami_device);
+
+    return ret;
+}
+
 static const device_config_t cu430hx_config[] = {
     // clang-format off
     {
@@ -813,16 +884,71 @@ machine_at_dellhannibalp_init(const machine_t *model)
     return ret;
 }
 
+static const device_config_t p5vxb_config[] = {
+    // clang-format off
+    {
+        .name           = "bios",
+        .description    = "BIOS Version",
+        .type           = CONFIG_BIOS,
+        .default_string = "p5vxb",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = {
+            {
+                .name          = "Award Modular BIOS v4.50PG - Revision 1.0",
+                .internal_name = "p5vxb",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 131072,
+                .files         = { "roms/machines/p5vxb/P5VXB10.BIN", "" }
+            },
+            {
+                .name          = "Award Modular BIOS v4.51PG - Revision 1.5c",
+                .internal_name = "p5vxb_451pg",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 131072,
+                .files         = { "roms/machines/p5vxb/P5VXB15C.BIN", "" }
+            },
+            { .files_no = 0 }
+        }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+    // clang-format on
+};
+
+const device_t p5vxb_device = {
+    .name          = "ECS P5VX-B",
+    .internal_name = "p5vxb_device",
+    .flags         = 0,
+    .local         = 0,
+    .init          = NULL,
+    .close         = NULL,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = p5vxb_config
+};
+
 int
 machine_at_p5vxb_init(const machine_t *model)
 {
-    int ret;
+    int         ret = 0;
+    const char *fn;
 
-    ret = bios_load_linear("roms/machines/p5vxb/P5VXB10.BIN",
-                           0x000e0000, 131072, 0);
-
-    if (bios_only || !ret)
+    /* No ROMs available */
+    if (!device_available(model->device))
         return ret;
+
+    device_context(model->device);
+    fn  = device_get_bios_file(machine_get_device(machine), device_get_config_bios("bios"), 0);
+    ret = bios_load_linear(fn, 0x000e0000, 131072, 0);
+    device_context_restore();
 
     machine_at_common_init(model);
 
@@ -1425,7 +1551,7 @@ static const device_config_t an430tx_config[] = {
         .name           = "bios",
         .description    = "BIOS Version",
         .type           = CONFIG_BIOS,
-        .default_string = "pb79x",
+        .default_string = "an430tx",
         .default_int    = 0,
         .file_filter    = NULL,
         .spinner        = { 0 },
@@ -1433,7 +1559,7 @@ static const device_config_t an430tx_config[] = {
         .bios           = {
             {
                 .name          = "PhoenixBIOS 4.0 Release 6.0 - Revision P02-0011 (Sony Vaio PCV-130/150)",
-                .internal_name = "vaio150",
+                .internal_name = "pcv150",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 5,
                 .local         = 0,
@@ -1444,7 +1570,7 @@ static const device_config_t an430tx_config[] = {
             },
             {
                 .name          = "PhoenixBIOS 4.0 Release 6.0 - Revision P09-0006 (Packard Bell PB79x)",
-                .internal_name = "pb79x",
+                .internal_name = "an430tx",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 5,
                 .local         = 0,
@@ -1770,16 +1896,71 @@ machine_at_cb52xsi_init(const machine_t *model)
     return ret;
 }
 
+static const device_config_t ms5146_config[] = {
+    // clang-format off
+    {
+        .name           = "bios",
+        .description    = "BIOS Version",
+        .type           = CONFIG_BIOS,
+        .default_string = "ms5146",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = {
+            {
+                .name          = "AMIBIOS 6 (071595) - Revision 1.1",
+                .internal_name = "ms5146",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 131072,
+                .files         = { "roms/machines/ms5146/A546MS11.ROM", "" }
+            },
+            {
+                .name          = "Award Modular BIOS v4.51PG - Revision 2.1",
+                .internal_name = "ms5146_451pg",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 131072,
+                .files         = { "roms/machines/ms5146/W546MS21.BIN", "" }
+            },
+            { .files_no = 0 }
+        }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+    // clang-format on
+};
+
+const device_t ms5146_device = {
+    .name          = "MSI MS-5146",
+    .internal_name = "ms5146_device",
+    .flags         = 0,
+    .local         = 0,
+    .init          = NULL,
+    .close         = NULL,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = ms5146_config
+};
+
 int
 machine_at_ms5146_init(const machine_t *model)
 {
-    int ret;
+    int         ret = 0;
+    const char *fn;
 
-    ret = bios_load_linear("roms/machines/ms5146/A546MS11.ROM",
-                           0x000e0000, 131072, 0);
-
-    if (bios_only || !ret)
+    /* No ROMs available */
+    if (!device_available(model->device))
         return ret;
+
+    device_context(model->device);
+    fn  = device_get_bios_file(machine_get_device(machine), device_get_config_bios("bios"), 0);
+    ret = bios_load_linear(fn, 0x000e0000, 131072, 0);
+    device_context_restore();
 
     machine_at_common_init_ex(model, 2);
 
@@ -1804,7 +1985,7 @@ static const device_config_t r534f_config[] = {
         .name           = "bios",
         .description    = "BIOS Version",
         .type           = CONFIG_BIOS,
-        .default_string = "r534f",
+        .default_string = "r534f_1998",
         .default_int    = 0,
         .file_filter    = NULL,
         .spinner        = { 0 },
@@ -1812,7 +1993,7 @@ static const device_config_t r534f_config[] = {
         .bios           = {
             {
                 .name          = "Award Modular BIOS v4.51PG - Revision 06/12/1998",
-                .internal_name = "r534f",
+                .internal_name = "r534f_1998",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 1,
                 .local         = 0,
@@ -1821,7 +2002,7 @@ static const device_config_t r534f_config[] = {
             },
             {
                 .name          = "Award Modular BIOS v4.51PG - Revision 03/13/2000 (by Unicore Software)",
-                .internal_name = "r534f_unicore",
+                .internal_name = "r534f",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 1,
                 .local         = 0,

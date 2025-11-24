@@ -37,6 +37,7 @@
 #include <86box/serial.h>
 #include <86box/sio.h>
 #include <86box/ibm_5161.h>
+#include <86box/isartc.h>
 #include <86box/keyboard.h>
 #include <86box/rom.h>
 #include <86box/machine.h>
@@ -44,9 +45,6 @@
 #include <86box/chipset.h>
 #include <86box/port_6x.h>
 #include <86box/video.h>
-
-extern const device_t vendex_xt_rtc_onboard_device;
-extern const device_t rtc58167_device;
 
 /* 8088 */
 static void
@@ -902,7 +900,7 @@ static const device_config_t dtk_config[] = {
         .name           = "bios",
         .description    = "BIOS Version",
         .type           = CONFIG_BIOS,
-        .default_string = "dtk_242",
+        .default_string = "dtk",
         .default_int    = 0,
         .file_filter    = NULL,
         .spinner        = { 0 },
@@ -919,7 +917,7 @@ static const device_config_t dtk_config[] = {
             },
             {
                 .name          = "2.42",
-                .internal_name = "dtk_242",
+                .internal_name = "dtk",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 1,
                 .local         = 0,
@@ -1251,7 +1249,7 @@ static const device_config_t pc500_config[] = {
         .spinner        = { 0 },
         .selection      = {
             { .description = "Disabled", .value = -1 },
-            { .description = "Enabled",  .value =  2 },
+            { .description = "IRQ 2",    .value =  2 },
             { .description = ""                      }
         },
         .bios           = { { 0 } }
@@ -1259,7 +1257,7 @@ static const device_config_t pc500_config[] = {
     {
         .name           = "rtc_port",
         .description    = "RTC Port Address",
-        .type           = CONFIG_HEX16,
+        .type           = CONFIG_SELECTION,
         .default_string = NULL,
         .default_int    = 0,
         .file_filter    = NULL,
@@ -1310,7 +1308,7 @@ machine_xt_pc500_init(const machine_t *model)
     if (bios_only || !ret)
         return ret;
 
-    device_add(&kbc_xtclone_device);
+    device_add(&kbc_pc82_device);
 
     machine_xt_common_init(model, 0);
 
@@ -1326,7 +1324,7 @@ static const device_config_t pc500plus_config[] = {
         .name       = "bios",
         .description    = "BIOS Version",
         .type           = CONFIG_BIOS,
-        .default_string = "pc500plus_404",
+        .default_string = "pc500plus",
         .default_int    = 0,
         .file_filter    = NULL,
         .spinner        = { 0 },
@@ -1342,7 +1340,7 @@ static const device_config_t pc500plus_config[] = {
             },
             {
                 .name          = "4.04",
-                .internal_name = "pc500plus_404",
+                .internal_name = "pc500plus",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 1,
                 .local         = 0,
@@ -1371,7 +1369,7 @@ static const device_config_t pc500plus_config[] = {
         .spinner        = { 0 },
         .selection      = {
             { .description = "Disabled", .value = -1 },
-            { .description = "Enabled",  .value =  2 },
+            { .description = "IRQ 2",    .value =  2 },
             { .description = ""                      }
         },
         .bios           = { { 0 } }
@@ -1379,7 +1377,7 @@ static const device_config_t pc500plus_config[] = {
     {
         .name           = "rtc_port",
         .description    = "Onboard RTC",
-        .type           = CONFIG_HEX16,
+        .type           = CONFIG_SELECTION,
         .default_string = NULL,
         .default_int    = 0,
         .file_filter    = NULL,
@@ -1429,9 +1427,7 @@ machine_xt_pc500plus_init(const machine_t *model)
     if (bios_only || !ret)
         return ret;
 
-    device_add(&kbc_xtclone_device);
-
-    machine_xt_common_init(model, 0);
+    machine_xt_clone_init(model, 0);
 
     if (rtc_port != 0)
         device_add(&rtc58167_device);
@@ -1445,14 +1441,14 @@ static const device_config_t pc700_config[] = {
         .name           = "bios",
         .description    = "BIOS Version",
         .type           = CONFIG_BIOS,
-        .default_string = "pc700_330",
+        .default_string = "pc700",
         .default_int    = 0,
         .file_filter    = NULL,
         .spinner        = { 0 },
         .bios           = {
             {
                 .name           = "3.30",
-                .internal_name  = "pc700_330",
+                .internal_name  = "pc700",
                 .bios_type      = BIOS_NORMAL,
                 .files_no       = 1,
                 .local          = 0,
@@ -1507,7 +1503,7 @@ machine_xt_pc700_init(const machine_t *model)
     if (bios_only || !ret)
         return ret;
 
-    device_add(&kbc_pc_device);
+    device_add(&kbc_pc82_device);
 
     machine_xt_common_init(model, 0);
 
@@ -1702,6 +1698,106 @@ machine_xt_pcxt_init(const machine_t *model)
         return ret;
 
     machine_xt_clone_init(model, 0);
+
+    return ret;
+}
+
+static const device_config_t to16_config[] = {
+    // clang-format off
+    {
+        .name           = "bios",
+        .description    = "BIOS Version",
+        .type           = CONFIG_BIOS,
+        .default_string = "to16",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .bios           = {
+            {
+                .name   = "1.03",
+                .internal_name = "to16",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 32768,
+                .files         = { "roms/machines/to16/TO16_103.bin", "" }
+            },
+            { .files_no = 0 }
+        },
+    },
+    {
+        .name           = "rtc_port",
+        .description    = "Onboard RTC",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "Not installed", .value =     0 },
+            { .description = "RTC0",          .value = 0x300 },
+            { .description = "RTC1",          .value = 0x2c0 },
+            { .description = ""                              }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "rtc_irq",
+        .description    = "RTC IRQ",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = -1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "Disabled", .value = -1 },
+            { .description = "IRQ 2",    .value =  2 },
+            { .description = ""                      }
+        },
+        .bios           = { { 0 } }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+    // clang-format on
+};
+
+const device_t to16_device = {
+    .name          = "Thomson TO16",
+    .internal_name = "to16_device",
+    .flags         = 0,
+    .local         = 0,
+    .init          = NULL,
+    .close         = NULL,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = to16_config
+};
+
+int
+machine_xt_to16_init(const machine_t *model)
+{
+    int         ret      = 0;
+    int         rtc_port = 0;
+    const char *fn;
+
+    /* No ROMs available. */
+    if (!device_available(model->device))
+        return ret;
+
+    device_context(model->device);
+    rtc_port = machine_get_config_int("rtc_port");
+    fn       = device_get_bios_file(model->device, device_get_config_bios("bios"), 0);
+    ret      = bios_load_linear(fn, 0x000f8000, 32768, 0);
+    device_context_restore();
+
+    if (bios_only || !ret)
+        return ret;
+
+    machine_xt_clone_init(model, 0);
+
+    if (rtc_port != 0)
+        device_add(&rtc58167_device);
 
     return ret;
 }
