@@ -8,8 +8,6 @@
  *
  *          Handling of the SCSI controllers.
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *          Fred N. van Kempen, <decwiz@yahoo.com>
  *          TheCollector1995, <mariogplayer@gmail.com>
@@ -86,6 +84,7 @@ static SCSI_CARD scsi_cards[] = {
     { &buslogic_445c_device,     },
     /* PCI */
     { &am53c974_pci_device,      },
+    { &am53c974a_pci_device,     },
     { &buslogic_958d_pci_device, },
     { &ncr53c810_pci_device,     },
     { &ncr53c815_pci_device,     },

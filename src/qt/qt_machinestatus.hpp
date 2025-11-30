@@ -28,8 +28,13 @@ signals:
     void dropped(QString);
 
 protected:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    void mousePressEvent(QMouseEvent *event) override { emit clicked(event->globalPosition().toPoint()); }
+    void mouseDoubleClickEvent(QMouseEvent *event) override { emit doubleClicked(event->globalPosition().toPoint()); }
+#else
     void mousePressEvent(QMouseEvent *event) override { emit clicked(event->globalPos()); }
     void mouseDoubleClickEvent(QMouseEvent *event) override { emit doubleClicked(event->globalPos()); }
+#endif
     void dragEnterEvent(QDragEnterEvent *event) override
     {
         if (event->mimeData()->hasUrls() && event->mimeData()->urls().size() == 1) {
@@ -73,7 +78,7 @@ public:
 
     QString getMessage();
     void    clearActivity();
-    void    setSoundMenu(QMenu* menu);
+    void    setSoundMenu(QMenu *menu);
 public slots:
     void refresh(QStatusBar *sbar);
     void message(const QString &msg);

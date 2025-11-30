@@ -349,7 +349,7 @@ f82c710_init(const device_t *info)
 {
     upc_t *dev = (upc_t *) calloc(1, sizeof(upc_t));
 
-    if (strstr(machine_get_internal_name(), "5086") != NULL)
+    if (machines[machine].init == machine_xt_pc5086_init)
         dev->fdc        = device_add(&fdc_at_actlow_device);
     else
         dev->fdc        = device_add(&fdc_at_device);
@@ -357,7 +357,7 @@ f82c710_init(const device_t *info)
     dev->uart       = device_add_inst(&ns16450_device, 1);
     dev->lpt        = device_add_inst(&lpt_port_device, 1);
 
-    dev->mouse      = device_add_params(&mouse_upc_device, (void *) (uintptr_t) (is8086 ? 2 : 12));
+    dev->mouse      = device_add_params(&mouse_upc_device, (void *) (uintptr_t) (is286 ? 12 : 2));
 
     dev->serial_irq = device_get_config_int("serial_irq");
     dev->lpt_irq    = device_get_config_int("lpt_irq");

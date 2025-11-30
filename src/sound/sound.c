@@ -8,8 +8,6 @@
  *
  *          Sound emulation core.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          Miran Grca, <mgrca8@gmail.com>
  *          Jasmine Iwanek, <jriwanek@gmail.com>
@@ -38,6 +36,7 @@
 #include <86box/timer.h>
 #include <86box/snd_mpu401.h>
 #include <86box/sound.h>
+#include <86box/fdd_audio.h>
 
 typedef struct {
     const device_t *device;
@@ -55,7 +54,6 @@ int wavetable_pos_global               = 0;
 int sound_gain                         = 0;
 
 static sound_handler_t sound_handlers[8];
-
 static sound_handler_t music_handlers[8];
 static sound_handler_t wavetable_handlers[8];
 
@@ -91,6 +89,12 @@ static unsigned int cd_vol_r;
 static int          cd_buf_update    = CD_BUFLEN / SOUNDBUFLEN;
 static volatile int cdaudioon        = 0;
 static int          cd_thread_enable = 0;
+
+static thread_t     *sound_fdd_thread_h;
+static event_t      *sound_fdd_event;
+static event_t      *sound_fdd_start_event;
+static volatile int fddaudioon = 0;
+static int          fdd_thread_enable = 0;
 
 static void (*filter_cd_audio)(int channel, double *buffer, void *priv) = NULL;
 static void *filter_cd_audio_p                                          = NULL;
@@ -136,11 +140,15 @@ static const SOUND_CARD sound_cards[] = {
     { &azt2316a_device              },
     { &azt1605_device               },
     { &sb_goldfinch_device          },
+    { &cs4232_device                },
     { &cs4235_device                },
     { &cs4236b_device               },
     { &gus_device                   },
+    { &gus_v37_device               },
     { &gus_max_device               },
+    { &gus_ace_device               },
     { &mirosound_pcm10_device       },
+    { &opti_82c930_device           },
     { &pas16_device                 },
     { &pas16d_device                },
     { &sb_16_device                 },
@@ -158,6 +166,9 @@ static const SOUND_CARD sound_cards[] = {
     { &sb_vibra16s_device           },
     { &sb_vibra16xv_device          },
     { &wss_device                   },
+    { &ymf701_device                },
+    { &ymf718_device                },
+    { &ymf719_device                },
     /* MCA */
     { &adlib_mca_device             },
     { &ess_chipchat_16_mca_device   },
@@ -177,6 +188,9 @@ static const SOUND_CARD sound_cards[] = {
     /* AC97 */
     { &ad1881_device                },
     { &cs4297a_device               },
+#ifdef USE_SOFTMODEM
+    { &si3036_device                },
+#endif
     /* USB */
     { &usb_audio_device             },
     { NULL                          }
@@ -597,6 +611,9 @@ sound_poll(UNUSED(void *priv))
             }
         }
 
+        if (fdd_thread_enable) {
+            thread_set_event(sound_fdd_event);
+        }
         sound_pos_global = 0;
     }
 }
@@ -698,17 +715,14 @@ sound_reset(void)
     inital();
 
     timer_add(&sound_poll_timer, sound_poll, NULL, 1);
-
     sound_handlers_num = 0;
     memset(sound_handlers, 0x00, 8 * sizeof(sound_handler_t));
 
     timer_add(&music_poll_timer, music_poll, NULL, 1);
-
     music_handlers_num = 0;
     memset(music_handlers, 0x00, 8 * sizeof(sound_handler_t));
 
     timer_add(&wavetable_poll_timer, wavetable_poll, NULL, 1);
-
     wavetable_handlers_num = 0;
     memset(wavetable_handlers, 0x00, 8 * sizeof(sound_handler_t));
 
@@ -784,4 +798,62 @@ sound_cd_thread_reset(void)
         sound_cd_thread_end();
 
     cd_thread_enable = available_cdrom_drives ? 1 : 0;
+}
+
+static void
+sound_fdd_thread(UNUSED(void *param))
+{
+    thread_set_event(sound_fdd_start_event);
+    while (fddaudioon) {
+        thread_wait_event(sound_fdd_event, -1);
+        thread_reset_event(sound_fdd_event);
+
+        if (!fddaudioon)
+            break;
+
+        static float fdd_float_buffer[SOUNDBUFLEN * 2];
+        memset(fdd_float_buffer, 0, sizeof(fdd_float_buffer));
+        fdd_audio_callback((int16_t*)fdd_float_buffer, SOUNDBUFLEN * 2);
+        givealbuffer_fdd(fdd_float_buffer, SOUNDBUFLEN * 2);
+    }
+}
+
+void
+sound_fdd_thread_init(void)
+{
+    if (!fddaudioon) {
+        fddaudioon = 1;
+        fdd_thread_enable = 1;
+
+        sound_fdd_start_event = thread_create_event();
+        sound_fdd_event = thread_create_event();
+        sound_fdd_thread_h = thread_create(sound_fdd_thread, NULL);
+
+        thread_wait_event(sound_fdd_start_event, -1);
+        thread_reset_event(sound_fdd_start_event);
+    }
+}
+
+void
+sound_fdd_thread_end(void)
+{
+    if (fddaudioon) {
+        fddaudioon = 0;
+        fdd_thread_enable = 0;
+
+        thread_set_event(sound_fdd_event);
+        thread_wait(sound_fdd_thread_h);
+
+        if (sound_fdd_event) {
+            thread_destroy_event(sound_fdd_event);
+            sound_fdd_event = NULL;
+        }
+
+        sound_fdd_thread_h = NULL;
+
+        if (sound_fdd_start_event) {
+            thread_destroy_event(sound_fdd_start_event);
+            sound_fdd_start_event = NULL;
+        }
+    }
 }

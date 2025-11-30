@@ -8,14 +8,12 @@
  *
  *              Implementation of Serial passthrough device.
  *
- *
  * Authors:     Andreas J. Reichel <webmaster@6th-dimension.com>,
  *              Jasmine Iwanek <jasmine@iwanek.co.uk>
  *
  *              Copyright 2021      Andreas J. Reichel.
  *              Copyright 2021-2025 Jasmine Iwanek.
  */
-
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -74,6 +72,8 @@ host_to_serial_cb(void *priv)
     serial_passthrough_t *dev = (serial_passthrough_t *) priv;
 
     uint8_t byte;
+
+    plat_serpt_set_line_state(priv);
 
     /* write_fifo has no failure indication, but if we write to fast, the host
      * can never fetch the bytes in time, so check if the fifo is full if in

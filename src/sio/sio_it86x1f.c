@@ -8,8 +8,6 @@
  *
  *          Emulation of the ITE IT86x1F Super I/O chips.
  *
- *
- *
  * Authors: RichardG, <richardg867@gmail.com>
  *
  *          Copyright 2023 RichardG.
@@ -32,6 +30,7 @@
 #include <86box/fdd.h>
 #include <86box/fdc.h>
 #include <86box/gameport.h>
+#include <86box/keyboard.h>
 #include <86box/sio.h>
 #include <86box/isapnp.h>
 #include <86box/plat_fallthrough.h>
@@ -42,7 +41,7 @@ enum {
     ITE_IT8671F = 0x8681
 };
 
-#define CHIP_ID *((uint16_t *) &dev->global_regs[0])
+#define CHIP_ID AS_U16(dev->global_regs[0])
 
 static void it8671f_pnp_config_changed(uint8_t ld, isapnp_device_config_t *config, void *priv);
 static void it8661f_pnp_config_changed(uint8_t ld, isapnp_device_config_t *config, void *priv);
@@ -296,6 +295,9 @@ it8661f_pnp_config_changed(uint8_t ld, isapnp_device_config_t *config, void *pri
             if (config->activate && (config->io[0].base != ISAPNP_IO_DISABLED)) {
                 it86x1f_log("IT86x1F: LPT enabled at port %04X IRQ %d\n", config->io[0].base, config->irq[0].irq);
                 lpt_port_setup(dev->lpt, config->io[0].base);
+
+                lpt_port_irq(dev->lpt, config->irq[0].irq);
+                lpt_port_dma(dev->lpt, (config->dma[0].dma == ISAPNP_DMA_DISABLED) ? -1 : config->dma[0].dma);
             } else {
                 it86x1f_log("IT86x1F: LPT disabled\n");
             }
@@ -466,6 +468,13 @@ it86x1f_pnp_write_vendor_reg(uint8_t ld, uint8_t reg, uint8_t val, void *priv)
                 case 0x0f0:
                     dev->ldn_regs[ld][reg & 0x0f] = val & 0x0f;
                     fdc_set_swwp(dev->fdc, !!(val & 0x01));
+                    if (val & 0x02) {
+                        for (int i = 0; i < 4; i++)
+                            fdc_update_drvrate(dev->fdc, i, 1);
+                    } else {
+                        for (int i = 0; i < 4; i++)
+                            fdc_update_drvrate(dev->fdc, i, 0);
+                    }
                     fdc_set_swap(dev->fdc, !!(val & 0x04));
                     break;
 
@@ -484,6 +493,8 @@ it86x1f_pnp_write_vendor_reg(uint8_t ld, uint8_t reg, uint8_t val, void *priv)
 
                 case 0x3f0:
                     dev->ldn_regs[ld][reg & 0x0f] = val & 0x07;
+                    lpt_set_epp(dev->lpt, val & 0x01);
+                    lpt_set_ecp(dev->lpt, val & 0x02);
                     break;
 
                 case 0x4f0:
@@ -558,7 +569,7 @@ it86x1f_pnp_write_vendor_reg(uint8_t ld, uint8_t reg, uint8_t val, void *priv)
 
                 case 0x7e3:
                     if ((CHIP_ID == ITE_IT8671F) && (val & 0x80))
-                        *((uint16_t *) &dev->gpio_regs[0x22]) = 0x0000;
+                        AS_U16(dev->gpio_regs[0x22]) = 0x0000;
                     break;
 
                 case 0x7fb:
@@ -772,6 +783,9 @@ it86x1f_reset(it86x1f_t *dev)
 {
     it86x1f_log("IT86x1F: reset()\n");
 
+    for (int i = 0; i < 4; i++)
+        fdc_update_drvrate(dev->fdc, i, 0);
+
     fdc_reset(dev->fdc);
 
     serial_remove(dev->uart[0]);
@@ -779,6 +793,9 @@ it86x1f_reset(it86x1f_t *dev)
     serial_remove(dev->uart[1]);
 
     lpt_port_remove(dev->lpt);
+
+    lpt_set_epp(dev->lpt, 0);
+    lpt_set_ecp(dev->lpt, 0);
 
     isapnp_enable_card(dev->pnp_card, ISAPNP_CARD_DISABLE);
 
@@ -825,6 +842,9 @@ it86x1f_init(UNUSED(const device_t *info))
 
     dev->lpt = device_add_inst(&lpt_port_device, 1);
 
+    lpt_set_cnfgb_readout(dev->lpt, 0x00);
+    lpt_set_ext(dev->lpt, 1);
+
     dev->gameport = gameport_add(&gameport_sio_device);
 
     dev->instance = device_get_instance();
@@ -832,6 +852,9 @@ it86x1f_init(UNUSED(const device_t *info))
     CHIP_ID = it86x1f_models[i].chip_id;
     dev->unlock_id = it86x1f_models[i].unlock_id;
     io_sethandler(0x279, 1, NULL, NULL, NULL, it86x1f_write_unlock, NULL, NULL, dev);
+
+    if (info->local == ITE_IT8671F)
+        device_add_params(&kbc_at_device, (void *) (KBC_VEN_AMI | 0x00004800));
 
     it86x1f_reset(dev);
 

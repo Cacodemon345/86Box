@@ -65,7 +65,7 @@ typedef struct _joystick_instance_ {
     void             *dat;
 } joystick_instance_t;
 
-int joystick_type = JS_TYPE_NONE;
+int joystick_type[GAMEPORT_MAX] = { JS_TYPE_NONE, JS_TYPE_NONE };
 
 static const joystick_t joystick_none = {
     .name          = "None",
@@ -88,27 +88,52 @@ static const joystick_t joystick_none = {
 static const struct {
     const joystick_t *joystick;
 } joysticks[] = {
-    { &joystick_none                         },
-    { &joystick_2axis_2button                },
-    { &joystick_2button_gamepad              },
-    { &joystick_2button_flight_yoke          },
-    { &joystick_2axis_4button                },
-    { &joystick_4button_gamepad              },
-    { &joystick_4button_flight_yoke          },
-    { &joystick_2axis_6button                },
-    { &joystick_2axis_8button                },
-    { &joystick_3axis_2button                },
-    { &joystick_2button_yoke_throttle        },
-    { &joystick_3axis_4button                },
-    { &joystick_win95_steering_wheel         },
-    { &joystick_4button_yoke_throttle        },
-    { &joystick_4axis_4button                },
-    { &joystick_ch_flightstick_pro           },
-    { &joystick_ch_flightstick_pro_ch_pedals },
-    { &joystick_sw_pad                       },
-    { &joystick_tm_fcs                       },
-    { &joystick_tm_fcs_rcs                   },
-    { NULL                                   }
+    { &joystick_none                               },
+    { &joystick_generic_paddle                     },
+    { &joystick_2axis_1button                      },
+    { &joystick_2axis_2button                      },
+    { &joystick_2axis_3button                      },
+    { &joystick_2axis_4button                      },
+    { &joystick_2axis_6button                      },
+    { &joystick_2axis_8button                      },
+    { &joystick_3axis_2button                      },
+    { &joystick_3axis_3button                      },
+    { &joystick_3axis_4button                      },
+    { &joystick_4axis_2button                      },
+    { &joystick_4axis_3button                      },
+    { &joystick_4axis_4button                      },
+    { &joystick_2button_gamepad                    },
+    { &joystick_3button_gamepad                    },
+    { &joystick_4button_gamepad                    },
+    { &joystick_6button_gamepad                    },
+    { &joystick_gravis_gamepad                     },
+    { &joystick_2button_flight_yoke                },
+    { &joystick_3button_flight_yoke                },
+    { &joystick_4button_flight_yoke                },
+    { &joystick_2button_yoke_throttle              },
+    { &joystick_3button_yoke_throttle              },
+    { &joystick_4button_yoke_throttle              },
+    { &joystick_steering_wheel_2_button            },
+    { &joystick_steering_wheel_3_button            },
+    { &joystick_steering_wheel_4_button            },
+    { &joystick_ch_flightstick                     },
+    { &joystick_ch_flightstick_ch_pedals           },
+    { &joystick_ch_flightstick_ch_pedals_pro       },
+    { &joystick_ch_flightstick_pro                 },
+    { &joystick_ch_flightstick_pro_ch_pedals       },
+    { &joystick_ch_flightstick_pro_ch_pedals_pro   },
+    { &joystick_ch_virtual_pilot                   },
+    { &joystick_ch_virtual_pilot_ch_pedals         },
+    { &joystick_ch_virtual_pilot_ch_pedals_pro     },
+    { &joystick_ch_virtual_pilot_pro               },
+    { &joystick_ch_virtual_pilot_pro_ch_pedals     },
+    { &joystick_ch_virtual_pilot_pro_ch_pedals_pro },
+    { &joystick_sw_pad                             },
+    { &joystick_tm_fcs                             },
+    { &joystick_tm_fcs_rcs                         },
+    { &joystick_tm_formula_t1t2                    },
+    { &joystick_tm_formula_t1t2wa                  },
+    { NULL                                         }
 };
 
 static joystick_instance_t *joystick_instance[GAMEPORT_MAX] = { NULL, NULL };
@@ -299,17 +324,17 @@ timer_over(void *priv)
 }
 
 void
-gameport_update_joystick_type(void)
+gameport_update_joystick_type(uint8_t gp)
 {
     /* Add a standalone game port if a joystick is enabled but no other game ports exist. */
     if (standalone_gameport_type)
         gameport_add(standalone_gameport_type);
 
     /* Reset the joystick interface. */
-    if (joystick_instance[0]) {
-        joystick_instance[0]->intf->close(joystick_instance[0]->dat);
-        joystick_instance[0]->intf = joysticks[joystick_type].joystick;
-        joystick_instance[0]->dat  = joystick_instance[0]->intf->init();
+    if (joystick_instance[gp]) {
+        joystick_instance[gp]->intf->close(joystick_instance[gp]->dat);
+        joystick_instance[gp]->intf = joysticks[joystick_type[gp]].joystick;
+        joystick_instance[gp]->dat  = joystick_instance[gp]->intf->init();
     }
 }
 
@@ -393,24 +418,27 @@ gameport_init(const device_t *info)
 {
     gameport_t *dev = calloc(1, sizeof(gameport_t));
 
+    // TODO: Later we'll actually support more than one gameport
+    uint8_t joy_insn = 0;
+
     /* Allocate global instance. */
-    if (!joystick_instance[0] && joystick_type) {
-        joystick_instance[0] = calloc(1, sizeof(joystick_instance_t));
+    if (!joystick_instance[joy_insn] && joystick_type[joy_insn]) {
+        joystick_instance[joy_insn] = calloc(1, sizeof(joystick_instance_t));
 
         // For each analog joystick axis
         for (uint8_t i = 0; i < 4; i++) {
-            joystick_instance[0]->axis[i].joystick = joystick_instance[0];
+            joystick_instance[joy_insn]->axis[i].joystick = joystick_instance[joy_insn];
 
-            joystick_instance[0]->axis[i].axis_nr = i;
+            joystick_instance[joy_insn]->axis[i].axis_nr = i;
 
-            timer_add(&joystick_instance[0]->axis[i].timer, timer_over, &joystick_instance[0]->axis[i], 0);
+            timer_add(&joystick_instance[joy_insn]->axis[i].timer, timer_over, &joystick_instance[joy_insn]->axis[i], 0);
         }
 
-        joystick_instance[0]->intf = joysticks[joystick_type].joystick;
-        joystick_instance[0]->dat  = joystick_instance[0]->intf->init();
+        joystick_instance[joy_insn]->intf = joysticks[joystick_type[joy_insn]].joystick;
+        joystick_instance[joy_insn]->dat  = joystick_instance[joy_insn]->intf->init();
     }
 
-    dev->joystick = joystick_instance[0];
+    dev->joystick = joystick_instance[joy_insn];
 
     /* Map game port to the default address. Not applicable on PnP-only ports. */
     dev->len = (info->local >> 16) & 0xff;
@@ -475,15 +503,18 @@ gameport_close(void *priv)
 {
     gameport_t *dev = (gameport_t *) priv;
 
+    // TODO: Later we'll actually support more than one gameport
+    uint8_t joy_insn = 0;
+
     /* If this port was active, remove it from the active ports list. */
     gameport_remap(dev, 0);
 
     /* Free the global instance here, if it wasn't already freed. */
-    if (joystick_instance[0]) {
-        joystick_instance[0]->intf->close(joystick_instance[0]->dat);
+    if (joystick_instance[joy_insn]) {
+        joystick_instance[joy_insn]->intf->close(joystick_instance[joy_insn]->dat);
 
-        free(joystick_instance[0]);
-        joystick_instance[0] = NULL;
+        free(joystick_instance[joy_insn]);
+        joystick_instance[joy_insn] = NULL;
     }
 
     free(dev);
@@ -793,7 +824,7 @@ gameport_available(int port)
 
 /* UI */
 const device_t *
-gameport_getdevice(int port)
+gameport_get_device(int port)
 {
     return (gameports[port].device);
 }

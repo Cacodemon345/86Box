@@ -8,8 +8,6 @@
  *
  *          Definitions for the common disk controller handler.
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *          Fred N. van Kempen, <decwiz@yahoo.com>
  *
@@ -30,6 +28,7 @@
 #define HDC_MAX      4
 
 extern int hdc_current[HDC_MAX];
+extern int hdc_onboard_enabled;
 
 extern const device_t st506_xt_xebec_device;              /* st506_xt_xebec */
 extern const device_t st506_xt_wdxt_gen_device;           /* st506_xt_wdxt_gen */
@@ -75,6 +74,7 @@ extern const device_t ide_cmd640_pci_device;                    /* CMD PCI-640B 
 extern const device_t ide_cmd640_pci_legacy_only_device;        /* CMD PCI-640B PCI (Legacy Mode Only) */
 extern const device_t ide_cmd640_pci_single_channel_device;     /* CMD PCI-640B PCI (Only primary channel) */
 extern const device_t ide_cmd640_pci_single_channel_sec_device; /* CMD PCI-640B PCI (Only secondary channel) */
+extern const device_t ide_cmd640_pci_single_channel_legacy_only_device; /* CMD PCI-640B PCI (Legacy Mode Only/Only primary channel) */
 extern const device_t ide_cmd646_device;                        /* CMD PCI-646 */
 extern const device_t ide_cmd646_legacy_only_device;            /* CMD PCI-646 (Legacy Mode Only) */
 extern const device_t ide_cmd646_single_channel_device;         /* CMD PCI-646 (Only primary channel) */
@@ -88,6 +88,7 @@ extern const device_t ide_opti611_vlb_sec_device;               /* OPTi 82c611/6
 
 extern const device_t ide_rz1000_pci_device;                    /* PC Technology RZ-1000 PCI */
 extern const device_t ide_rz1000_pci_single_channel_device;     /* PC Technology RZ-1000 PCI (Only primary channel) */
+extern const device_t ide_rz1001_pci_device;                    /* PC Technology RZ-1001 PCI */
 
 extern const device_t ide_um8673f_device;                       /* UMC UM8673F */
 extern const device_t ide_um8886af_device;                      /* UMC UM8886AF */
@@ -106,9 +107,10 @@ extern const device_t ide_qua_pnp_device;
 extern const device_t mcide_device;
 
 extern const device_t xta_wdxt150_device;         /* xta_wdxt150 */
+extern const device_t xta_wdxt150_pc3086_device;  /* xta_wdxt150 (PC3086) */
 extern const device_t xta_hd20_device;            /* EuroPC internal */
 extern const device_t xta_st50x_device;           /* ST-50X */
-extern const device_t xta_st50x_pc5086_device;    /* ST-50X (PC-5086) */
+extern const device_t xta_st50x_pc5086_device;    /* ST-50X (PC5086) */
 
 extern const device_t xtide_device;            /* xtide_xt */
 extern const device_t xtide_at_device;         /* xtide_at */

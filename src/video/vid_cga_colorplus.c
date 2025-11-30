@@ -8,8 +8,6 @@
  *
  *          Plantronics ColorPlus emulation.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          Miran Grca, <mgrca8@gmail.com>
  *
@@ -360,6 +358,8 @@ colorplus_standalone_init(UNUSED(const device_t *info))
     colorplus->lpt = device_add_inst(&lpt_port_device, 1);
     lpt_port_setup(colorplus->lpt, LPT_MDA_ADDR);
     lpt_set_3bc_used(1);
+
+    monitors[monitor_index_global].mon_composite = colorplus->cga.composite;
 
     return colorplus;
 }

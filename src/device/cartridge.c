@@ -8,8 +8,6 @@
  *
  *          Implementation of the PCjr cartridge emulation.
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *
  *          Copyright 2021 Miran Grca.
@@ -92,8 +90,8 @@ cart_image_close(int drive)
 static void
 cart_image_load(int drive, char *fn)
 {
-    FILE    *fp;
-    uint32_t size;
+    FILE    *fp   = NULL;
+    uint32_t size = 0;
     uint32_t base = 0x00000000;
 
     cart_image_close(drive);
@@ -137,7 +135,7 @@ cart_image_load(int drive, char *fn)
 static void
 cart_load_common(int drive, char *fn, uint8_t hard_reset)
 {
-    FILE *fp;
+    FILE *fp = NULL;
 
     cartridge_log("Cartridge: loading drive %d with '%s'\n", drive, fn);
 

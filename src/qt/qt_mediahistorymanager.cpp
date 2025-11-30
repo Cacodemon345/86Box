@@ -8,13 +8,10 @@
  *
  *          Media history management module
  *
- *
- *
  * Authors: cold-brewed
  *
  *          Copyright 2022 The 86Box development team
  */
-
 #include <QApplication>
 #include <QFileInfo>
 #include <QMetaEnum>
@@ -22,7 +19,7 @@
 #include <utility>
 #include "qt_mediahistorymanager.hpp"
 #ifdef Q_OS_WINDOWS
-#include <windows.h>
+#    include <windows.h>
 #endif
 
 extern "C" {
@@ -350,7 +347,7 @@ MediaHistoryManager::removeMissingImages(device_index_list_t &device_history)
         char temp[MAX_IMAGE_PATH_LEN * 2] = { 0 };
 
         if (checked_path.left(8) == "ioctl://") {
-            strncpy(temp, checked_path.toUtf8().data(), sizeof(temp));
+            strncpy(temp, checked_path.toUtf8().data(), sizeof(temp) - 10);
             temp[sizeof(temp) - 1] = '\0';
         } else {
             QString path_only;
@@ -374,14 +371,14 @@ MediaHistoryManager::removeMissingImages(device_index_list_t &device_history)
             path_normalize(temp);
         }
 
-        QString qstr = QString::fromUtf8(temp);
+        QString   qstr = QString::fromUtf8(temp);
         QFileInfo new_fi(qstr);
 
         bool file_exists = new_fi.exists();
 
 #ifdef Q_OS_WINDOWS
         if (new_fi.filePath().left(8) == "ioctl://")
-            file_exists = (GetDriveType(new_fi.filePath().right(2).toUtf8().data()) == DRIVE_CDROM);
+            file_exists = (GetDriveTypeA(new_fi.filePath().right(2).toUtf8().data()) == DRIVE_CDROM);
 #endif
 
         if (!file_exists) {

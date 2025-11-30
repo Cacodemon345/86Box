@@ -8,8 +8,6 @@
  *
  *          Sound emulation core.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          Miran Grca, <mgrca8@gmail.com>
  *          Jasmine Iwanek, <jriwanek@gmail.com>
@@ -18,7 +16,6 @@
  *          Copyright 2016-2025 Miran Grca.
  *          Copyright 2024-2025 Jasmine Iwanek.
  */
-
 #ifndef EMU_SOUND_H
 #define EMU_SOUND_H
 
@@ -103,12 +100,16 @@ extern void sound_card_reset(void);
 extern void sound_cd_thread_end(void);
 extern void sound_cd_thread_reset(void);
 
+extern void sound_fdd_thread_init(void);
+extern void sound_fdd_thread_end(void);
+
 extern void closeal(void);
 extern void inital(void);
 extern void givealbuffer(const void *buf);
 extern void givealbuffer_music(const void *buf);
 extern void givealbuffer_wt(const void *buf);
 extern void givealbuffer_cd(const void *buf);
+extern void givealbuffer_fdd(const void *buf, const uint32_t size);
 
 #define sb_vibra16c_onboard_relocate_base sb_vibra16s_onboard_relocate_base
 #define sb_vibra16cl_onboard_relocate_base sb_vibra16s_onboard_relocate_base
@@ -176,6 +177,8 @@ extern const device_t sb_awe64_ide_device;
 extern const device_t sb_awe64_gold_device;
 
 /* Crystal CS423x */
+extern const device_t cs4232_device;
+extern const device_t cs4232_onboard_device;
 extern const device_t cs4235_device;
 extern const device_t cs4235_onboard_device;
 extern const device_t cs4236_onboard_device;
@@ -203,9 +206,11 @@ extern const device_t es1373_onboard_device;
 extern const device_t ct5880_device;
 extern const device_t ct5880_onboard_device;
 
-/* Gravis UltraSound and UltraSound Max */
+/* Gravis UltraSound family */
 extern const device_t gus_device;
+extern const device_t gus_v37_device;
 extern const device_t gus_max_device;
+extern const device_t gus_ace_device;
 
 /* IBM PS/1 Audio Card */
 extern const device_t ps1snd_device;
@@ -216,6 +221,9 @@ extern const device_t entertainer_device;
 
 /* Mindscape Music Board */
 extern const device_t mmb_device;
+
+/* OPTi 82c930 */
+extern const device_t opti_82c930_device;
 
 /* Pro Audio Spectrum Plus, 16, and 16D */
 extern const device_t pasplus_device;
@@ -232,11 +240,18 @@ extern const device_t pssj_isa_device;
 /* Tandy PSG */
 extern const device_t tndy_device;
 
+/* USB Audio */
+extern const device_t usb_audio_device;
+
 /* Windows Sound System */
 extern const device_t wss_device;
 extern const device_t ncr_business_audio_device;
 
-extern const device_t usb_audio_device;
+/* Yamaha YMF-7xx */
+extern const device_t ymf701_device;
+extern const device_t ymf715_onboard_device;
+extern const device_t ymf718_device;
+extern const device_t ymf719_device;
 
 #ifdef USE_LIBSERIALPORT
 /* External Audio device OPL2Board (Host Connected hardware)*/

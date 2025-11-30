@@ -8,8 +8,6 @@
  *
  *          Emulation of the Compaq CGA graphics cards.
  *
- *
- *
  * Authors: John Elliott, <jce@seasip.info>
  *          Sarah Walker, <https://pcem-emulator.co.uk/>
  *          Miran Grca, <mgrca8@gmail.com>
@@ -456,6 +454,8 @@ compaq_cga_init(const device_t *info)
     cgapal_rebuild();
 
     dev->crtc[9] = 13;
+
+    monitors[monitor_index_global].mon_composite = !!dev->composite;
 
     return dev;
 }

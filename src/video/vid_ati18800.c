@@ -8,8 +8,6 @@
  *
  *          ATI 18800 emulation (VGA Edge-16)
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          Miran Grca, <mgrca8@gmail.com>
  *
@@ -269,7 +267,7 @@ ati18800_init(const device_t *info)
               ati18800_in, ati18800_out,
               NULL,
               NULL);
-    ati18800->svga.clock_gen = device_add(&ati18810_device);
+    ati18800->svga.clock_gen = device_add(&ati18810_28800_device);
     ati18800->svga.getclock  = ics2494_getclock;
 
     io_sethandler(0x01ce, 0x0002, ati18800_in, NULL, NULL, ati18800_out, NULL, NULL, ati18800);

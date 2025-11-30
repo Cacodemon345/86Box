@@ -8,8 +8,6 @@
  *
  *          Serial/Parallel ports configuration UI module.
  *
- *
- *
  * Authors: Joakim L. Gilje <jgilje@jgilje.net>
  *          Cacodemon345
  *
@@ -49,11 +47,13 @@ SettingsPorts::~SettingsPorts()
 void
 SettingsPorts::save()
 {
+    jumpered_internal_ecp_dma = ui->comboBoxLptECPDMA->currentData().toInt();
+
     for (int i = 0; i < PARALLEL_MAX; i++) {
         auto *cbox     = findChild<QComboBox *>(QString("comboBoxLpt%1").arg(i + 1));
         auto *checkBox = findChild<QCheckBox *>(QString("checkBoxParallel%1").arg(i + 1));
         if (cbox != NULL)
-            lpt_ports[i].device  = cbox->currentData().toInt();
+            lpt_ports[i].device = cbox->currentData().toInt();
         if (checkBox != NULL)
             lpt_ports[i].enabled = checkBox->isChecked() ? 1 : 0;
     }
@@ -75,8 +75,53 @@ SettingsPorts::onCurrentMachineChanged(int machineId)
 
     int c = 0;
 
+    auto *lptEcpDmaModel   = ui->comboBoxLptECPDMA->model();
+    auto  removeRowsEcpDma = lptEcpDmaModel->rowCount();
+
+    int has_jumpers = !!machine_has_jumpered_ecp_dma(machineId, DMA_ANY);
+
+    int selectedRow = -2;
+    int first       = -2;
+
+    for (int i = 0; i < 9; ++i) {
+        int j = machine_map_jumpered_ecp_dma(i);
+
+        if ((has_jumpers && ((j == DMA_NONE) || !machine_has_jumpered_ecp_dma(machineId, j))) || (!has_jumpers && (j != DMA_NONE)))
+            continue;
+
+        if (first == -2)
+            first = j;
+
+        QString name = tr(machine_get_jumpered_ecp_dma_name(i));
+        int     row  = lptEcpDmaModel->rowCount();
+        lptEcpDmaModel->insertRow(row);
+        auto idx = lptEcpDmaModel->index(row, 0);
+
+        lptEcpDmaModel->setData(idx, name, Qt::DisplayRole);
+        lptEcpDmaModel->setData(idx, j, Qt::UserRole);
+
+        if (j == jumpered_internal_ecp_dma)
+            selectedRow = row - removeRowsEcpDma;
+
+        c++;
+    }
+
+    if (selectedRow == -2)
+        selectedRow = first;
+
+    lptEcpDmaModel->removeRows(0, removeRowsEcpDma);
+    ui->comboBoxLptECPDMA->setCurrentIndex(-1);
+    ui->comboBoxLptECPDMA->setCurrentIndex(selectedRow);
+
+    if ((c == 1) || !has_jumpers)
+        ui->comboBoxLptECPDMA->setEnabled(false);
+    else
+        ui->comboBoxLptECPDMA->setEnabled(true);
+
+    c = 0;
+
     // LPT Device
-    QComboBox *         cbox[PARALLEL_MAX]         = { 0 };
+    QComboBox          *cbox[PARALLEL_MAX]         = { 0 };
     QAbstractItemModel *models[PARALLEL_MAX]       = { 0 };
     int                 removeRows_[PARALLEL_MAX]  = { 0 };
     int                 selectedRows[PARALLEL_MAX] = { 0 };
@@ -88,12 +133,12 @@ SettingsPorts::onCurrentMachineChanged(int machineId)
     }
 
     while (true) {
-        const char    *lptName = lpt_device_get_name(c);
+        const char *lptName = lpt_device_get_name(c);
 
         if (lptName == nullptr)
             break;
 
-        const QString  name = tr(lptName);
+        const QString name = tr(lptName);
 
         for (uint8_t i = 0; i < PARALLEL_MAX; ++i) {
             int row = Models::AddEntry(models[i], name, c);
@@ -102,7 +147,7 @@ SettingsPorts::onCurrentMachineChanged(int machineId)
                 selectedRows[i] = row - removeRows_[i];
         }
 
-       c++;
+        c++;
     }
 
     for (uint8_t i = 0; i < PARALLEL_MAX; ++i) {

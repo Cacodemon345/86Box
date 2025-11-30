@@ -1,30 +1,36 @@
 /*
-* 86Box	A hypervisor and IBM PC system emulator that specializes in
-*		running old operating systems and software designed for IBM
-*		PC systems and compatibles from 1981 through fairly recent
-*		system designs based on the PCI bus.
-*
-*		This file is part of the 86Box distribution.
-*
-*		86Box VM manager system details section module
-*
-*
-*
-* Authors:	cold-brewed
-*
-*		Copyright 2024 cold-brewed
-*/
-
+ * 86Box    A hypervisor and IBM PC system emulator that specializes in
+ *          running old operating systems and software designed for IBM
+ *          PC systems and compatibles from 1981 through fairly recent
+ *          system designs based on the PCI bus.
+ *
+ *          This file is part of the 86Box distribution.
+ *
+ *          86Box VM manager system details section module
+ *
+ * Authors: cold-brewed
+ *
+ *          Copyright 2024 cold-brewed
+ */
 #include "qt_vmmanager_detailsection.hpp"
 #include "ui_qt_vmmanager_detailsection.h"
 
 #include <QPushButton>
+#include "qt_util.hpp"
+
+#define HEADER_STYLESHEET_LIGHT "background-color: palette(midlight);"
+#ifdef Q_OS_WINDOWS
+#    define HEADER_STYLESHEET_DARK     "background-color: #616161;"
+#    define BACKGROUND_STYLESHEET_DARK "background-color: #272727;"
+#else
+#    define HEADER_STYLESHEET_DARK "background-color: palette(mid);"
+#endif
 
 const QString VMManagerDetailSection::sectionSeparator = ";";
 using namespace VMManager;
 
 VMManagerDetailSection::
-VMManagerDetailSection(const QString &sectionName)
+    VMManagerDetailSection(const QString &sectionName)
     : mainLayout(new QVBoxLayout())
     , buttonLayout(new QHBoxLayout())
     , frame(new QFrame())
@@ -40,21 +46,18 @@ VMManagerDetailSection(const QString &sectionName)
 
     // Simple method to try and determine if light mode is enabled on the host
 #ifdef Q_OS_WINDOWS
-    extern bool windows_is_light_theme();
-    const bool lightMode = windows_is_light_theme();
+    const bool lightMode = util::isWindowsLightTheme();
 #else
     const bool lightMode = QApplication::palette().window().color().value() > QApplication::palette().windowText().color().value();
 #endif
     // Alternate layout
-    if ( lightMode) {
-        ui->collapseButtonHolder->setStyleSheet("background-color: palette(midlight);");
+    if (lightMode) {
+        ui->collapseButtonHolder->setStyleSheet(HEADER_STYLESHEET_LIGHT);
     } else {
 #ifdef Q_OS_WINDOWS
-        ui->outerFrame->setStyleSheet("background-color: #272727;");
-        ui->collapseButtonHolder->setStyleSheet("background-color: #616161;");
-#else
-        ui->collapseButtonHolder->setStyleSheet("background-color: palette(mid);");
+        ui->outerFrame->setStyleSheet(BACKGROUND_STYLESHEET_DARK);
 #endif
+        ui->collapseButtonHolder->setStyleSheet(HEADER_STYLESHEET_DARK);
     }
     const auto sectionLabel = new QLabel(sectionName);
     sectionLabel->setStyleSheet(sectionLabel->styleSheet().append("font-weight: bold;"));
@@ -77,7 +80,8 @@ VMManagerDetailSection(const QString &sectionName)
 }
 
 VMManagerDetailSection::
-VMManagerDetailSection(const QVariant &varSectionName) : ui(new Ui::DetailSection)
+    VMManagerDetailSection(const QVariant &varSectionName)
+    : ui(new Ui::DetailSection)
 {
     const auto sectionName = varSectionName.toString();
 
@@ -97,7 +101,7 @@ VMManagerDetailSection(const QVariant &varSectionName) : ui(new Ui::DetailSectio
 
     const auto buttonWidget = new QWidget(this);
 
-    mainLayout      = new QVBoxLayout();
+    mainLayout   = new QVBoxLayout();
     buttonLayout = new QHBoxLayout();
     buttonWidget->setLayout(buttonLayout);
 
@@ -127,7 +131,7 @@ VMManagerDetailSection(const QVariant &varSectionName) : ui(new Ui::DetailSectio
 }
 
 VMManagerDetailSection::~VMManagerDetailSection()
-= default;
+    = default;
 
 void
 VMManagerDetailSection::setSectionName(const QString &name)
@@ -139,11 +143,10 @@ VMManagerDetailSection::setSectionName(const QString &name)
 }
 
 void
-VMManagerDetailSection::addSection(const QString &name, const QString &value, Display::Name displayField)
+VMManagerDetailSection::addSection(const QString &name, const QString &value, VMManager::Display::Name displayField)
 {
-    const auto new_section = DetailSection { name, value};
+    const auto new_section = DetailSection { name, value };
     sections.push_back(new_section);
-    setSections();
 }
 
 void
@@ -154,82 +157,44 @@ VMManagerDetailSection::setupMainLayout()
     mainLayout = new QVBoxLayout;
 }
 void
-VMManagerDetailSection::clearContentsSetupGrid()
-{
-    // Clear everything out
-    if(frameGridLayout) {
-        while(frameGridLayout->count()) {
-            QLayoutItem * cur_item = frameGridLayout->takeAt(0);
-            if(cur_item->widget())
-                delete cur_item->widget();
-            delete cur_item;
-        }
-    }
-
-    delete frameGridLayout;
-    frameGridLayout = new QGridLayout();
-    qint32 *left = nullptr, *top = nullptr, *right = nullptr, *bottom = nullptr;
-    frameGridLayout->getContentsMargins(left, top, right, bottom);
-    frameGridLayout->setContentsMargins(getMargins(MarginSection::DisplayGrid));
-    ui->detailFrame->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Fixed);
-    ui->detailFrame->setLayout(frameGridLayout);
-}
-void
 VMManagerDetailSection::setSections()
 {
-    clearContentsSetupGrid();
-    int row = 0;
+    int  row   = 0;
+    bool empty = true;
 
+    for (const auto &section : sections) {
+        QStringList sectionsToAdd = section.value.split(sectionSeparator);
+        QLabel     *labelKey      = nullptr;
 
-    for ( const auto& section : sections) {
-        // if the string contains the separator (defined elsewhere) then split and
-        // add each entry on a new line. Otherwise, just add the one.
-        QStringList sectionsToAdd;
-        if(section.value.contains(sectionSeparator)) {
-            sectionsToAdd = section.value.split(sectionSeparator);
-        } else {
-            sectionsToAdd.push_back(section.value);
-        }
-        bool keyAdded = false;
-        for(const auto&line : sectionsToAdd) {
-            if(line.isEmpty()) {
+        for (const auto &line : sectionsToAdd) {
+            if (line.isEmpty()) {
                 // Don't bother adding entries if the values are blank
                 continue;
             }
-            const auto labelKey = new QLabel();
-            labelKey->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+
             const auto labelValue = new QLabel();
-            labelKey->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
+            labelValue->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
             labelValue->setTextInteractionFlags(labelValue->textInteractionFlags() | Qt::TextSelectableByMouse);
-            labelKey->setTextInteractionFlags(labelValue->textInteractionFlags() | Qt::TextSelectableByMouse);
-
-            // Reduce the text size for the label
-            // First, get the existing font
-            auto smaller_font = labelValue->font();
-            // Get a smaller size
-            // Not sure if I like the smaller size, back to regular for now
-            // auto smaller_size = 0.85 * smaller_font.pointSize();
-            const auto smaller_size = 1 * smaller_font.pointSize();
-            // Set the font to the smaller size
-            smaller_font.setPointSizeF(smaller_size);
-            // Assign that new, smaller font to the label
-            labelKey->setFont(smaller_font);
-            labelValue->setFont(smaller_font);
-
-            labelKey->setText(QCoreApplication::translate("", QString(section.name + ":").toUtf8().data()));
             labelValue->setText(line);
-            if(!keyAdded) {
-                frameGridLayout->addWidget(labelKey, row, 0, Qt::AlignLeft);
-                keyAdded = true;
-            }
             frameGridLayout->addWidget(labelValue, row, 1, Qt::AlignLeft);
+
+            if (!labelKey) {
+                labelKey = new QLabel();
+                labelKey->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+                labelKey->setTextInteractionFlags(labelValue->textInteractionFlags());
+                labelKey->setText(QCoreApplication::translate("", QString(section.name + ":").toUtf8().data()));
+                frameGridLayout->addWidget(labelKey, row, 0, Qt::AlignLeft);
+            }
+
             const auto hSpacer = new QSpacerItem(0, 0, QSizePolicy::Expanding, QSizePolicy::Minimum);
             frameGridLayout->addItem(hSpacer, row, 2);
+            empty = false;
             row++;
         }
     }
+
     collapseButton->setContent(ui->detailFrame);
-    if (sections.size())
+    if (!empty)
         setVisible(true);
 }
 void
@@ -237,7 +202,38 @@ VMManagerDetailSection::clear()
 {
     sections.clear();
     setVisible(false);
+
+    // Clear everything out
+    if (frameGridLayout) {
+        while (frameGridLayout->count()) {
+            QLayoutItem *cur_item = frameGridLayout->takeAt(0);
+            if (cur_item->widget())
+                delete cur_item->widget();
+            delete cur_item;
+        }
+    }
+
+    delete frameGridLayout;
+    frameGridLayout = new QGridLayout();
+    frameGridLayout->setContentsMargins(getMargins(MarginSection::DisplayGrid));
+    ui->detailFrame->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Fixed);
+    ui->detailFrame->setLayout(frameGridLayout);
 }
+
+#ifdef Q_OS_WINDOWS
+void
+VMManagerDetailSection::updateStyle()
+{
+    const bool lightMode = util::isWindowsLightTheme();
+    if (lightMode) {
+        ui->outerFrame->setStyleSheet("");
+        ui->collapseButtonHolder->setStyleSheet(HEADER_STYLESHEET_LIGHT);
+    } else {
+        ui->outerFrame->setStyleSheet(BACKGROUND_STYLESHEET_DARK);
+        ui->collapseButtonHolder->setStyleSheet(HEADER_STYLESHEET_DARK);
+    }
+}
+#endif
 
 // QT for Linux and Windows doesn't have the same default margins as QT on MacOS.
 // For consistency in appearance we'll have to return the margins on a per-OS basis
@@ -247,15 +243,15 @@ VMManagerDetailSection::getMargins(const MarginSection section)
     switch (section) {
         case MarginSection::ToolButton:
 #if defined(Q_OS_WINDOWS) or defined(Q_OS_LINUX)
-            return {10, 0, 5, 0};
+            return { 10, 0, 5, 0 };
 #else
-            return {0, 0, 5, 0};
+            return { 0, 0, 5, 0 };
 #endif
         case MarginSection::DisplayGrid:
 #if defined(Q_OS_WINDOWS) or defined(Q_OS_LINUX)
-            return {10, 0, 0, 10};
+            return { 10, 0, 0, 10 };
 #else
-            return {0, 0, 0, 10};
+            return { 0, 0, 0, 10 };
 #endif
         default:
             return {};
@@ -264,7 +260,10 @@ VMManagerDetailSection::getMargins(const MarginSection section)
 
 // CollapseButton Class
 
-CollapseButton::CollapseButton(QWidget *parent) : QToolButton(parent), content_(nullptr) {
+CollapseButton::CollapseButton(QWidget *parent)
+    : QToolButton(parent)
+    , content_(nullptr)
+{
     setCheckable(true);
     setStyleSheet("background:none; border:none;");
     setIconSize(QSize(8, 8));
@@ -272,16 +271,20 @@ CollapseButton::CollapseButton(QWidget *parent) : QToolButton(parent), content_(
     setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     connect(this, &QToolButton::toggled, [=](const bool checked) {
         setArrowType(checked ? Qt::ArrowType::DownArrow : Qt::ArrowType::RightArrow);
-        content_ != nullptr && checked ? showContent() : hideContent();
+        content_ != nullptr &&checked ? showContent() : hideContent();
     });
     setChecked(true);
 }
 
-void CollapseButton::setButtonText(const QString &text) {
+void
+CollapseButton::setButtonText(const QString &text)
+{
     setText(" " + text);
 }
 
-void CollapseButton::setContent(QWidget *content) {
+void
+CollapseButton::setContent(QWidget *content)
+{
     assert(content != nullptr);
     content_              = content;
     const auto animation_ = new QPropertyAnimation(content_, "maximumHeight"); // QObject with auto delete
@@ -297,13 +300,16 @@ void CollapseButton::setContent(QWidget *content) {
     }
 }
 
-void CollapseButton::hideContent() {
+void
+CollapseButton::hideContent()
+{
     animator_.setDirection(QAbstractAnimation::Backward);
     animator_.start();
 }
 
-void CollapseButton::showContent() {
+void
+CollapseButton::showContent()
+{
     animator_.setDirection(QAbstractAnimation::Forward);
     animator_.start();
 }
-

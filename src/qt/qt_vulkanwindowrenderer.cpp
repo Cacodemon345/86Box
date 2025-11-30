@@ -820,10 +820,10 @@ public:
         m_devFuncs->vkDeviceWaitIdle(m_window->device());
     }
 };
-#    endif /* 0*/
+#    endif     /* 0*/
 
 VulkanWindowRenderer::VulkanWindowRenderer(QWidget *parent)
-    : QVulkanWindow(parent->windowHandle())
+    : QVulkanWindow(NULL)
 {
     parentWidget = parent;
     instance.setApiVersion(QVersionNumber(1, 0));

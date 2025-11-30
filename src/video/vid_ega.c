@@ -9,8 +9,6 @@
  *          Emulation of the EGA and Chips & Technologies SuperEGA
  *          graphics cards.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          Miran Grca, <mgrca8@gmail.com>
  *
@@ -603,7 +601,22 @@ ega_recalctimings(ega_t *ega)
     ega->linedbl  = ega->crtc[9] & 0x80;
     ega->rowcount = ega->crtc[9] & 0x1f;
 
-    if (ega_type == EGA_TYPE_COMPAQ) {
+    if (ega->actual_type == EGA_SUPEREGA) {
+        switch ((ega->miscout >> 2) & 0x03) {
+            case 0x00:
+                crtcconst = (cpuclock / 16257000.0 * (double) (1ULL << 32));
+                break;
+            case 0x01:
+                crtcconst = (cpuclock / (157500000.0 / 11.0) * (double) (1ULL << 32));
+                break;
+            default:
+            case 0x02: case 0x03:
+                crtcconst = (cpuclock / 25110000.0 * (double) (1ULL << 32));
+                break;
+        }
+
+        crtcconst *= mdiv;
+    } else if (ega_type == EGA_TYPE_COMPAQ) {
         color = (ega->miscout & 1);
         clksel = ((ega->miscout & 0xc) >> 2);
 
@@ -643,9 +656,10 @@ ega_recalctimings(ega_t *ega)
         crtcconst *= mdiv;
     } else {
         if (ega->vidclock)
-            crtcconst = (ega->seqregs[1] & 1) ? MDACONST : (MDACONST * (9.0 / 8.0));
+            crtcconst = (cpuclock / 16257000.0 * (double) (1ULL << 32));
         else
-            crtcconst = (ega->seqregs[1] & 1) ? CGACONST : (CGACONST * (9.0 / 8.0));
+            crtcconst = (cpuclock / (157500000.0 / 11.0) * (double) (1ULL << 32));
+        crtcconst *= mdiv;
     }
     ega->dot_clock = crtcconst / mdiv;
 

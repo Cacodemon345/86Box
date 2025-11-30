@@ -386,11 +386,7 @@ cpu_is_eligible(const cpu_family_t *cpu_family, int cpu, int machine)
         return 1;
 
     /* Cyrix 6x86MX on the NuPRO 592. */
-    if (((cpu_s->cyrix_id & 0xff00) == 0x0400) && (strstr(machine_s->internal_name, "nupro") != NULL))
-        return 0;
-
-    /* Cyrix 6x86MX or MII on the P5MMS98. */
-    if ((cpu_s->cpu_type == CPU_Cx6x86MX) && (strstr(machine_s->internal_name, "p5mms98") != NULL))
+    if (((cpu_s->cyrix_id & 0xff00) == 0x0400) && (machine_s->init == machine_at_nupro592_init))
         return 0;
 
     /* Check CPU blocklist. */
@@ -1080,6 +1076,9 @@ cpu_set(void)
             timing_jmp_rm             = 12;
             timing_jmp_pm             = 27;
             timing_jmp_pm_gate        = 45;
+
+            if (cpu_s->cpu_type == CPU_386DX)
+                cpu_cache_ext_enabled = 1;
             break;
 
         case CPU_486SLC:
@@ -1161,6 +1160,8 @@ cpu_set(void)
             timing_jmp_pm_gate        = 37;
 
             timing_misaligned = 3;
+
+            cpu_cache_ext_enabled = 1;
             break;
 
         case CPU_i486SX_SLENH:
@@ -1549,7 +1550,7 @@ cpu_set(void)
 
             if ((cpu_s->cpu_type == CPU_Cx6x86L) || (cpu_s->cpu_type == CPU_Cx6x86MX))
                 ccr4 = 0x80;
-            else if (CPU_Cx6x86)
+            else if (cpu_s->cpu_type == CPU_Cx6x86)
                 CPUID = 0; /* Disabled on powerup by default */
             break;
 
@@ -4473,13 +4474,6 @@ cpu_update_waitstates(void)
     if (cpu_cache_int_enabled) {
         /* Disable prefetch emulation */
         cpu_prefetch_cycles = 0;
-    } else if (cpu_waitstates && (cpu_s->cpu_type >= CPU_286 && cpu_s->cpu_type <= CPU_386DX)) {
-        /* Waitstates override */
-        cpu_prefetch_cycles = cpu_waitstates + 1;
-        cpu_cycles_read     = cpu_waitstates + 1;
-        cpu_cycles_read_l   = (cpu_16bitbus ? 2 : 1) * (cpu_waitstates + 1);
-        cpu_cycles_write    = cpu_waitstates + 1;
-        cpu_cycles_write_l  = (cpu_16bitbus ? 2 : 1) * (cpu_waitstates + 1);
     } else if (cpu_cache_ext_enabled) {
         /* Use cache timings */
         cpu_prefetch_cycles = cpu_s->cache_read_cycles;
@@ -4487,6 +4481,13 @@ cpu_update_waitstates(void)
         cpu_cycles_read_l   = (cpu_16bitbus ? 2 : 1) * cpu_s->cache_read_cycles;
         cpu_cycles_write    = cpu_s->cache_write_cycles;
         cpu_cycles_write_l  = (cpu_16bitbus ? 2 : 1) * cpu_s->cache_write_cycles;
+    } else if (cpu_waitstates && (cpu_s->cpu_type >= CPU_286 && cpu_s->cpu_type <= CPU_386DX)) {
+        /* Waitstates override */
+        cpu_prefetch_cycles = cpu_waitstates + 1;
+        cpu_cycles_read     = cpu_waitstates + 1;
+        cpu_cycles_read_l   = (cpu_16bitbus ? 2 : 1) * (cpu_waitstates + 1);
+        cpu_cycles_write    = cpu_waitstates + 1;
+        cpu_cycles_write_l  = (cpu_16bitbus ? 2 : 1) * (cpu_waitstates + 1);
     } else {
         /* Use memory timings */
         cpu_prefetch_cycles = cpu_s->mem_read_cycles;

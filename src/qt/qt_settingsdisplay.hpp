@@ -40,9 +40,15 @@ private slots:
     void on_checkBoxDa2_stateChanged(int state);
     void on_pushButtonConfigureDa2_clicked();
 
+    void on_radioButtonDefault_clicked();
+
+    void on_radioButtonCustom_clicked();
+
+    void on_pushButtonExportDefault_clicked();
+
 private:
     Ui::SettingsDisplay *ui;
-    int                  machineId    = 0;
+    int                  machineId                = 0;
     int                  videoCard[VIDEOCARD_MAX] = { 0, 0 };
 };
 

@@ -38,9 +38,12 @@
 #define SCREEN_RES_Y 480
 
 /* Filename and pathname info. */
-#define CONFIG_FILE     "86box.cfg"
-#define NVR_PATH        "nvr"
-#define SCREENSHOT_PATH "screenshots"
+#define CONFIG_FILE        "86box.cfg"
+#define GLOBAL_CONFIG_FILE "86box_global.cfg"
+#define NVR_PATH           "nvr"
+#define SCREENSHOT_PATH    "screenshots"
+#define VMM_PATH		   "Virtual Machines"
+#define VMM_PATH_WINDOWS   "86Box VMs"
 
 /* Recently used images */
 #define MAX_PREV_IMAGES    10
@@ -76,12 +79,65 @@
 #define BCD16(x)  ((((x) / 1000) << 12) | (((x) / 100) << 8) | BCD8(x))
 #define BCD32(x)  ((((x) / 10000000) << 28) | (((x) / 1000000) << 24) | (((x) / 100000) << 20) | (((x) / 10000) << 16) | BCD16(x))
 
+#define AS_U8(x)     (*((uint8_t *) &(x)))
+#define AS_U16(x)    (*((uint16_t *) &(x)))
+#define AS_U32(x)    (*((uint32_t *) &(x)))
+#define AS_U64(x)    (*((uint64_t *) &(x)))
+#define AS_I8(x)     (*((int8_t *) &(x)))
+#define AS_I16(x)    (*((int16_t *) &(x)))
+#define AS_I32(x)    (*((int32_t *) &(x)))
+#define AS_I64(x)    (*((int64_t *) &(x)))
+#define AS_FLOAT(x)  (*((float *) &(x)))
+#define AS_DOUBLE(x) (*((double *) &(x)))
+
 #if defined(__GNUC__) || defined(__clang__)
 #    define UNLIKELY(x) __builtin_expect((x), 0)
 #    define LIKELY(x)   __builtin_expect((x), 1)
 #else
 #    define UNLIKELY(x) (x)
 #    define LIKELY(x)   (x)
+#endif
+
+/* Platform-specific atomic handling */
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    /* On x86/x64, aligned int/uint32_t accesses are naturally atomic */
+    /* Use volatile for performance, as the original code did */
+    #define ATOMIC_INT volatile int
+    #define ATOMIC_UINT volatile uint32_t
+    #define ATOMIC_DOUBLE volatile double
+    #define ATOMIC_LOAD(var) (var)
+    #define ATOMIC_STORE(var, val) ((var) = (val))
+    #define ATOMIC_INC(var) (++(var))
+    #define ATOMIC_DEC(var) (--(var))
+    #define ATOMIC_ADD(var, val) ((var) += (val))
+    #define ATOMIC_SUB(var, val) ((var) -= (val))
+    #define ATOMIC_DOUBLE_ADD(var, val) ((var) += (val))
+#else
+    /* On ARM and other architectures, use proper atomics */
+#ifdef failing_code
+    #ifdef __cplusplus
+    #    include <atomic>
+        using atomic_int = std::atomic<int>;
+        using atomic_uint = std::atomic<unsigned int>;
+    #else
+    #    include <stdatomic.h>
+    #endif
+#else
+    #ifndef __cplusplus
+    #    include <stdatomic.h>
+    #endif
+#endif
+    
+    #define ATOMIC_INT atomic_int
+    #define ATOMIC_UINT atomic_uint
+    #define ATOMIC_DOUBLE _Atomic double
+    #define ATOMIC_LOAD(var) atomic_load(&(var))
+    #define ATOMIC_STORE(var, val) atomic_store(&(var), (val))
+    #define ATOMIC_INC(var) atomic_fetch_add(&(var), 1)
+    #define ATOMIC_DEC(var) atomic_fetch_sub(&(var), 1)
+    #define ATOMIC_ADD(var, val) atomic_fetch_add(&(var), val)
+    #define ATOMIC_SUB(var, val) atomic_fetch_sub(&(var), val)
+    #define ATOMIC_DOUBLE_ADD(var, val) atomic_double_add(&(var), val)
 #endif
 
 #ifdef __cplusplus
@@ -115,17 +171,22 @@ extern uint64_t instru_run_ms;
 #define window_y monitor_settings[0].mon_window_y
 #define window_w monitor_settings[0].mon_window_w
 #define window_h monitor_settings[0].mon_window_h
-extern int      inhibit_multimedia_keys;    /* (C) Inhibit multimedia keys on Windows. */
+extern int      inhibit_multimedia_keys;    /* (G) Inhibit multimedia keys on Windows. */
 extern int      usb_keyboard_enabled;       /* (C) enable USB keyboard */
 extern int      window_remember;
 extern int      vid_resize;                 /* (C) allow resizing */
 extern int      invert_display;             /* (C) invert the display */
 extern int      suppress_overscan;          /* (C) suppress overscans */
-extern int      lang_id;                    /* (C) language id */
+extern int      lang_id;                    /* (G) language id */
 extern int      scale;                      /* (C) screen scale factor */
 extern int      dpi_scale;                  /* (C) DPI scaling of the emulated screen */
 extern int      vid_api;                    /* (C) video renderer */
 extern int      vid_cga_contrast;           /* (C) video */
+extern int      vid_cga_comp_brightness;    /* (C) CGA composite brightness */
+extern int      vid_cga_comp_sharpness;     /* (C) CGA composite sharpness */
+extern int      vid_cga_comp_hue;           /* (C) CGA composite hue */
+extern int      vid_cga_comp_saturation;    /* (C) CGA composite saturation */
+extern int      vid_cga_comp_contrast;      /* (C) CGA composite saturation */
 extern int      video_fullscreen;           /* (C) video */
 extern int      video_fullscreen_scale;     /* (C) video */
 extern int      enable_overscan;            /* (C) video */
@@ -133,6 +194,8 @@ extern int      force_43;                   /* (C) video */
 extern int      video_filter_method;        /* (C) video */
 extern int      video_vsync;                /* (C) video */
 extern int      video_framerate;            /* (C) video */
+extern double   video_gl_input_scale;       /* (C) OpenGL 3.x input scale */
+extern int      video_gl_input_scale_mode;  /* (C) OpenGL 3.x input stretch mode */
 extern int      gfxcard[GFXCARD_MAX];       /* (C) graphics/video card */
 extern int      bugger_enabled;             /* (C) enable ISAbugger */
 extern int      novell_keycard_enabled;     /* (C) enable Novell NetWare 2.x key card emulation. */
@@ -155,11 +218,12 @@ extern int      fpu_type;                   /* (C) fpu type */
 extern int      fpu_softfloat;              /* (C) fpu uses softfloat */
 extern int      time_sync;                  /* (C) enable time sync */
 extern int      hdd_format_type;            /* (C) hard disk file format */
-extern int      confirm_reset;              /* (C) enable reset confirmation */
-extern int      confirm_exit;               /* (C) enable exit confirmation */
-extern int      confirm_save;               /* (C) enable save confirmation */
+extern int      confirm_reset;              /* (G) enable reset confirmation */
+extern int      confirm_exit;               /* (G) enable exit confirmation */
+extern int      confirm_save;               /* (G) enable save confirmation */
 extern int      enable_discord;             /* (C) enable Discord integration */
 extern int      force_10ms;                 /* (C) force 10ms CPU frame interval */
+extern int      jumpered_internal_ecp_dma;  /* (C) Jumpered internal EPC DMA */
 extern int      other_ide_present;          /* IDE controllers from non-IDE cards are present */
 extern int      other_scsi_present;         /* SCSI controllers from non-SCSI cards are present */
 extern int      is_pcjr;                    /* The current machine is PCjr. */
@@ -170,7 +234,8 @@ extern int    fixed_size_y;
 extern int    sound_muted;                  /* (C) Is sound muted? */
 extern int    do_auto_pause;                /* (C) Auto-pause the emulator on focus loss */
 extern int    auto_paused;
-extern double mouse_sensitivity;            /* (C) Mouse sensitivity scale */
+extern int    force_constant_mouse;         /* (C) Force constant updating of the mouse */
+extern double mouse_sensitivity;            /* (G) Mouse sensitivity scale */
 #ifdef _Atomic
 extern _Atomic double mouse_x_error;        /* Mouse error accumulator - Y */
 extern _Atomic double mouse_y_error;        /* Mouse error accumulator - Y */
@@ -178,15 +243,27 @@ extern _Atomic double mouse_y_error;        /* Mouse error accumulator - Y */
 extern int    pit_mode;                     /* (C) force setting PIT mode */
 extern int    fm_driver;                    /* (C) select FM sound driver */
 extern int    hook_enabled;                 /* (C) Keyboard hook is enabled */
+extern int    vmm_disabled;                 /* (G) disable built-in manager */
+extern char   vmm_path_cfg[1024];           /* (G) VMs path (unless -E is used) */
 
-extern char exe_path[2048];     /* path (dir) of executable */
-extern char usr_path[1024];     /* path (dir) of user data */
-extern char cfg_path[1024];     /* full path of config file */
+extern char exe_path[2048];        /* path (dir) of executable */
+extern char usr_path[1024];        /* path (dir) of user data */
+extern char cfg_path[1024];        /* full path of config file */
 extern char global_cfg_path[1024]; /* full path of global config file */
-extern int  open_dir_usr_path;  /* default file open dialog directory of usr_path */
-extern char uuid[MAX_UUID_LEN]; /* UUID or machine identifier */
-extern char vmm_path[1024];       /* VM Manager path to scan (temporary) */
-extern int  vmm_enabled;
+extern int  open_dir_usr_path;     /* default file open dialog directory of usr_path */
+extern char uuid[MAX_UUID_LEN];    /* UUID or machine identifier */
+extern char vmm_path[1024];        /* VM Manager path to scan */
+extern int  start_vmm;             /* the current execution will start the manager */
+extern int  portable_mode;         /* we are running in portable mode 
+                                      (global dirs = exe path) */
+extern int global_cfg_overridden;  /* global config file was overriden on command line */
+
+extern int  monitor_edid;                   /* (C) Which EDID to use. 0=default, 1=custom. */
+extern char monitor_edid_path[1024];        /* (C) Path to custom EDID */
+
+extern int color_scheme;                    /* (C) Color scheme of UI (Windows-only) */
+extern int fdd_sounds_enabled;              /* (C) Enable floppy drive sounds */
+
 #ifndef USE_NEW_DYNAREC
 extern FILE *stdlog; /* file to log output to */
 #endif
@@ -214,6 +291,7 @@ extern void update_mouse_msg(void);
 #if 0
 extern void pc_reload(wchar_t *fn);
 #endif
+extern int  pc_init_roms(void);
 extern int  pc_init_modules(void);
 extern int  pc_init(int argc, char *argv[]);
 extern void pc_close(void *threadid);
@@ -253,7 +331,7 @@ struct accelKey {
 	char desc[64];
 	char seq[64];
 };
-#define NUM_ACCELS 8
+#define NUM_ACCELS 9
 extern struct accelKey acc_keys[NUM_ACCELS];
 extern struct accelKey def_acc_keys[NUM_ACCELS];
 extern int FindAccelerator(const char *name);

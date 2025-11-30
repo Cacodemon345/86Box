@@ -143,7 +143,7 @@ static __inline uint8_t
 fdc37c93x_do_read_gp(fdc37c93x_t *dev, int reg, int bit)
 {
     /* Update bit 2 on the Acer V35N according to the selected graphics card type. */
-    if ((reg == 2) && (strstr(machine_get_internal_name(), "acer") != NULL))
+    if ((reg == 2) && !strncmp(machine_get_internal_name(), "acer", 4))
         dev->gpio_pulldn[reg] = (dev->gpio_pulldn[reg] & 0xfb) | (video_is_mda() ? 0x00 : 0x04);
 
     return dev->gpio_regs[reg] & dev->gpio_pulldn[reg] & (1 << bit);
@@ -792,11 +792,13 @@ fdc37c93x_lpt_handler(fdc37c93x_t *dev)
 {
     uint16_t ld_port       = 0x0000;
     uint16_t mask          = 0xfffc;
-    uint8_t  global_enable = !!(dev->regs[0x22] & (1 << 3));
-    uint8_t  local_enable  = !!dev->ld_regs[3][0x30];
-    uint8_t  lpt_irq       = dev->ld_regs[3][0x70];
-    uint8_t  lpt_dma       = dev->ld_regs[3][0x74];
-    uint8_t  lpt_mode      = dev->ld_regs[3][0xf0] & 0x07;
+    uint8_t  global_enable   = !!(dev->regs[0x22] & (1 << 3));
+    uint8_t  local_enable    = !!dev->ld_regs[3][0x30];
+    uint8_t  lpt_irq         = dev->ld_regs[3][0x70];
+    uint8_t  lpt_dma         = dev->ld_regs[3][0x74];
+    uint8_t  lpt_mode        = dev->ld_regs[3][0xf0] & 0x07;
+    uint8_t  irq_readout[16] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x00, 0x08,
+                                 0x00, 0x10, 0x18, 0x20, 0x00, 0x00, 0x28, 0x30 };
 
     if (lpt_irq > 15)
         lpt_irq = 0xff;
@@ -843,6 +845,9 @@ fdc37c93x_lpt_handler(fdc37c93x_t *dev)
     }
     lpt_port_irq(dev->lpt, lpt_irq);
     lpt_port_dma(dev->lpt, lpt_dma);
+
+    lpt_set_cnfgb_readout(dev->lpt, ((lpt_irq > 15) ? 0x00 : irq_readout[lpt_irq]) |
+                                    ((lpt_dma >= 4) ? 0x00 : lpt_dma));
 }
 
 static void
@@ -906,9 +911,11 @@ fdc37c93x_nvr_pri_handler(const fdc37c93x_t *dev)
     if (dev->chip_id != 0x02)
         local_enable &= ((dev->ld_regs[6][0xf0] & 0x90) != 0x80);
 
-    nvr_at_handler(0, 0x70, dev->nvr);
-    if (local_enable)
-        nvr_at_handler(1, 0x70, dev->nvr);
+    if (dev->has_nvr) {
+        nvr_at_handler(0, 0x70, dev->nvr);
+        if (local_enable)
+            nvr_at_handler(1, 0x70, dev->nvr);
+    }
 }
 
 static void
@@ -926,12 +933,12 @@ fdc37c93x_nvr_sec_handler(fdc37c93x_t *dev)
         dev->nvr_sec_base = make_port_sec(dev, 6) & 0xfffe;
 
     if (dev->nvr_sec_base != old_base) {
-        if ((old_base > 0x0000) && (old_base <= 0x0ffe))
+        if (dev->has_nvr && (old_base > 0x0000) && (old_base <= 0x0ffe))
             nvr_at_sec_handler(0, dev->nvr_sec_base, dev->nvr);
 
         /* Datasheet erratum: First it says minimum address is 0x0100, but later implies that it's 0x0000
                               and that default is 0x0070, same as (unrelocatable) primary NVR. */
-        if ((dev->nvr_sec_base > 0x0000) && (dev->nvr_sec_base <= 0x0ffe))
+        if (dev->has_nvr && (dev->nvr_sec_base > 0x0000) && (dev->nvr_sec_base <= 0x0ffe))
             nvr_at_sec_handler(1, dev->nvr_sec_base, dev->nvr);
     }
 }
@@ -1181,7 +1188,6 @@ fdc37c93x_write(uint16_t port, uint8_t val, void *priv)
                                         fdc_set_flags(dev->fdc, FDC_FLAG_PS2_MCA);
                                         break;
                                 }
-                                fdc_update_enh_mode(dev->fdc, val & 0x01);
                             }
                             if (valxor & 0x10)
                                 fdc_set_swap(dev->fdc, (val & 0x10) >> 4);
@@ -1365,7 +1371,7 @@ fdc37c93x_write(uint16_t port, uint8_t val, void *priv)
                             else
                                 dev->ld_regs[dev->regs[7]][dev->cur_reg] = val & 0x8f;
 
-                            if (valxor) {
+                            if (dev->has_nvr && valxor) {
                                 nvr_lock_set(0x80, 0x20, !!(dev->ld_regs[6][dev->cur_reg] & 0x01), dev->nvr);
                                 nvr_lock_set(0xa0, 0x20, !!(dev->ld_regs[6][dev->cur_reg] & 0x02), dev->nvr);
                                 nvr_lock_set(0xc0, 0x20, !!(dev->ld_regs[6][dev->cur_reg] & 0x04), dev->nvr);
@@ -1806,7 +1812,7 @@ fdc37c93x_reset(void *priv)
     memset(dev->gpio_pulldn, 0xff, 8);
 
     /* Acer V62X requires bit 0 to be clear to not be stuck in "clear password" mode. */
-    if (!strcmp(machine_get_internal_name(), "vectra54")) {
+    if ((machines[machine].init == machine_at_vectra54_init) || (machines[machine].init == machine_at_vectra500mt_init)) {
         dev->gpio_pulldn[1] = 0x40;
 
         /*
@@ -1844,12 +1850,12 @@ fdc37c93x_reset(void *priv)
             dev->gpio_pulldn[1] |= 0x00;
         else if (cpu_dmulti > 2.5)
             dev->gpio_pulldn[1] |= 0x80;
-    } else if (!strcmp(machine_get_internal_name(), "acerv62x"))
+    } else if (machines[machine].init == machine_at_acerv62x_init)
         dev->gpio_pulldn[1] = 0xfe;
     else
         dev->gpio_pulldn[1] = (dev->chip_id == 0x30) ? 0xff : 0xfd;
 
-    if (strstr(machine_get_internal_name(), "acer") != NULL)
+    if (!strncmp(machine_get_internal_name(), "acer", 4))
         /* Bit 2 on the Acer V35N is the text/graphics toggle, bits 1 and 3 = ????. */
         dev->gpio_pulldn[2] = 0x10;
 
@@ -1913,20 +1919,20 @@ fdc37c93x_init(const device_t *info)
 
     switch (dev->kbc_type) {
         case FDC37XXX1:
-            dev->kbc = device_add(&kbc_ps2_compaq_device);
+            dev->kbc = device_add_params(&kbc_at_device, (void *) KBC_VEN_COMPAQ);
             break;
         case FDC37XXX2:
-            dev->kbc = device_add(&kbc_ps2_intel_ami_pci_device);
+            dev->kbc = device_add_params(&kbc_at_device, (void *) (KBC_VEN_AMI | 0x00003500));
             break;
         case FDC37XXX3:
         default:
-            dev->kbc = device_add(&kbc_ps2_pci_device);
+            dev->kbc = device_add(&kbc_at_device);
             break;
         case FDC37XXX5:
-            dev->kbc = device_add(&kbc_ps2_phoenix_device);
+            dev->kbc = device_add_params(&kbc_at_device, (void *) (KBC_VEN_PHOENIX | 0x00013800));
             break;
         case FDC37XXX7:
-            dev->kbc = device_add(&kbc_ps2_phoenix_pci_device);
+            dev->kbc = device_add_params(&kbc_at_device, (void *) (KBC_VEN_PHOENIX | 0x00041600));
             break;
     }
 

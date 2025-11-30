@@ -8,8 +8,6 @@
  *
  *          Define the various platform support functions.
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *          Fred N. van Kempen, <decwiz@yahoo.com>
  *
@@ -17,7 +15,6 @@
  *          Copyright 2017-2019 Fred N. van Kempen.
  *          Copyright 2021 Laci bá'
  */
-
 #ifndef EMU_PLAT_H
 #define EMU_PLAT_H
 
@@ -52,7 +49,8 @@ enum {
     STRING_GHOSTPCL_ERROR_TITLE,      /* "Unable to initialize GhostPCL" */
     STRING_GHOSTPCL_ERROR_DESC,       /* "gpcl6dll32.dll/gpcl6dll64.dll/libgpcl6 is required..." */
     STRING_ESCP_ERROR_TITLE,          /* "Unable to find Dot-Matrix fonts" */
-    STRING_ESCP_ERROR_DESC            /* "TrueType fonts in the \"roms/printer/fonts\" directory..." */
+    STRING_ESCP_ERROR_DESC,           /* "TrueType fonts in the \"roms/printer/fonts\" directory..." */
+    STRING_EDID_TOO_LARGE,            /* "EDID file \"%ls\" is too large (%lld bytes)." */
 };
 
 /* The Win32 API uses _wcsicmp. */
@@ -134,6 +132,7 @@ extern int      update_icons;
 extern int kbd_req_capture;
 extern int hide_status_bar;
 extern int hide_tool_bar;
+extern int fullscreen_ui_visible;
 
 /* System-related functions. */
 extern FILE    *plat_fopen(const char *path, const char *mode);
@@ -146,8 +145,11 @@ extern void     plat_get_exe_name(char *s, int size);
 extern void     plat_get_global_config_dir(char *outbuf, size_t len);
 extern void     plat_get_global_data_dir(char *outbuf, size_t len);
 extern void     plat_get_temp_dir(char *outbuf, uint8_t len);
+extern void     plat_get_vmm_dir(char *outbuf, size_t len);
 extern void     plat_init_rom_paths(void);
+extern void     plat_init_asset_paths(void);
 extern int      plat_dir_check(char *path);
+extern int      plat_file_check(const char *path);
 extern int      plat_dir_create(char *path);
 extern void    *plat_mmap(size_t size, uint8_t executable);
 extern void     plat_munmap(void *ptr, size_t size);

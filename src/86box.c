@@ -79,6 +79,7 @@
 #include <86box/mouse.h>
 #include <86box/gameport.h>
 #include <86box/fdd.h>
+#include <86box/fdd_audio.h>
 #include <86box/fdc.h>
 #include <86box/fdc_ext.h>
 #include <86box/hdd.h>
@@ -107,6 +108,7 @@
 #include <86box/apm.h>
 #include <86box/acpi.h>
 #include <86box/nv/vid_nv_rivatimer.h>
+#include <86box/vfio.h>
 
 // Disable c99-designator to avoid the warnings about int ng
 #ifdef __clang__
@@ -118,7 +120,6 @@
 /* Stuff that used to be globally declared in plat.h but is now extern there
    and declared here instead. */
 int          dopause = 1;  /* system is paused */
-atomic_flag  doresize; /* screen resize requested */
 volatile int is_quit;  /* system exit requested */
 uint64_t     timer_freq;
 char         emu_version[200]; /* version ID string */
@@ -142,10 +143,12 @@ int confirm_exit_cmdl = 1; /* (O) do not ask for confirmation on quit if set to 
 uint64_t unique_id   = 0;
 uint64_t source_hwnd = 0;
 #endif
-char       rom_path[1024] = { '\0' };     /* (O) full path to ROMs */
-rom_path_t rom_paths      = { "", NULL }; /* (O) full paths to ROMs */
-char       log_path[1024] = { '\0' };     /* (O) full path of logfile */
-char       vm_name[1024]  = { '\0' };     /* (O) display name of the VM */
+char       rom_path[1024]   = { '\0' };     /* (O) full path to ROMs */
+rom_path_t rom_paths        = { "", NULL }; /* (O) full paths to ROMs */
+char       asset_path[1024] = { '\0' };     /* (O) full path to assets */
+rom_path_t asset_paths      = { "", NULL }; /* (O) full paths to assets */
+char       log_path[1024]   = { '\0' };     /* (O) full path of logfile */
+char       vm_name[1024]    = { '\0' };     /* (O) display name of the VM */
 int      do_nothing                             = 0;
 int      dump_missing                           = 0;
 int      clear_cmos                             = 0;
@@ -170,6 +173,7 @@ int      vid_api                                = 0;              /* (C) video r
 int      vid_cga_contrast                       = 0;              /* (C) video */
 int      video_fullscreen                       = 0;              /* (C) video */
 int      video_fullscreen_scale                 = 0;              /* (C) video */
+int      fullscreen_ui_visible                  = 0;              /* (C) video */
 int      enable_overscan                        = 0;              /* (C) video */
 int      force_43                               = 0;              /* (C) video */
 int      video_filter_method                    = 1;              /* (C) video */
@@ -212,12 +216,16 @@ int      video_fullscreen_scale_maximized       = 0;              /* (C) Whether
                                                                          also apply when maximized. */
 int      do_auto_pause                          = 0;              /* (C) Auto-pause the emulator on focus
                                                                          loss */
+int      force_constant_mouse                   = 0;              /* (C) Force constant updating of the mouse */
 int      hook_enabled                           = 1;              /* (C) Keyboard hook is enabled */
 int      test_mode                              = 0;              /* (C) Test mode */
 char     uuid[MAX_UUID_LEN]                     = { '\0' };       /* (C) UUID or machine identifier */
 int      sound_muted                            = 0;              /* (C) Is sound muted? */
+int      jumpered_internal_ecp_dma              = 0;              /* (C) Jumpered internal EPC DMA */
 int      inhibit_multimedia_keys;                                 /* (G) Inhibit multimedia keys on Windows. */
 int      force_10ms;                                              /* (C) Force 10ms CPU frame intervals. */
+int      vmm_disabled                           = 0;              /* (G) disable built-in manager */
+char     vmm_path_cfg[1024]                     = { '\0' };       /* (G) VMs path (unless -E is used)*/
 
 int      other_ide_present = 0;                                   /* IDE controllers from non-IDE cards are
                                                                      present */
@@ -225,39 +233,72 @@ int      other_scsi_present = 0;                                  /* SCSI contro
                                                                      present */
 
 int      is_pcjr = 0;                                             /* The current machine is PCjr. */
+int      portable_mode = 0;                                       /* We are running in portable mode
+                                                                     (global dirs = exe path) */
+int      global_cfg_overridden = 0;                               /* Global config file was overriden on command line */
+
+int      monitor_edid = 0;                                        /* (C) Which EDID to use. 0=default, 1=custom. */
+char     monitor_edid_path[1024] = { 0 };                         /* (C) Path to custom EDID */
+
+double   video_gl_input_scale = 1.0;                              /* (C) OpenGL 3.x input scale */
+int      video_gl_input_scale_mode = FULLSCR_SCALE_FULL;          /* (C) OpenGL 3.x input stretch mode */
+int      color_scheme = 0;                                        /* (C) Color scheme of UI (Windows-only) */
+int      fdd_sounds_enabled = 1;                                  /* (C) Floppy drive sounds enabled */
 
 // Accelerator key array
 struct accelKey acc_keys[NUM_ACCELS];
 
 // Default accelerator key values
 struct accelKey def_acc_keys[NUM_ACCELS] = {
-	{	.name="send_ctrl_alt_del", 	.desc="Send Control+Alt+Del",
-		.seq="Ctrl+F12" },
-
-	{	.name="send_ctrl_alt_esc", 	.desc="Send Control+Alt+Escape",
-		.seq="Ctrl+F10" },
-
-	{	.name="fullscreen", 		.desc="Toggle fullscreen",
-		.seq="Ctrl+Alt+PgUp" },
-
-	{	.name="screenshot", 		.desc="Screenshot",
-		.seq="Ctrl+F11" },
-
-	{	.name="release_mouse", 		.desc="Release mouse pointer",
-		.seq="Ctrl+End" },
-
-	{	.name="hard_reset", 		.desc="Hard reset",
-		.seq="Ctrl+Alt+F12" },
-
-	{	.name="pause", 				.desc="Toggle pause",
-		.seq="Ctrl+Alt+F1" },
-
-	{	.name="mute", 				.desc="Toggle mute",
-		.seq="Ctrl+Alt+M" }
+    {
+        .name="send_ctrl_alt_del",
+        .desc="Send Control+Alt+Del",
+        .seq="Ctrl+F12"
+    },
+    {
+        .name="send_ctrl_alt_esc",
+        .desc="Send Control+Alt+Escape",
+        .seq="Ctrl+F10"
+    },
+    {
+        .name="fullscreen",
+        .desc="Toggle fullscreen",
+        .seq="Ctrl+Alt+PgUp"
+    },
+    {
+        .name="toggle_ui_fullscreen",
+        .desc="Toggle UI in fullscreen",
+        .seq="Ctrl+Alt+PgDown"
+    },
+    {
+        .name="screenshot",
+        .desc="Screenshot",
+        .seq="Ctrl+F11"
+    },
+    {
+        .name="release_mouse",
+        .desc="Release mouse pointer",
+        .seq="Ctrl+End"
+    },
+    {
+        .name="hard_reset",
+        .desc="Hard reset",
+        .seq="Ctrl+Alt+F12"
+    },
+    {
+        .name="pause",
+        .desc="Toggle pause",
+        .seq="Ctrl+Alt+F1"
+    },
+    {
+        .name="mute",
+        .desc="Toggle mute",
+        .seq="Ctrl+Alt+M"
+    }
 };
 
-char vmm_path[1024] = { '\0'}; /* TEMPORARY - VM manager path to scan for VMs */
-int  vmm_enabled = 0;
+char vmm_path[1024] = { '\0' }; /* VM manager path to scan for VMs */
+int  start_vmm = 1;
 
 /* Statistics. */
 extern int mmuflush;
@@ -298,8 +339,8 @@ __thread int is_cpu_thread = 0;
 
 static wchar_t mouse_msg[3][200];
 
-static volatile atomic_int do_pause_ack = 0;
-static volatile atomic_int pause_ack = 0;
+static volatile ATOMIC_INT do_pause_ack = 0;
+static volatile ATOMIC_INT pause_ack = 0;
 
 #define LOG_SIZE_BUFFER 8192            /* Log size buffer */
 
@@ -624,13 +665,14 @@ pc_show_usage(char *s)
             "\n%sUsage: 86box [options] [cfg-file]\n\n"
             "Valid options are:\n\n"
             "-? or --help\t\t\t- show this information\n"
+            "-A or --assetpath path\t\t- set 'path' to be asset path\n"
 #ifdef SHOW_EXTRA_PARAMS
             "-C or --config path\t\t- set 'path' to be config file\n"
 #endif
 #ifdef _WIN32
             "-D or --debug\t\t\t- force debug output logging\n"
 #endif
-#if 1
+#ifndef USE_SDL_UI
             "-E or --vmmpath\t\t- vm manager path\n"
 #endif
             "-F or --fullscreen\t\t- start in fullscreen mode\n"
@@ -694,6 +736,7 @@ pc_init(int argc, char *argv[])
 {
     char            *ppath = NULL;
     char            *rpath = NULL;
+    char            *apath = NULL;
     char            *cfg = NULL;
     char            *global = NULL;
     char            *p;
@@ -706,9 +749,6 @@ pc_init(int argc, char *argv[])
     time_t           now;
     int              c;
     int              lvmp = 0;
-#ifdef DEPRECATE_USAGE
-    int              deprecated = 1;
-#endif
 #ifdef ENABLE_NG
     int ng = 0;
 #endif
@@ -729,10 +769,6 @@ pc_init(int argc, char *argv[])
         p                = path_get_filename(exe_path);
         *p               = '\0';
     }
-    if (!strncmp(exe_path, "/private/var/folders/", 21)) {
-        ui_msgbox_header(MBX_FATAL, L"App Translocation", EMU_NAME_W L" cannot determine the emulated machine's location due to a macOS security feature. Please move the " EMU_NAME_W L" app to another folder (not /Applications), or make a copy of it and open that copy instead.");
-        return 0;
-    }
 #elif !defined(_WIN32)
     /* Grab the actual path if we are an AppImage. */
     p = getenv("APPIMAGE");
@@ -740,7 +776,22 @@ pc_init(int argc, char *argv[])
         path_get_dirname(exe_path, p);
 #endif
 
+    path_normalize(exe_path);
     path_slash(exe_path);
+
+    /*
+     * Determine if we are running in portable mode.
+     *
+     * We enable portable mode if the EXE path
+     * contains the global config file.
+     */
+    path_append_filename(temp, exe_path, GLOBAL_CONFIG_FILE);
+
+    FILE *fp = fopen(temp, "r");
+    if (fp) {
+        portable_mode = 1;
+        fclose(fp);
+    }
 
     /*
      * Get the current working directory.
@@ -752,6 +803,7 @@ pc_init(int argc, char *argv[])
      */
     plat_getcwd(usr_path, sizeof(usr_path) - 1);
     plat_getcwd(rom_path, sizeof(rom_path) - 1);
+    plat_getcwd(asset_path, sizeof(asset_path) - 1);
 
     for (c = 1; c < argc; c++) {
         if (argv[c][0] != '-')
@@ -774,7 +826,7 @@ usage:
         } else if (!strcasecmp(argv[c], "--debug") || !strcasecmp(argv[c], "-D")) {
             force_debug = 1;
 #endif
-//#ifdef ENABLE_NG
+#ifndef USE_SDL_UI
         } else if (!strcasecmp(argv[c], "--vmmpath") ||
                    !strcasecmp(argv[c], "-E")) {
             /* Using this variable for vm manager path
@@ -785,7 +837,7 @@ usage:
                 memcpy(vmm_path, vp, sizeof(vmm_path));
             else
                 memcpy(vmm_path, vp, strlen(vp) + 1);
-            //#endif
+#endif
         } else if (!strcasecmp(argv[c], "--fullscreen") || !strcasecmp(argv[c], "-F")) {
             start_in_fullscreen = 1;
         } else if (!strcasecmp(argv[c], "--logfile") || !strcasecmp(argv[c], "-L")) {
@@ -798,27 +850,30 @@ usage:
                 goto usage;
 
             ppath = argv[++c];
-#ifdef DEPRECATE_USAGE
-            deprecated = 0;
-#endif
+            start_vmm = 0;
         } else if (!strcasecmp(argv[c], "--rompath") || !strcasecmp(argv[c], "-R")) {
             if ((c + 1) == argc)
                 goto usage;
 
             rpath = argv[++c];
             rom_add_path(rpath);
+        } else if (!strcasecmp(argv[c], "--assetpath") || !strcasecmp(argv[c], "-A")) {
+            if ((c + 1) == argc)
+                goto usage;
+
+            apath = argv[++c];
+            asset_add_path(apath);
         } else if (!strcasecmp(argv[c], "--config") || !strcasecmp(argv[c], "-C")) {
             if ((c + 1) == argc || plat_dir_check(argv[c + 1]))
                 goto usage;
 
             cfg = argv[++c];
-#ifdef DEPRECATE_USAGE
-            deprecated = 0;
-#endif
+            start_vmm = 0;
         } else if (!strcasecmp(argv[c], "--global") || !strcasecmp(argv[c], "-O")) {
             if ((c + 1) == argc || plat_dir_check(argv[c + 1]))
                 goto usage;
 
+            global_cfg_overridden = 1;
             global = argv[++c];
         } else if (!strcasecmp(argv[c], "--image") || !strcasecmp(argv[c], "-I")) {
             if ((c + 1) == argc)
@@ -862,7 +917,7 @@ usage:
             do_nothing = 1;
         } else if (!strcasecmp(argv[c], "--nohook") || !strcasecmp(argv[c], "-W")) {
             hook_enabled = 0;
-        } else if (!strcasecmp(argv[c], "--clearboth") || !strcasecmp(argv[c], "-X")) {
+        } else if (!strcasecmp(argv[c], "--clear") || !strcasecmp(argv[c], "-X")) {
             if ((c + 1) == argc)
                 goto usage;
 
@@ -923,23 +978,15 @@ usage:
         else
             cfg = argv[c++];
 
-#ifdef DEPRECATE_USAGE
-        deprecated = 0;
-#endif
+        start_vmm = 0;
     }
 
     if (c != argc)
         goto usage;
 
-#ifdef DEPRECATE_USAGE
-    if (deprecated)
-        pc_show_usage("Running 86Box without a specified VM path and/or configuration\n"
-                      "file has been deprected. Please specify one or use a manager\n"
-                      "(Avalonia 86 is recommended).\n\n");
-#endif
-
     path_slash(usr_path);
     path_slash(rom_path);
+    path_slash(asset_path);
 
     /*
      * If the user provided a path for files, use that
@@ -980,6 +1027,16 @@ usage:
 
     plat_init_rom_paths();
 
+    // Add the VM-local asset path.
+    path_append_filename(temp, usr_path, "assets");
+    asset_add_path(temp);
+
+    // Add the standard ROM path in the same directory as the executable.
+    path_append_filename(temp, exe_path, "assets");
+    asset_add_path(temp);
+
+    plat_init_asset_paths();
+
     /*
      * If the user provided a path for ROMs, use that
      * instead of the current working directory. We do
@@ -1009,6 +1066,36 @@ usage:
             plat_dir_create(rom_path);
     } else
         rom_path[0] = '\0';
+
+    /*
+     * If the user provided a path for ROMs, use that
+     * instead of the current working directory. We do
+     * make sure that if that was a relative path, we
+     * make it absolute.
+     */
+    if (apath != NULL) {
+        if (!path_abs(apath)) {
+            /*
+             * This looks like a relative path.
+             *
+             * Add it to the current working directory
+             * to convert it (back) to an absolute path.
+             */
+            strcat(asset_path, apath);
+        } else {
+            /*
+             * The user-provided path seems like an
+             * absolute path, so just use that.
+             */
+            strcpy(asset_path, apath);
+        }
+
+        /* If the specified path does not yet exist,
+           create it. */
+        if (!plat_dir_check(asset_path))
+            plat_dir_create(asset_path);
+    } else
+        asset_path[0] = '\0';
 
     /* Grab the name of the configuration file. */
     if (cfg == NULL)
@@ -1047,6 +1134,8 @@ usage:
     path_slash(usr_path);
     if (rom_path[0] != '\0')
         path_slash(rom_path);
+    if (asset_path[0] != '\0')
+        path_slash(asset_path);
 
     /* At this point, we can safely create the full path name. */
     path_append_filename(cfg_path, usr_path, p);
@@ -1054,7 +1143,10 @@ usage:
     /* Build the global configuration file path. */
     if (global == NULL) {
         plat_get_global_config_dir(global_cfg_path, sizeof(global_cfg_path));
-        path_append_filename(global_cfg_path, global_cfg_path, CONFIG_FILE);
+        // avoid strcpy global_cfg_path over itself (valgrind says it's bad...)
+        // path_append_filename(global_cfg_path, global_cfg_path, GLOBAL_CONFIG_FILE);
+        path_slash(global_cfg_path);
+        strcat(global_cfg_path, GLOBAL_CONFIG_FILE);
     } else {
         strncpy(global_cfg_path, global, sizeof(global_cfg_path) - 1);
     }
@@ -1082,6 +1174,8 @@ usage:
 #ifdef _WIN32
     if (localtime_s(&time_buf, &now) == 0)
         info = &time_buf;
+    else
+        info = NULL;
 #else
     info = localtime_r(&now, &time_buf);
 #endif
@@ -1093,21 +1187,60 @@ usage:
 
     pclog("#\n# %ls v%ls logfile, created %s\n#\n",
           EMU_NAME_W, EMU_VERSION_FULL_W, temp);
-    pclog("# VM: %s\n#\n", vm_name);
+
+    if (portable_mode) {
+        pclog("# Portable mode enabled.\n");
+    }
+
     pclog("# Emulator path: %s\n", exe_path);
-    pclog("# Userfiles path: %s\n", usr_path);
-    for (rom_path_t *rom_path = &rom_paths; rom_path != NULL; rom_path = rom_path->next) {
-        pclog("# ROM path: %s\n", rom_path->path);
-    }
-
     pclog("# Global configuration file: %s\n", global_cfg_path);
-    pclog("# Configuration file: %s\n#\n\n", cfg_path);
-    if (strlen(vmm_path) != 0) {
-        vmm_enabled = 1;
-        pclog("# VM Manager enabled. Path: %s\n", vmm_path);
+
+    /* Load the global configuration file. */
+    config_load_global();
+    config_save_global(); // hack
+
+    /* Determine whether to start the VM manager. */
+#ifndef USE_SDL_UI
+    if (vmm_disabled && start_vmm)
+#endif
+    {
+        start_vmm = 0;
+#ifdef __APPLE__
+        if (!strncmp(exe_path, "/private/var/folders/", 21)) {
+            ui_msgbox_header(MBX_FATAL, L"App Translocation", EMU_NAME_W L" cannot determine the emulated machine's location due to a macOS security feature. Please move the " EMU_NAME_W L" app to another folder (not /Applications), or make a copy of it and open that copy instead.");
+            return 0;
+        }
+#endif
     }
 
-    if (!vmm_enabled) {
+#ifndef USE_SDL_UI
+    if (strlen(vmm_path) != 0) {
+        /* -E specified on the command line. */
+        start_vmm = 1;
+    } else {
+        strncpy(vmm_path, vmm_path_cfg, sizeof(vmm_path) - 1);
+        vmm_path[sizeof(vmm_path) - 1] = '\0';
+    }
+
+    if (start_vmm) {
+        pclog("# VM Manager enabled. Path: %s\n", vmm_path);
+        strncpy(usr_path, vmm_path, sizeof(usr_path) - 1);
+        usr_path[sizeof(usr_path) - 1] = '\0';
+    } else
+#endif
+    {
+        pclog("# VM: %s\n#\n", vm_name);
+        pclog("# Configuration file: %s\n#\n\n", cfg_path);
+        pclog("# Userfiles path: %s\n", usr_path);
+
+        for (rom_path_t *rom_path = &rom_paths; rom_path != NULL; rom_path = rom_path->next) {
+            pclog("# ROM path: %s\n", rom_path->path);
+        }
+
+        for (rom_path_t *asset_path = &asset_paths; asset_path != NULL; asset_path = asset_path->next) {
+            pclog("# Asset path: %s\n", asset_path->path);
+        }
+
         /*
          * We are about to read the configuration file, which MAY
          * put data into global variables (the hard- and floppy
@@ -1184,11 +1317,10 @@ pc_full_speed(void)
 
 /* Initialize modules, ran once, after pc_init. */
 int
-pc_init_modules(void)
+pc_init_roms(void)
 {
     int     c;
     int     m;
-    wchar_t temp[512];
     char    tempc[512];
 
     if (dump_missing) {
@@ -1226,6 +1358,16 @@ pc_init_modules(void)
         return 0;
     }
     pc_log("A total of %d ROM sets have been loaded.\n", c);
+
+    return 1;
+}
+
+int
+pc_init_modules(void)
+{
+    int     c;
+    wchar_t temp[512];
+    char    tempc[512];
 
     /* Load the ROMs for the selected machine. */
     if (!machine_available(machine)) {
@@ -1306,6 +1448,11 @@ pc_init_modules(void)
     video_init();
 
     fdd_init();
+    
+    if (fdd_sounds_enabled) {
+        fdd_audio_load_profiles();
+        fdd_audio_init();
+    }
 
     sound_init();
 
@@ -1579,8 +1726,14 @@ pc_reset_hard_init(void)
        the chances of the SCSI controller ending up on the bridge. */
     video_voodoo_init();
 
-    if (joystick_type)
-        gameport_update_joystick_type(); /* installs game port if no device provides one, must be late */
+#if defined(USE_VFIO) && defined(__linux__)
+    /* Initialize VFIO */
+    vfio_init();
+#endif
+
+    /* installs first game port if no device provides one, must be late */
+    if (joystick_type[0])
+        gameport_update_joystick_type(0);
 
     ui_sb_update_panes();
 
@@ -1639,6 +1792,7 @@ pc_reset_hard_init(void)
 void
 update_mouse_msg(void)
 {
+#ifdef USE_SDL_UI
     wchar_t  wcpufamily[2048];
     wchar_t  wcpu[2048];
     wchar_t  wmachine[2048];
@@ -1655,21 +1809,20 @@ update_mouse_msg(void)
     if (wcp) /* remove parentheses */
         *(wcp - 1) = L'\0';
     mbstowcs(wcpu, cpu_s->name, strlen(cpu_s->name) + 1);
-#ifdef _WIN32
-    swprintf(mouse_msg[0], sizeof_w(mouse_msg[0]), L"%%i.%%i%%%% - %ls",
-             plat_get_string(STRING_MOUSE_CAPTURE));
-    swprintf(mouse_msg[1], sizeof_w(mouse_msg[1]), L"%%i.%%i%%%% - %ls",
-             (mouse_get_buttons() > 2) ? plat_get_string(STRING_MOUSE_RELEASE) : plat_get_string(STRING_MOUSE_RELEASE_MMB));
-    wcsncpy(mouse_msg[2], L"%i.%i%%", sizeof_w(mouse_msg[2]));
-#else
-    swprintf(mouse_msg[0], sizeof_w(mouse_msg[0]), L"%ls v%ls - %%i.%%i%%%% - %ls - %ls/%ls - %ls",
+    swprintf(mouse_msg[0], sizeof_w(mouse_msg[0]), L"%ls v%ls - %%i%%%% - %ls - %ls/%ls - %ls",
              EMU_NAME_W, EMU_VERSION_FULL_W, wmachine, wcpufamily, wcpu,
              plat_get_string(STRING_MOUSE_CAPTURE));
-    swprintf(mouse_msg[1], sizeof_w(mouse_msg[1]), L"%ls v%ls - %%i.%%i%%%% - %ls - %ls/%ls - %ls",
+    swprintf(mouse_msg[1], sizeof_w(mouse_msg[1]), L"%ls v%ls - %%i%%%% - %ls - %ls/%ls - %ls",
              EMU_NAME_W, EMU_VERSION_FULL_W, wmachine, wcpufamily, wcpu,
              (mouse_get_buttons() > 2) ? plat_get_string(STRING_MOUSE_RELEASE) : plat_get_string(STRING_MOUSE_RELEASE_MMB));
-    swprintf(mouse_msg[2], sizeof_w(mouse_msg[2]), L"%ls v%ls - %%i.%%i%%%% - %ls - %ls/%ls",
+    swprintf(mouse_msg[2], sizeof_w(mouse_msg[2]), L"%ls v%ls - %%i%%%% - %ls - %ls/%ls",
              EMU_NAME_W, EMU_VERSION_FULL_W, wmachine, wcpufamily, wcpu);
+#else
+    swprintf(mouse_msg[0], sizeof_w(mouse_msg[0]), L"%%i%%%% - %ls",
+             plat_get_string(STRING_MOUSE_CAPTURE));
+    swprintf(mouse_msg[1], sizeof_w(mouse_msg[1]), L"%%i%%%% - %ls",
+             (mouse_get_buttons() > 2) ? plat_get_string(STRING_MOUSE_RELEASE) : plat_get_string(STRING_MOUSE_RELEASE_MMB));
+    wcsncpy(mouse_msg[2], L"%i%%", sizeof_w(mouse_msg[2]));
 #endif
 }
 
@@ -1737,9 +1890,6 @@ pc_close(UNUSED(thread_t *ptr))
 
     gdbstub_close();
 
-#if (!(defined __amd64__ || defined _M_X64 || defined __aarch64__ || defined _M_ARM64))
-    mem_free();
-#endif
 }
 
 #ifdef __APPLE__
@@ -1754,9 +1904,9 @@ _ui_window_title(void *s)
 void
 ack_pause(void)
 {
-    if (atomic_load(&do_pause_ack)) {
-        atomic_store(&do_pause_ack, 0);
-        atomic_store(&pause_ack, 1);
+    if (ATOMIC_LOAD(do_pause_ack)) {
+        ATOMIC_STORE(do_pause_ack, 0);
+        ATOMIC_STORE(pause_ack, 1);
     }
 }
 
@@ -1788,7 +1938,7 @@ pc_run(void)
 #ifdef USE_GDBSTUB /* avoid a KBC FIFO overflow when CPU emulation is stalled */
     }
 #endif
-    joystick_process();
+    joystick_process(0); // Gameport 0
     endblit();
 
     /* Done with this frame, update statistics. */
@@ -1800,7 +1950,13 @@ pc_run(void)
 
     if (title_update) {
         mouse_msg_idx = ((mouse_type == MOUSE_TYPE_NONE) || (mouse_input_mode >= 1)) ? 2 : !!mouse_capture;
-        swprintf(temp, sizeof_w(temp), mouse_msg[mouse_msg_idx], fps / (force_10ms ? 1 : 10), force_10ms ? 0 : (fps % 10));
+#ifdef SCREENSHOT_MODE
+        if (force_10ms)
+            fps = ((fps + 2) / 5) * 5;
+        else
+            fps = ((fps + 20) / 50) * 50;
+#endif
+        swprintf(temp, sizeof_w(temp), mouse_msg[mouse_msg_idx], fps / (force_10ms ? 1 : 10));
 #ifdef __APPLE__
         /* Needed due to modifying the UI on the non-main thread is a big no-no. */
         dispatch_async_f(dispatch_get_main_queue(), wcsdup((const wchar_t *) temp), _ui_window_title);
@@ -1985,21 +2141,19 @@ do_pause(int p)
         do_pause_ack = p;
     dopause = !!p;
     if ((p == 1) && !old_p) {
-        while (!atomic_load(&pause_ack))
+        while (!ATOMIC_LOAD(pause_ack))
             ;
     }
-    atomic_store(&pause_ack, 0);
+    ATOMIC_STORE(pause_ack, 0);
 }
 
 // Helper to find an accelerator key and return it's index in acc_keys
 int FindAccelerator(const char *name) {
-	for(int x=0;x<NUM_ACCELS;x++)
-	{
-		if(strcmp(acc_keys[x].name, name) == 0)
-		{
-			return(x);
-		}
-	}
-	// No key was found
-	return -1;
+    for (int x = 0; x < NUM_ACCELS; x++) {
+        if(strcmp(acc_keys[x].name, name) == 0)
+            return(x);
+    }
+
+    // No key was found
+    return -1;
 }

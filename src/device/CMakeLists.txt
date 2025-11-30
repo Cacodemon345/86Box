@@ -18,6 +18,8 @@
 
 add_library(dev OBJECT
     access_bus.c
+    ast_nvr.c
+    ast_readout.c
     bugger.c
     cartridge.c
     cassette.c
@@ -54,6 +56,7 @@ add_library(dev OBJECT
     pci_bridge.c
     phoenix_486_jumper.c
     postcard.c
+    radisys_config.c
     serial.c
     serial_passthrough.c
     smbus_ali7101.c
@@ -61,6 +64,7 @@ add_library(dev OBJECT
     smbus_sis5595.c
     tulip_jumper.c
     unittester.c
+    zenith_scratchpad.c
 )
 
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT MSVC)
@@ -77,6 +81,17 @@ endif()
 
 if(ISAMEM_BRAT)
     target_compile_definitions(dev PRIVATE USE_ISAMEM_BRAT)
+endif()
+
+if(CMAKE_SYSTEM_NAME MATCHES "Linux")
+    if(VFIO)
+        include(CheckIncludeFile)
+        check_include_file("linux/vfio.h" VFIO_AVAILABLE)
+        if(VFIO_AVAILABLE)
+            add_compile_definitions(USE_VFIO)
+            target_sources(dev PRIVATE vfio.c)
+        endif()
+    endif()
 endif()
 
 if(LASERXT)

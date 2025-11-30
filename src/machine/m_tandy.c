@@ -8,8 +8,6 @@
  *
  *          Emulation of Tandy models 1000, 1000HX and 1000SL2.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          Miran Grca, <mgrca8@gmail.com>
  *
@@ -47,7 +45,6 @@
 #include <86box/m_tandy.h>
 #include <86box/plat_unused.h>
 
-
 enum {
     TYPE_TANDY = 0,
     TYPE_TANDY1000SX,
@@ -62,9 +59,8 @@ enum {
     EEPROM_WRITE
 };
 
-
 static const scancode scancode_tandy[512] = {
-  // clang-format off
+    // clang-format off
     { .mk = {            0 }, .brk = {                   0 } }, /* 000 */
     { .mk = {      0x01, 0 }, .brk = {             0x81, 0 } }, /* 001 */
     { .mk = {      0x02, 0 }, .brk = {             0x82, 0 } }, /* 002 */
@@ -149,11 +145,11 @@ static const scancode scancode_tandy[512] = {
     { .mk = {      0x51, 0 }, .brk = {             0xd1, 0 } }, /* 051 */
     { .mk = {      0x52, 0 }, .brk = {             0xd2, 0 } }, /* 052 */
     { .mk = {      0x56, 0 }, .brk = {             0xd6, 0 } }, /* 053 */
-    { .mk = {            0 }, .brk = {                   0 } }, /* 054 */
+    { .mk = {      0x54, 0 }, .brk = {             0xd4, 0 } }, /* 054 */
     { .mk = {            0 }, .brk = {                   0 } }, /* 055 */
     { .mk = {            0 }, .brk = {                   0 } }, /* 056 */
-    { .mk = {            0 }, .brk = {                   0 } }, /* 057 */
-    { .mk = {            0 }, .brk = {                   0 } }, /* 058 */
+    { .mk = {      0x59, 0 }, .brk = {             0xd9, 0 } }, /* 057 */
+    { .mk = {      0x5a, 0 }, .brk = {             0xda, 0 } }, /* 058 */
     { .mk = {            0 }, .brk = {                   0 } }, /* 059 */
     { .mk = {            0 }, .brk = {                   0 } }, /* 05a */
     { .mk = {            0 }, .brk = {                   0 } }, /* 05b */
@@ -392,7 +388,7 @@ static const scancode scancode_tandy[512] = {
     { .mk = {            0 }, .brk = {                   0 } }, /* 144 */
     { .mk = {            0 }, .brk = {                   0 } }, /* 145 */
     { .mk = {      0x46, 0 }, .brk = {             0xc6, 0 } }, /* 146 */
-    { .mk = {      0x47, 0 }, .brk = {             0xc7, 0 } }, /* 147 */
+    { .mk = {      0x58, 0 }, .brk = {             0xd8, 0 } }, /* 147 */
     { .mk = {      0x29, 0 }, .brk = {             0xa9, 0 } }, /* 148 */
     { .mk = {      0x49, 0 }, .brk = {             0xc9, 0 } }, /* 149 */
     { .mk = {            0 }, .brk = {                   0 } }, /* 14a */
@@ -403,7 +399,7 @@ static const scancode scancode_tandy[512] = {
     { .mk = {      0x4f, 0 }, .brk = {             0xcf, 0 } }, /* 14f */
     { .mk = {      0x4a, 0 }, .brk = {             0xca, 0 } }, /* 150 */
     { .mk = {      0x51, 0 }, .brk = {             0xd1, 0 } }, /* 151 */
-    { .mk = {      0x52, 0 }, .brk = {             0xd2, 0 } }, /* 152 */
+    { .mk = {      0x55, 0 }, .brk = {             0xd5, 0 } }, /* 152 */
     { .mk = {      0x53, 0 }, .brk = {             0xd3, 0 } }, /* 153 */
     { .mk = {            0 }, .brk = {                   0 } }, /* 154 */
     { .mk = {            0 }, .brk = {                   0 } }, /* 155 */
@@ -577,7 +573,7 @@ static const scancode scancode_tandy[512] = {
     { .mk = {            0 }, .brk = {                   0 } }, /* 1fd */
     { .mk = {            0 }, .brk = {                   0 } }, /* 1fe */
     { .mk = {            0 }, .brk = {                   0 } }  /* 1ff */
-  // clang-format on
+    // clang-format on
 };
 
 static int eep_data_out;
@@ -599,8 +595,6 @@ tandy_log(const char *fmt, ...)
 #else
 #    define tandy_log(fmt, ...)
 #endif
-
-
 
 static void
 eep_write(UNUSED(uint16_t addr), uint8_t val, void *priv)

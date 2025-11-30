@@ -12,8 +12,6 @@
  *          emulation is enough to satisfy that game, but not Aladdin's
  *          DiagnostiX utility.
  *
- *
- *
  * Authors: RichardG, <richardg867@gmail.com>
  *          Peter Ferrie
  *
@@ -341,7 +339,6 @@ const lpt_device_t lpt_hasp_savquest_device = {
     .close            = hasp_close,
     .write_data       = hasp_write_data,
     .write_ctrl       = NULL,
-    .autofeed         = NULL,
     .strobe           = NULL,
     .read_status      = hasp_read_status,
     .read_ctrl        = NULL,

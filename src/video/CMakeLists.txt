@@ -38,12 +38,16 @@ add_library(vid OBJECT
 
     # Clock generator chips 
     clockgen/vid_clockgen_av9194.c 
+    clockgen/vid_clockgen_icd2047.c
     clockgen/vid_clockgen_icd2061.c
+    clockgen/vid_clockgen_ics1494.c 
     clockgen/vid_clockgen_ics2494.c 
     clockgen/vid_clockgen_ics2595.c
+    clockgen/vid_clockgen_ics90c64a.c
 
     # DDC / monitor identification stuff
     vid_ddc.c
+    vid_ddc_edid_custom.c
 
     # CARDS start here
 
@@ -58,6 +62,7 @@ add_library(vid OBJECT
     vid_cga_quadcolor.c
     vid_cga_toshiba_t1000.c
     vid_cga_toshiba_t3100e.c
+    vid_cga_v6355.c
 
     # PCJr/Tandy
     vid_pcjr.c
@@ -141,6 +146,10 @@ add_library(vid OBJECT
     vid_bochs_vbe.c
 
 )
+
+if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+    target_include_directories(vid PRIVATE /usr/local/include)
+endif()
 
 if(G100)
     target_compile_definitions(vid PRIVATE USE_G100)

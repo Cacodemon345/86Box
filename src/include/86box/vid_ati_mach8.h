@@ -9,8 +9,6 @@
  *          Emulation of the 8514/A-compatible Mach8 and Mach32 graphics
  *          chips from ATI for the ISA/VLB/MCA/PCI buses.
  *
- *
- *
  * Authors: TheCollector1995.
  *
  *          Copyright 2022-2024 TheCollector1995.
@@ -109,6 +107,7 @@ typedef struct mach_t {
         uint16_t src_y;
         int16_t  bres_count;
         uint16_t clock_sel;
+        uint16_t clock_sel_mode;
         uint16_t crt_pitch;
         uint16_t ge_pitch;
         uint16_t src_pitch;

@@ -8,13 +8,10 @@
  *
  *          Update check dialog module
  *
- *
- *
  * Authors: cold-brewed
  *
  *          Copyright 2024 cold-brewed
  */
-
 #include <QDir>
 #include <QTimer>
 
@@ -27,12 +24,14 @@ extern "C" {
 }
 
 UpdateCheckDialog::
-UpdateCheckDialog(const UpdateCheck::UpdateChannel channel, QWidget *parent) : QDialog(parent), ui(new Ui::UpdateCheckDialog), updateCheck(new UpdateCheck(channel))
+    UpdateCheckDialog(const UpdateCheck::UpdateChannel channel, QWidget *parent)
+    : QDialog(parent)
+    , ui(new Ui::UpdateCheckDialog)
+    , updateCheck(new UpdateCheck(channel))
 {
     ui->setupUi(this);
     ui->statusLabel->setHidden(true);
-    this->setFixedSize(400, 130);
-    updateChannel = channel;
+    updateChannel  = channel;
     currentVersion = UpdateCheck::getCurrentVersion(updateChannel);
     connect(updateCheck, &UpdateCheck::updateCheckError, [=](const QString &errorMsg) {
         generalDownloadError(errorMsg);
@@ -44,8 +43,7 @@ UpdateCheckDialog(const UpdateCheck::UpdateChannel channel, QWidget *parent) : Q
     });
 }
 
-UpdateCheckDialog::~
-UpdateCheckDialog()
+UpdateCheckDialog::~UpdateCheckDialog()
     = default;
 
 void
@@ -84,7 +82,12 @@ UpdateCheckDialog::upToDate()
     ui->progressBar->setMaximum(100);
     ui->progressBar->setValue(100);
     ui->statusLabel->setVisible(true);
-    const auto statusText = tr("You are running the latest %1 version of 86Box: %2").arg(updateChannel == UpdateCheck::UpdateChannel::Stable ? "stable" : "beta", currentVersion);
+    QString currentVersionString;
+    if (updateChannel == UpdateCheck::UpdateChannel::Stable)
+        currentVersionString = QString("v%1").arg(currentVersion);
+    else
+        currentVersionString = QString("%1 %2").arg(tr("build"), currentVersion);
+    const auto statusText = tr("You are running the latest %1 version of 86Box: %2").arg(updateChannel == UpdateCheck::UpdateChannel::Stable ? tr("stable") : tr("beta"), currentVersionString);
     ui->statusLabel->setText(statusText);
     ui->buttonBox->setStandardButtons(QDialogButtonBox::Ok);
 }

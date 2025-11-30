@@ -1,18 +1,16 @@
 /*
- * 86Box     A hypervisor and IBM PC system emulator that specializes in
- *           running old operating systems and software designed for IBM
- *           PC systems and compatibles from 1981 through fairly recent
- *           system designs based on the PCI bus.
+ * 86Box    A hypervisor and IBM PC system emulator that specializes in
+ *          running old operating systems and software designed for IBM
+ *          PC systems and compatibles from 1981 through fairly recent
+ *          system designs based on the PCI bus.
  *
- *           This file is part of the 86Box distribution.
+ *          This file is part of the 86Box distribution.
  *
- *           Interface to the XAudio2 audio processing library.
+ *          Interface to the XAudio2 audio processing library.
  *
+ * Authors: Cacodemon345
  *
- *
- * Authors:  Cacodemon345
- *
- *           Copyright 2022 Cacodemon345.
+ *          Copyright 2022 Cacodemon345.
  */
 #include <math.h>
 #include <stdint.h>
@@ -39,8 +37,8 @@
 static void *xaudio2_handle = NULL;
 static HRESULT(WINAPI *pXAudio2Create)(IXAudio2 **ppXAudio2, uint32_t Flags, XAUDIO2_PROCESSOR XAudio2Processor);
 static dllimp_t xaudio2_imports[] = {
-    {"XAudio2Create", &pXAudio2Create},
-    { NULL,           NULL           },
+    {"XAudio2Create", &pXAudio2Create },
+    { NULL,           NULL            },
 };
 #    define XAudio2Create pXAudio2Create
 #endif
@@ -55,6 +53,7 @@ static IXAudio2SourceVoice    *srcvoicemusic = NULL;
 static IXAudio2SourceVoice    *srcvoicewt    = NULL;
 static IXAudio2SourceVoice    *srcvoicemidi  = NULL;
 static IXAudio2SourceVoice    *srcvoicecd    = NULL;
+static IXAudio2SourceVoice    *srcvoicefdd   = NULL;
 
 #define FREQ   SOUND_FREQ
 #define BUFLEN SOUNDBUFLEN
@@ -119,22 +118,18 @@ void
 inital(void)
 {
 #if defined(_WIN32) && !defined(USE_FAUDIO)
-    if (xaudio2_handle == NULL) {
+    if (xaudio2_handle == NULL)
         xaudio2_handle = dynld_module("xaudio2_9.dll", xaudio2_imports);
-    }
 
-    if (xaudio2_handle == NULL) {
+    if (xaudio2_handle == NULL)
         xaudio2_handle = dynld_module("xaudio2_9redist.dll", xaudio2_imports);
-    }
 
-    if (xaudio2_handle == NULL) {
+    if (xaudio2_handle == NULL)
         return;
-    }
 #endif
 
-    if (XAudio2Create(&xaudio2, 0, XAUDIO2_DEFAULT_PROCESSOR)) {
+    if (XAudio2Create(&xaudio2, 0, XAUDIO2_DEFAULT_PROCESSOR))
         return;
-    }
 
     if (IXAudio2_CreateMasteringVoice(xaudio2, &mastervoice, 2, FREQ, 0, 0, NULL, 0)) {
         IXAudio2_Release(xaudio2);
@@ -184,11 +179,18 @@ inital(void)
 
     (void) IXAudio2_CreateSourceVoice(xaudio2, &srcvoicecd, &fmt, 0, 2.0f, &callbacks, NULL, NULL);
 
+    fmt.nSamplesPerSec  = FREQ;
+    fmt.nBlockAlign     = fmt.nChannels * fmt.wBitsPerSample / 8;
+    fmt.nAvgBytesPerSec = fmt.nSamplesPerSec * fmt.nBlockAlign;
+
+    (void) IXAudio2_CreateSourceVoice(xaudio2, &srcvoicefdd, &fmt, 0, 2.0f, &callbacks, NULL, NULL);
+
     (void) IXAudio2SourceVoice_SetVolume(srcvoice, 1, XAUDIO2_COMMIT_NOW);
     (void) IXAudio2SourceVoice_Start(srcvoice, 0, XAUDIO2_COMMIT_NOW);
     (void) IXAudio2SourceVoice_Start(srcvoicecd, 0, XAUDIO2_COMMIT_NOW);
     (void) IXAudio2SourceVoice_Start(srcvoicemusic, 0, XAUDIO2_COMMIT_NOW);
     (void) IXAudio2SourceVoice_Start(srcvoicewt, 0, XAUDIO2_COMMIT_NOW);
+    (void) IXAudio2SourceVoice_Start(srcvoicefdd, 0, XAUDIO2_COMMIT_NOW);
 
     const char *mdn = midi_out_device_get_internal_name(midi_output_device_current);
 
@@ -209,6 +211,7 @@ closeal(void)
 {
     if (!initialized)
         return;
+
     initialized = 0;
     (void) IXAudio2SourceVoice_Stop(srcvoice, 0, XAUDIO2_COMMIT_NOW);
     (void) IXAudio2SourceVoice_FlushSourceBuffers(srcvoice);
@@ -218,6 +221,8 @@ closeal(void)
     (void) IXAudio2SourceVoice_FlushSourceBuffers(srcvoicewt);
     (void) IXAudio2SourceVoice_Stop(srcvoicecd, 0, XAUDIO2_COMMIT_NOW);
     (void) IXAudio2SourceVoice_FlushSourceBuffers(srcvoicecd);
+    (void) IXAudio2SourceVoice_Stop(srcvoicefdd, 0, XAUDIO2_COMMIT_NOW);
+    (void) IXAudio2SourceVoice_FlushSourceBuffers(srcvoicefdd);
     if (srcvoicemidi) {
         (void) IXAudio2SourceVoice_Stop(srcvoicemidi, 0, XAUDIO2_COMMIT_NOW);
         (void) IXAudio2SourceVoice_FlushSourceBuffers(srcvoicemidi);
@@ -225,13 +230,17 @@ closeal(void)
     }
     IXAudio2SourceVoice_DestroyVoice(srcvoicewt);
     IXAudio2SourceVoice_DestroyVoice(srcvoicecd);
+    IXAudio2SourceVoice_DestroyVoice(srcvoicefdd);
     IXAudio2SourceVoice_DestroyVoice(srcvoicemusic);
     IXAudio2SourceVoice_DestroyVoice(srcvoice);
     IXAudio2MasteringVoice_DestroyVoice(mastervoice);
     IXAudio2_Release(xaudio2);
-    srcvoice = srcvoicecd = srcvoicemidi = NULL;
-    mastervoice                          = NULL;
-    xaudio2                              = NULL;
+    srcvoice     = NULL;
+    srcvoicecd   = NULL;
+    srcvoicemidi = NULL;
+    srcvoicefdd  = NULL;
+    mastervoice  = NULL;
+    xaudio2      = NULL;
 
 #if defined(_WIN32) && !defined(USE_FAUDIO)
     dynld_close(xaudio2_handle);
@@ -289,6 +298,18 @@ givealbuffer_cd(const void *buf)
 {
     if (srcvoicecd)
         givealbuffer_common(buf, srcvoicecd, CD_BUFLEN << 1);
+}
+
+void
+givealbuffer_fdd(const void *buf, const uint32_t size)
+{
+    if (!initialized)
+        return;
+    
+    if (!srcvoicefdd)
+        return;
+
+    givealbuffer_common(buf, srcvoicefdd, size);
 }
 
 void

@@ -8,8 +8,6 @@
  *
  *          Generic CD-ROM drive core.
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *
  *          Copyright 2018-2021 Miran Grca.
@@ -344,7 +342,7 @@ cdrom_is_sector_good(cdrom_t *dev, const uint8_t *b, const uint8_t mode2, const 
 {
     int            ret = 1;
 
-    if (!mode2 || (form != 1)) {
+    if (!dev->no_check && (dev->cd_status != CD_STATUS_DVD) && (!mode2 || (form == 1))) {
         if (mode2 && (form == 1)) {
             const uint32_t crc = cdrom_crc32(0xffffffff, &(b[16]), 2056) ^ 0xffffffff;
 
@@ -1471,8 +1469,10 @@ cdrom_seek(cdrom_t *dev, const uint32_t pos, const uint8_t vendor_type)
             break;
     }
 
-    dev->seek_pos = real_pos;
     cdrom_stop(dev);
+
+    dev->seek_pos      = real_pos;
+    dev->cached_sector = -1;
 }
 
 int
@@ -2976,9 +2976,12 @@ cdrom_update_status(cdrom_t *dev)
     dev->seek_pos       = 0;
     dev->cd_buflen      = 0;
 
-    if (dev->ops->is_dvd(dev->local))
-        dev->cd_status      = CD_STATUS_DVD;
-    else
+    if (dev->ops->is_dvd(dev->local)) {
+        if (cdrom_is_dvd(dev->type))
+            dev->cd_status      = CD_STATUS_DVD;
+        else
+            dev->cd_status      = CD_STATUS_DVD_REJECTED;
+    } else
         dev->cd_status      = dev->ops->has_audio(dev->local) ? CD_STATUS_STOPPED :
                                                                 CD_STATUS_DATA_ONLY;
 

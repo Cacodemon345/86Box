@@ -1,38 +1,44 @@
 /*
-* 86Box	A hypervisor and IBM PC system emulator that specializes in
-*		running old operating systems and software designed for IBM
-*		PC systems and compatibles from 1981 through fairly recent
-*		system designs based on the PCI bus.
-*
-*		This file is part of the 86Box distribution.
-*
-*		86Box VM manager system details module
-*
-*
-*
-* Authors:	cold-brewed
-*
-*		Copyright 2024 cold-brewed
-*/
-
+ * 86Box    A hypervisor and IBM PC system emulator that specializes in
+ *          running old operating systems and software designed for IBM
+ *          PC systems and compatibles from 1981 through fairly recent
+ *          system designs based on the PCI bus.
+ *
+ *          This file is part of the 86Box distribution.
+ *
+ *          86Box VM manager system details module
+ *
+ * Authors: cold-brewed
+ *
+ *          Copyright 2024 cold-brewed
+ */
 #include <QApplication>
 #include <QDebug>
 #include <QStyle>
 
+#include "qt_util.hpp"
 #include "qt_vmmanager_details.hpp"
 #include "ui_qt_vmmanager_details.h"
 
+#define TOOLBUTTON_STYLESHEET_LIGHT "QToolButton {background: transparent; border: none; padding: 5px} QToolButton:hover {background: palette(midlight)} QToolButton:pressed {background: palette(mid)}"
 #ifdef Q_OS_WINDOWS
-extern bool windows_is_light_theme();
+#    define TOOLBUTTON_STYLESHEET_DARK       "QToolButton {padding: 5px}"
+#    define SCREENSHOTBORDER_STYLESHEET_DARK "QLabel { border: 1px solid gray }"
+#else
+#    define TOOLBUTTON_STYLESHEET_DARK "QToolButton {background: transparent; border: none; padding: 5px} QToolButton:hover {background: palette(dark)} QToolButton:pressed {background: palette(mid)}"
 #endif
+#define SCROLLAREA_STYLESHEET_LIGHT  "QWidget {background-color: palette(light)} QScrollBar{ background-color: none }"
+#define SYSTEMLABEL_STYLESHEET_LIGHT "background-color: palette(midlight);"
 
 using namespace VMManager;
 
-VMManagerDetails::VMManagerDetails(QWidget *parent) :
-    QWidget(parent), ui(new Ui::VMManagerDetails) {
+VMManagerDetails::VMManagerDetails(QWidget *parent)
+    : QWidget(parent)
+    , ui(new Ui::VMManagerDetails)
+{
     ui->setupUi(this);
 
-    const auto leftColumnLayout = qobject_cast<QVBoxLayout*>(ui->leftColumn->layout());
+    const auto leftColumnLayout = qobject_cast<QVBoxLayout *>(ui->leftColumn->layout());
 
     // Each section here gets its own VMManagerDetailSection, named in the constructor.
     // When a system is selected in the list view it is updated through this object
@@ -100,24 +106,23 @@ VMManagerDetails::VMManagerDetails(QWidget *parent) :
     QString toolButtonStyleSheet;
     // Simple method to try and determine if light mode is enabled
 #ifdef Q_OS_WINDOWS
-    const bool lightMode = windows_is_light_theme();
+    const bool lightMode = util::isWindowsLightTheme();
 #else
     const bool lightMode = QApplication::palette().window().color().value() > QApplication::palette().windowText().color().value();
 #endif
     if (lightMode) {
-        toolButtonStyleSheet = "QToolButton {background: transparent; border: none; padding: 5px} QToolButton:hover {background: palette(midlight)} QToolButton:pressed {background: palette(mid)}";
+        toolButtonStyleSheet = TOOLBUTTON_STYLESHEET_LIGHT;
     } else {
-#ifndef Q_OS_WINDOWS
-        toolButtonStyleSheet = "QToolButton {background: transparent; border: none; padding: 5px} QToolButton:hover {background: palette(dark)} QToolButton:pressed {background: palette(mid)}";
-#else
-        toolButtonStyleSheet = "QToolButton {padding: 5px}";
-#endif
+        toolButtonStyleSheet = TOOLBUTTON_STYLESHEET_DARK;
     }
     ui->ssNavTBHolder->setStyleSheet(toolButtonStyleSheet);
 
+    pauseIcon = QIcon(":/menuicons/qt/icons/pause.ico");
+    runIcon   = QIcon(":/menuicons/qt/icons/run.ico");
+
     // Experimenting
     startPauseButton = new QToolButton();
-    startPauseButton->setIcon(QIcon(":/menuicons/qt/icons/run.ico"));
+    startPauseButton->setIcon(runIcon);
     startPauseButton->setAutoRaise(true);
     startPauseButton->setEnabled(false);
     startPauseButton->setToolTip(tr("Start"));
@@ -147,25 +152,37 @@ VMManagerDetails::VMManagerDetails(QWidget *parent) :
 
     ui->notesTextEdit->setEnabled(false);
 
+#ifdef Q_OS_WINDOWS
+    connect(this, &VMManagerDetails::styleUpdated, systemSection, &VMManagerDetailSection::updateStyle);
+    connect(this, &VMManagerDetails::styleUpdated, videoSection, &VMManagerDetailSection::updateStyle);
+    connect(this, &VMManagerDetails::styleUpdated, storageSection, &VMManagerDetailSection::updateStyle);
+    connect(this, &VMManagerDetails::styleUpdated, audioSection, &VMManagerDetailSection::updateStyle);
+    connect(this, &VMManagerDetails::styleUpdated, networkSection, &VMManagerDetailSection::updateStyle);
+    connect(this, &VMManagerDetails::styleUpdated, inputSection, &VMManagerDetailSection::updateStyle);
+    connect(this, &VMManagerDetails::styleUpdated, portsSection, &VMManagerDetailSection::updateStyle);
+    connect(this, &VMManagerDetails::styleUpdated, otherSection, &VMManagerDetailSection::updateStyle);
+#endif
+
     sysconfig = new VMManagerSystem();
 }
 
-VMManagerDetails::~VMManagerDetails() {
+VMManagerDetails::~VMManagerDetails()
+{
     delete ui;
 }
 
 void
-VMManagerDetails::updateData(VMManagerSystem *passed_sysconfig) {
+VMManagerDetails::updateData(VMManagerSystem *passed_sysconfig)
+{
 
     // Set the scrollarea background but also set the scroll bar to none. Otherwise it will also
     // set the scrollbar background to the same.
 #ifdef Q_OS_WINDOWS
-    extern bool windows_is_light_theme();
-    if (windows_is_light_theme())
+    if (util::isWindowsLightTheme())
 #endif
     {
-        ui->scrollArea->setStyleSheet("QWidget {background-color: palette(light)} QScrollBar{ background-color: none }");
-        ui->systemLabel->setStyleSheet("background-color: palette(midlight);");
+        ui->scrollArea->setStyleSheet(SCROLLAREA_STYLESHEET_LIGHT);
+        ui->systemLabel->setStyleSheet(SYSTEMLABEL_STYLESHEET_LIGHT);
     }
     // Margins are a little different on macos
 #ifdef Q_OS_MACOS
@@ -189,13 +206,12 @@ VMManagerDetails::updateData(VMManagerSystem *passed_sysconfig) {
     connect(cadButton, &QToolButton::clicked, sysconfig, &VMManagerSystem::cadButtonPressed);
     cadButton->setEnabled(true);
 
-    bool running = sysconfig->getProcessStatus() == VMManagerSystem::ProcessStatus::Running ||
-        sysconfig->getProcessStatus() == VMManagerSystem::ProcessStatus::RunningWaiting;
-    if(running) {
-        startPauseButton->setIcon(QIcon(":/menuicons/qt/icons/pause.ico"));
+    bool running = sysconfig->getProcessStatus() == VMManagerSystem::ProcessStatus::Running || sysconfig->getProcessStatus() == VMManagerSystem::ProcessStatus::RunningWaiting;
+    if (running) {
+        startPauseButton->setIcon(pauseIcon);
         connect(startPauseButton, &QToolButton::clicked, sysconfig, &VMManagerSystem::pauseButtonPressed);
     } else {
-        startPauseButton->setIcon(QIcon(":/menuicons/qt/icons/run.ico"));
+        startPauseButton->setIcon(runIcon);
         connect(startPauseButton, &QToolButton::clicked, sysconfig, &VMManagerSystem::startButtonPressed);
     }
     startPauseButton->setEnabled(true);
@@ -205,9 +221,7 @@ VMManagerDetails::updateData(VMManagerSystem *passed_sysconfig) {
     updateScreenshots(passed_sysconfig);
 
     ui->systemLabel->setText(passed_sysconfig->displayName);
-    ui->statusLabel->setText(sysconfig->process->processId() == 0 ?
-        tr("Not running") :
-        QString("%1: PID %2").arg(tr("Running"), QString::number(sysconfig->process->processId())));
+    ui->statusLabel->setText(sysconfig->process->processId() == 0 ? tr("Not running") : QString("%1: PID %2").arg(tr("Running"), QString::number(sysconfig->process->processId())));
     ui->notesTextEdit->setPlainText(passed_sysconfig->notes);
     ui->notesTextEdit->setEnabled(true);
 
@@ -224,7 +238,8 @@ VMManagerDetails::updateData(VMManagerSystem *passed_sysconfig) {
 }
 
 void
-VMManagerDetails::updateConfig(VMManagerSystem *passed_sysconfig) {
+VMManagerDetails::updateConfig(VMManagerSystem *passed_sysconfig)
+{
     // Each detail section here has its own VMManagerDetailSection.
     // When a system is selected in the list view it is updated here, through this object:
     // * First you clear it with VMManagerDetailSection::clear()
@@ -232,56 +247,66 @@ VMManagerDetails::updateConfig(VMManagerSystem *passed_sysconfig) {
 
     // System
     systemSection->clear();
-    systemSection->addSection("Machine", passed_sysconfig->getDisplayValue(Display::Name::Machine));
-    systemSection->addSection("CPU", passed_sysconfig->getDisplayValue(Display::Name::CPU));
-    systemSection->addSection("Memory", passed_sysconfig->getDisplayValue(Display::Name::Memory));
+    systemSection->addSection("Machine", passed_sysconfig->getDisplayValue(VMManager::Display::Name::Machine));
+    systemSection->addSection("CPU", passed_sysconfig->getDisplayValue(VMManager::Display::Name::CPU));
+    systemSection->addSection("Memory", passed_sysconfig->getDisplayValue(VMManager::Display::Name::Memory));
 
     // Video
     videoSection->clear();
-    videoSection->addSection("Video", passed_sysconfig->getDisplayValue(Display::Name::Video));
-    if(!passed_sysconfig->getDisplayValue(Display::Name::Voodoo).isEmpty()) {
-        videoSection->addSection("Voodoo", passed_sysconfig->getDisplayValue(Display::Name::Voodoo));
+    videoSection->addSection("Video", passed_sysconfig->getDisplayValue(VMManager::Display::Name::Video));
+    if (!passed_sysconfig->getDisplayValue(VMManager::Display::Name::Voodoo).isEmpty()) {
+        videoSection->addSection("Voodoo", passed_sysconfig->getDisplayValue(VMManager::Display::Name::Voodoo));
     }
 
     // Disks
     storageSection->clear();
-    storageSection->addSection("Disks", passed_sysconfig->getDisplayValue(Display::Name::Disks));
-    storageSection->addSection("Floppy", passed_sysconfig->getDisplayValue(Display::Name::Floppy));
-    storageSection->addSection("CD-ROM", passed_sysconfig->getDisplayValue(Display::Name::CD));
-    storageSection->addSection("Removable disks", passed_sysconfig->getDisplayValue(Display::Name::RDisk));
-    storageSection->addSection("MO", passed_sysconfig->getDisplayValue(Display::Name::MO));
-    storageSection->addSection("SCSI", passed_sysconfig->getDisplayValue(Display::Name::SCSIController));
-    storageSection->addSection("Controllers", passed_sysconfig->getDisplayValue(Display::Name::StorageController));
+    storageSection->addSection("Disks", passed_sysconfig->getDisplayValue(VMManager::Display::Name::Disks));
+    storageSection->addSection("Floppy", passed_sysconfig->getDisplayValue(VMManager::Display::Name::Floppy));
+    storageSection->addSection("CD-ROM", passed_sysconfig->getDisplayValue(VMManager::Display::Name::CD));
+    storageSection->addSection("Removable disks", passed_sysconfig->getDisplayValue(VMManager::Display::Name::RDisk));
+    storageSection->addSection("MO", passed_sysconfig->getDisplayValue(VMManager::Display::Name::MO));
+    storageSection->addSection("SCSI", passed_sysconfig->getDisplayValue(VMManager::Display::Name::SCSIController));
+    storageSection->addSection("Controllers", passed_sysconfig->getDisplayValue(VMManager::Display::Name::StorageController));
 
     // Audio
     audioSection->clear();
-    audioSection->addSection("Audio", passed_sysconfig->getDisplayValue(Display::Name::Audio));
-    audioSection->addSection("MIDI Out", passed_sysconfig->getDisplayValue(Display::Name::MidiOut));
+    audioSection->addSection("Audio", passed_sysconfig->getDisplayValue(VMManager::Display::Name::Audio));
+    audioSection->addSection("MIDI Out", passed_sysconfig->getDisplayValue(VMManager::Display::Name::MidiOut));
 
     // Network
     networkSection->clear();
-    networkSection->addSection("NIC", passed_sysconfig->getDisplayValue(Display::Name::NIC));
+    networkSection->addSection("NIC", passed_sysconfig->getDisplayValue(VMManager::Display::Name::NIC));
 
     // Input
     inputSection->clear();
-    inputSection->addSection(tr("Keyboard"), passed_sysconfig->getDisplayValue(Display::Name::Keyboard));
-    inputSection->addSection(tr("Mouse"), passed_sysconfig->getDisplayValue(Display::Name::Mouse));
-    inputSection->addSection(tr("Joystick"), passed_sysconfig->getDisplayValue(Display::Name::Joystick));
+    inputSection->addSection("Keyboard", passed_sysconfig->getDisplayValue(VMManager::Display::Name::Keyboard));
+    inputSection->addSection("Mouse", passed_sysconfig->getDisplayValue(VMManager::Display::Name::Mouse));
+    inputSection->addSection("Joystick", passed_sysconfig->getDisplayValue(VMManager::Display::Name::Joystick));
 
     // Ports
     portsSection->clear();
-    portsSection->addSection(tr("Serial ports"), passed_sysconfig->getDisplayValue(Display::Name::Serial));
-    portsSection->addSection(tr("Parallel ports"), passed_sysconfig->getDisplayValue(Display::Name::Parallel));
+    portsSection->addSection("Serial ports", passed_sysconfig->getDisplayValue(VMManager::Display::Name::Serial));
+    portsSection->addSection("Parallel ports", passed_sysconfig->getDisplayValue(VMManager::Display::Name::Parallel));
 
     // Other devices
     otherSection->clear();
-    otherSection->addSection(tr("ISA RTC"), passed_sysconfig->getDisplayValue(Display::Name::IsaRtc));
-    otherSection->addSection(tr("ISA RAM"), passed_sysconfig->getDisplayValue(Display::Name::IsaMem));
-    otherSection->addSection(tr("ISA ROM"), passed_sysconfig->getDisplayValue(Display::Name::IsaRom));
+    otherSection->addSection("ISA RTC", passed_sysconfig->getDisplayValue(VMManager::Display::Name::IsaRtc));
+    otherSection->addSection("ISA RAM", passed_sysconfig->getDisplayValue(VMManager::Display::Name::IsaMem));
+    otherSection->addSection("ISA ROM", passed_sysconfig->getDisplayValue(VMManager::Display::Name::IsaRom));
+
+    systemSection->setSections();
+    videoSection->setSections();
+    storageSection->setSections();
+    audioSection->setSections();
+    networkSection->setSections();
+    inputSection->setSections();
+    portsSection->setSections();
+    otherSection->setSections();
 }
 
 void
-VMManagerDetails::updateScreenshots(VMManagerSystem *passed_sysconfig) {
+VMManagerDetails::updateScreenshots(VMManagerSystem *passed_sysconfig)
+{
     // Disable screenshot navigation buttons by default
     ui->screenshotNext->setEnabled(false);
     ui->screenshotPrevious->setEnabled(false);
@@ -293,7 +318,7 @@ VMManagerDetails::updateScreenshots(VMManagerSystem *passed_sysconfig) {
     if (!screenshots.empty()) {
         ui->screenshot->setFrameStyle(QFrame::NoFrame);
         ui->screenshot->setEnabled(true);
-        if(screenshots.size() > 1) {
+        if (screenshots.size() > 1) {
             ui->screenshotNext->setEnabled(true);
             ui->screenshotPrevious->setEnabled(true);
             ui->screenshotNextTB->setEnabled(true);
@@ -302,7 +327,7 @@ VMManagerDetails::updateScreenshots(VMManagerSystem *passed_sysconfig) {
 #ifdef Q_OS_WINDOWS
         ui->screenshot->setStyleSheet("");
 #endif
-        if(QFileInfo::exists(screenshots.last().filePath())) {
+        if (QFileInfo::exists(screenshots.last().filePath())) {
             screenshotIndex = screenshots.size() - 1;
             const QPixmap pic(screenshots.at(screenshotIndex).filePath());
             ui->screenshot->setPixmap(pic.scaled(240, 160, Qt::KeepAspectRatio, Qt::SmoothTransformation));
@@ -319,8 +344,8 @@ VMManagerDetails::updateScreenshots(VMManagerSystem *passed_sysconfig) {
         ui->screenshot->setEnabled(false);
         ui->screenshot->setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
 #ifdef Q_OS_WINDOWS
-        if (!windows_is_light_theme()) {
-            ui->screenshot->setStyleSheet("QLabel { border: 1px solid gray }");
+        if (!util::isWindowsLightTheme()) {
+            ui->screenshot->setStyleSheet(SCREENSHOTBORDER_STYLESHEET_DARK);
         } else {
             ui->screenshot->setStyleSheet("");
         }
@@ -329,22 +354,21 @@ VMManagerDetails::updateScreenshots(VMManagerSystem *passed_sysconfig) {
 }
 
 void
-VMManagerDetails::updateProcessStatus() {
-    const bool running = sysconfig->process->state() == QProcess::ProcessState::Running;
-    QString status_text = running ?
-        QString("%1: PID %2").arg(tr("Running"), QString::number(sysconfig->process->processId())) :
-        tr("Not running");
-    status_text.append(sysconfig->window_obscured ? QString(" (%1)").arg(tr("waiting")) : "");
+VMManagerDetails::updateProcessStatus()
+{
+    const bool running     = sysconfig->process->state() == QProcess::ProcessState::Running;
+    QString    status_text = running ? QString("%1: PID %2").arg(tr("Running"), QString::number(sysconfig->process->processId())) : tr("Not running");
+    status_text.append(sysconfig->window_obscured ? QString(" (%1)").arg(tr("Waiting")) : "");
     ui->statusLabel->setText(status_text);
     resetButton->setEnabled(running);
     stopButton->setEnabled(running);
     cadButton->setEnabled(running);
-    if(running) {
-        if(sysconfig->getProcessStatus() == VMManagerSystem::ProcessStatus::Running) {
-            startPauseButton->setIcon(QIcon(":/menuicons/qt/icons/pause.ico"));
+    if (running) {
+        if (sysconfig->getProcessStatus() == VMManagerSystem::ProcessStatus::Running) {
+            startPauseButton->setIcon(pauseIcon);
             startPauseButton->setToolTip(tr("Pause"));
         } else {
-            startPauseButton->setIcon(QIcon(":/menuicons/qt/icons/run.ico"));
+            startPauseButton->setIcon(runIcon);
             startPauseButton->setToolTip(tr("Continue"));
         }
 
@@ -352,7 +376,7 @@ VMManagerDetails::updateProcessStatus() {
         disconnect(startPauseButton, &QToolButton::clicked, sysconfig, &VMManagerSystem::startButtonPressed);
         connect(startPauseButton, &QToolButton::clicked, sysconfig, &VMManagerSystem::pauseButtonPressed);
     } else {
-        startPauseButton->setIcon(QIcon(":/menuicons/qt/icons/run.ico"));
+        startPauseButton->setIcon(runIcon);
         disconnect(startPauseButton, &QToolButton::clicked, sysconfig, &VMManagerSystem::pauseButtonPressed);
         disconnect(startPauseButton, &QToolButton::clicked, sysconfig, &VMManagerSystem::startButtonPressed);
         connect(startPauseButton, &QToolButton::clicked, sysconfig, &VMManagerSystem::startButtonPressed);
@@ -377,6 +401,32 @@ VMManagerDetails::updateWindowStatus()
     qInfo("Window status changed: %i", sysconfig->window_obscured);
     updateProcessStatus();
 }
+
+#ifdef Q_OS_WINDOWS
+void
+VMManagerDetails::updateStyle()
+{
+    QString    toolButtonStyleSheet;
+    const bool lightMode = util::isWindowsLightTheme();
+    if (lightMode) {
+        toolButtonStyleSheet = TOOLBUTTON_STYLESHEET_LIGHT;
+        ui->scrollArea->setStyleSheet(SCROLLAREA_STYLESHEET_LIGHT);
+        ui->systemLabel->setStyleSheet(SYSTEMLABEL_STYLESHEET_LIGHT);
+        if (!ui->screenshot->isEnabled())
+            ui->screenshot->setStyleSheet("");
+    } else {
+        toolButtonStyleSheet = TOOLBUTTON_STYLESHEET_DARK;
+        ui->scrollArea->setStyleSheet("");
+        ui->systemLabel->setStyleSheet("");
+        if (!ui->screenshot->isEnabled())
+            ui->screenshot->setStyleSheet(SCREENSHOTBORDER_STYLESHEET_DARK);
+    }
+    ui->ssNavTBHolder->setStyleSheet(toolButtonStyleSheet);
+    ui->toolButtonHolder->setStyleSheet(toolButtonStyleSheet);
+
+    emit styleUpdated();
+}
+#endif
 
 QWidget *
 VMManagerDetails::createHorizontalLine(const int leftSpacing, const int rightSpacing)
@@ -424,10 +474,9 @@ VMManagerDetails::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched->isWidgetType() && event->type() == QEvent::FocusOut) {
         // Make sure it's the textedit
-        if (const auto *textEdit = qobject_cast<QPlainTextEdit*>(watched); textEdit) {
+        if (const auto *textEdit = qobject_cast<QPlainTextEdit *>(watched); textEdit) {
             saveNotes();
         }
     }
     return QWidget::eventFilter(watched, event);
 }
-

@@ -8,8 +8,6 @@
  *
  *          IBM Monochrome Display and Printer Adapter emulation.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          Miran Grca, <mgrca8@gmail.com>
  *          Connor Hyde, <mario64crashed@gmail.com>
@@ -130,8 +128,8 @@ mda_recalctimings(mda_t *mda)
     double _dispontime;
     double _dispofftime;
     double disptime;
-    disptime     = mda->crtc[MDA_CRTC_HTOTAL] + 1;
-    _dispontime  = mda->crtc[MDA_CRTC_HDISP];
+    disptime     = (mda->crtc[MDA_CRTC_HTOTAL] + 1);
+    _dispontime  = (mda->crtc[MDA_CRTC_HDISP]);
     _dispofftime = disptime - _dispontime;
     _dispontime *= MDACONST;
     _dispofftime *= MDACONST;

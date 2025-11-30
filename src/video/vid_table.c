@@ -8,8 +8,6 @@
  *
  *          Define all known video cards.
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *          Fred N. van Kempen, <decwiz@yahoo.com>
  *
@@ -91,7 +89,6 @@ video_cards[] = {
     { .device = &nga_device,                                    .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &nec_sv9000_device,                             .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &ogc_device,                                    .flags = VIDEO_FLAG_TYPE_NONE },
-    { .device = &jvga_device,                                   .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &oti037c_device,                                .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &oti067_device,                                 .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &oti077_device,                                 .flags = VIDEO_FLAG_TYPE_NONE },
@@ -114,6 +111,7 @@ video_cards[] = {
     { .device = &et4000_isa_device,                             .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &v7_vga_1024i_device,                           .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &wy700_device,                                  .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &v6355d_device,                                 .flags = VIDEO_FLAG_TYPE_NONE },
     /* ISA16 */
     { .device = &mach64gx_isa_device,                           .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &gd5420_isa_device,                             .flags = VIDEO_FLAG_TYPE_NONE },
@@ -126,16 +124,18 @@ video_cards[] = {
     { .device = &gd5434_isa_device,                             .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &gd5434_diamond_speedstar_64_a3_isa_device,     .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &inmos_isa_device,                              .flags = VIDEO_FLAG_TYPE_XGA  },
+    { .device = &jvga_device,                                   .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &radius_svga_multiview_isa_device,              .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_diamond_stealth_vram_isa_device,            .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_orchid_86c911_isa_device,                   .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_ami_86c924_isa_device,                      .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &s3_elsa_winner2000_86c928_isa_device,          .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_metheus_86c928_isa_device,                  .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_phoenix_86c801_isa_device,                  .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_spea_mirage_86c801_isa_device,              .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_winner1000_805_isa_device,                  .flags = VIDEO_FLAG_TYPE_NONE },
-    { .device = &et4000w32_device,                              .flags = VIDEO_FLAG_TYPE_NONE },
-    { .device = &et4000w32i_isa_device,                         .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &et4000w32_machspeed_vga_gui_2400s_isa_device,  .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &et4000w32i_axis_microdevice_isa_device,        .flags = VIDEO_FLAG_TYPE_NONE },
     /* MCA */
     { .device = &mach32_mca_device,                             .flags = VIDEO_FLAG_TYPE_8514 },
     { .device = &gd5426_mca_device,                             .flags = VIDEO_FLAG_TYPE_NONE },
@@ -145,12 +145,13 @@ video_cards[] = {
     /* VLB */
     { .device = &mach32_vlb_device,                             .flags = VIDEO_FLAG_TYPE_8514 },
     { .device = &mach64gx_vlb_device,                           .flags = VIDEO_FLAG_TYPE_NONE },
-    { .device = &et4000w32i_vlb_device,                         .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &et4000w32_machspeed_vga_gui_2400s_vlb_device,  .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &et4000w32i_hercules_dynamite_pro_vlb_device,   .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &et4000w32p_videomagic_revb_vlb_device,         .flags = VIDEO_FLAG_TYPE_NONE },
-    { .device = &et4000w32p_revc_vlb_device,                    .flags = VIDEO_FLAG_TYPE_NONE },
-    { .device = &et4000w32p_cardex_vlb_device,                  .flags = VIDEO_FLAG_TYPE_NONE },
-    { .device = &et4000w32p_vlb_device,                         .flags = VIDEO_FLAG_TYPE_NONE },
-    { .device = &et4000w32p_noncardex_vlb_device,               .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &et4000w32p_cardex_revc_vlb_device,             .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &et4000w32p_generic_revd_vlb_device,            .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &et4000w32p_cardex_revd_vlb_device,             .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &et4000w32p_diamond_revd_vlb_device,            .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &gd5424_vlb_device,                             .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &gd5426_vlb_device,                             .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &gd5428_vlb_device,                             .flags = VIDEO_FLAG_TYPE_NONE },
@@ -159,6 +160,7 @@ video_cards[] = {
     { .device = &gd5430_diamond_speedstar_pro_se_a8_vlb_device, .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &gd5430_vlb_device,                             .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &gd5434_vlb_device,                             .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &s3_elsa_winner1000_86c928_vlb_device,          .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_metheus_86c928_vlb_device,                  .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_mirocrystal_8s_805_vlb_device,              .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_mirocrystal_10sd_805_vlb_device,            .flags = VIDEO_FLAG_TYPE_NONE },
@@ -183,6 +185,8 @@ video_cards[] = {
     /* PCI */
     { .device = &mach32_pci_device,                             .flags = VIDEO_FLAG_TYPE_8514 },
     { .device = &mach64gx_pci_device,                           .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &mach64ct_device,                               .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &mach64vt_device,                               .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &mach64vt2_device,                              .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &bochs_svga_device,                             .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &chips_69000_device,                            .flags = VIDEO_FLAG_TYPE_NONE },
@@ -193,11 +197,11 @@ video_cards[] = {
     { .device = &gd5446_pci_device,                             .flags = VIDEO_FLAG_TYPE_SECONDARY },
     { .device = &gd5446_stb_pci_device,                         .flags = VIDEO_FLAG_TYPE_SECONDARY },
     { .device = &gd5480_pci_device,                             .flags = VIDEO_FLAG_TYPE_NONE },
-    { .device = &et4000w32p_videomagic_revb_pci_device,         .flags = VIDEO_FLAG_TYPE_NONE },
-    { .device = &et4000w32p_revc_pci_device,                    .flags = VIDEO_FLAG_TYPE_NONE },
-    { .device = &et4000w32p_cardex_pci_device,                  .flags = VIDEO_FLAG_TYPE_NONE },
-    { .device = &et4000w32p_noncardex_pci_device,               .flags = VIDEO_FLAG_TYPE_NONE },
-    { .device = &et4000w32p_pci_device,                         .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &et4000w32p_cardex_revc_pci_device,             .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &et4000w32p_generic_revd_pci_device,            .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &et4000w32p_cardex_revd_pci_device,             .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &et4000w32p_diamond_revd_pci_device,            .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &s3_elsa_winner1000_86c928_pci_device,          .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_spea_mercury_lite_86c928_pci_device,        .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_diamond_stealth64_964_pci_device,           .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_elsa_winner2000_pro_x_964_pci_device,       .flags = VIDEO_FLAG_TYPE_NONE },
@@ -229,7 +233,6 @@ video_cards[] = {
     { .device = &s3_diamond_stealth_2000pro_pci_device,         .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_virge_385_pci_device,                       .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_virge_357_pci_device,                       .flags = VIDEO_FLAG_TYPE_NONE },
-    { .device = &s3_diamond_stealth_4000_pci_device,            .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &s3_trio3d2x_pci_device,                        .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &millennium_device,                             .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &millennium_ii_device,                          .flags = VIDEO_FLAG_TYPE_NONE },
@@ -283,6 +286,22 @@ vid_table_log(const char *fmt, ...)
 #    define vid_table_log(fmt, ...)
 #endif
 
+static pc_timer_t framerate_timer;
+
+void
+video_update_framerates(void* priv)
+{
+    (void)priv;
+    int i = 0;
+
+    for (i = 0; i < GFXCARD_MAX; i++) {
+        monitors[i].mon_actualrenderedframes = monitors[i].mon_renderedframes;
+        monitors[i].mon_renderedframes = 0;
+    }
+
+    timer_on_auto(&framerate_timer, 1000 * 1000);
+}
+
 void
 video_reset_close(void)
 {
@@ -308,13 +327,18 @@ video_prepare(void)
 
     for (int i = 0; i < MONITORS_NUM; i++) {
         /* Reset the CGA palette. */
+#if 0
         if (monitors[i].mon_cga_palette)
             *monitors[i].mon_cga_palette = 0;
+#endif
         cgapal_rebuild_monitor(i);
 
         /* Do an inform on the default values, so that that there's some sane values initialized
            even if the device init function does not do an inform of its own. */
         video_inform_monitor(VIDEO_FLAG_TYPE_SPECIAL, &timing_default, i);
+
+        monitors[i].mon_interlace = 0;
+        monitors[i].mon_composite = 0;
     }
 }
 
@@ -358,6 +382,7 @@ video_reset(int card)
         device_add(video_cards[card].device);
     }
 
+    timer_add(&framerate_timer, video_update_framerates, NULL, 1);
     was_reset = 1;
 }
 

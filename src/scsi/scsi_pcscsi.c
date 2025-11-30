@@ -9,8 +9,6 @@
  *          Implementation of the Tekram DC-390 SCSI and related MCA
  *          controllers using the NCR 53c9x series of chips.
  *
- *
- *
  * Authors: Fabrice Bellard (QEMU)
  *          Herve Poussineau (QEMU)
  *          TheCollector1995, <mariogplayer@gmail.com>
@@ -40,11 +38,11 @@
 #include <86box/pci.h>
 #include <86box/device.h>
 #include <86box/nvr.h>
+#include <86box/nmc93cxx.h>
 #include <86box/plat.h>
 #include <86box/scsi.h>
 #include <86box/scsi_device.h>
 #include <86box/scsi_pcscsi.h>
-#include <86box/vid_ati_eeprom.h>
 #include <86box/fifo8.h>
 #include "cpu.h"
 
@@ -141,6 +139,7 @@ enum ESPASCMode {
 
 #define CFG1_RESREPT     0x40
 
+#define TCHI_ESP100A     0x01
 #define TCHI_FAS100A     0x04
 #define TCHI_AM53C974    0x12
 
@@ -178,7 +177,6 @@ typedef struct esp_t {
     int           BIOSBase;
     int           MMIOBase;
     rom_t         bios;
-    ati_eeprom_t  eeprom;
     int           PCIBase;
 
     uint8_t  rregs[ESP_REGS];
@@ -222,9 +220,14 @@ typedef struct esp_t {
 
     uint8_t irq_state;
     uint8_t pos_regs[8];
+
+    uint8_t eeprom_inst;
+    uint8_t eeprom_data[128];
+
+    nmc93cxx_eeprom_t *eeprom;
 } esp_t;
 
-static esp_t reset_state = { 0 };
+static esp_t *reset_state = NULL;
 
 #define READ_FROM_DEVICE 1
 #define WRITE_TO_DEVICE  0
@@ -666,6 +669,7 @@ esp_hard_reset(esp_t *dev)
     dev->tchi_written    = 0;
     dev->asc_mode = ESP_ASC_MODE_DIS;
     dev->rregs[ESP_CFG1] = dev->mca ? dev->HostID : 7;
+    dev->sbac = 1 << 19;
 
     esp_log("ESP Reset\n");
 
@@ -716,7 +720,7 @@ esp_do_dma(esp_t *dev)
 
     len = esp_get_tc(dev);
 
-    esp_log("ESP SCSI Actual DMA len=%d, cfg3=%02x.\n", len, dev->rregs[ESP_CFG3]);
+    esp_log("ESP SCSI Actual DMA len=%d, cfg3=%02x, phase=%x.\n", len, dev->rregs[ESP_CFG3], esp_get_phase(dev));
 
     switch (esp_get_phase(dev)) {
         case STAT_MO:
@@ -1268,7 +1272,7 @@ esp_command_complete(void *priv, uint32_t status)
 static void
 esp_timer_on(esp_t *dev, scsi_device_t *sd, double p)
 {
-    if ((dev->rregs[ESP_CFG3] & 0x18) == 0x18) {
+    if ((dev->wregs[ESP_CFG3] & 0x18) == 0x18) {
         /* Fast SCSI: 10000000 bytes per second */
         dev->period = (p > 0.0) ? p : (((double) sd->buffer_length) * 0.1);
     } else  {
@@ -1316,6 +1320,7 @@ handle_s_without_atn(void *priv)
     if (esp_select(dev) < 0)
         return;
 
+    esp_log("Selection without ATN.\n");
     esp_set_phase(dev, STAT_CD);
     dev->cmdfifo_cdb_offset = 0;
 
@@ -1333,6 +1338,7 @@ handle_satn(void *priv)
     if (esp_select(dev) < 0)
         return;
 
+    esp_log("Selection with ATN.\n");
     esp_set_phase(dev, STAT_MO);
 
     if (dev->dma)
@@ -1434,12 +1440,17 @@ esp_reg_read(esp_t *dev, uint32_t saddr)
             esp_log("Read Interrupt=%02x (old).\n", ret);
             break;
         case ESP_TCHI: /* Return the unique id if the value has never been written */
-            if (!dev->mca && !dev->tchi_written)
-                ret = TCHI_AM53C974;
-            else
-                ret = dev->rregs[ESP_TCHI];
+            if (!dev->tchi_written) {
+                if (dev->mca)
+                    ret = TCHI_ESP100A;
+                else
+                    ret = TCHI_AM53C974;
 
-            esp_log("Read TCHI Register=%02x.\n", ret);
+                esp_log("ChipID=%02x.\n", ret);
+            } else {
+                ret = dev->rregs[ESP_TCHI];
+                esp_log("Read TCHI Register=%02x.\n", ret);
+            }
             break;
         case ESP_RFLAGS:
             ret = fifo8_num_used(&dev->fifo);
@@ -1524,14 +1535,20 @@ esp_reg_write(esp_t *dev, uint32_t saddr, uint32_t val)
                         esp_pci_soft_reset(dev);
                     break;
                 case CMD_BUSRESET:
-                    esp_log("ESP Bus Reset val=%02x.\n", (dev->rregs[ESP_CFG1] & CFG1_RESREPT));
-                    for (uint8_t i = 0; i < 16; i++) {
+                    esp_log("ESP Bus Reset val=%02x.\n", (dev->wregs[ESP_CFG1] & CFG1_RESREPT));
+                    for (uint8_t i = 0; i < 16; i++)
                         scsi_device_reset(&scsi_devices[dev->bus][i]);
-                    }
-                    if (!(dev->rregs[ESP_CFG1] & CFG1_RESREPT)) {
+
+                    if (!(dev->wregs[ESP_CFG1] & CFG1_RESREPT)) {
                         dev->rregs[ESP_RINTR] |= INTR_RST;
                         esp_log("ESP Bus Reset with IRQ\n");
                         esp_raise_irq(dev);
+                    } else {
+                        if (dev->mca) {
+                            esp_lower_irq(dev);
+                            esp_hard_reset(dev);
+                        } else
+                            esp_pci_soft_reset(dev);
                     }
                     break;
                 case CMD_TI:
@@ -1560,7 +1577,7 @@ esp_reg_write(esp_t *dev, uint32_t saddr, uint32_t val)
                     esp_raise_irq(dev);
                     break;
                 case CMD_PAD:
-                    esp_log("val = %02X\n", val);
+                    esp_log("PAD=%02X\n", val);
                     timer_stop(&dev->timer);
                     timer_on_auto(&dev->timer, dev->period);
                     esp_log("ESP Transfer Pad\n");
@@ -1635,6 +1652,7 @@ esp_pci_dma_memory_rw(esp_t *dev, uint8_t *buf, uint32_t len, int dir)
     if (dev->dma_regs[DMA_WBC] < len)
         len = dev->dma_regs[DMA_WBC];
 
+    esp_log("DMA Length=%d.\n", len);
     if (dev->dma_regs[DMA_CMD] & DMA_CMD_MDL) {
         if (len) {
             dma_bm_read(dev->dma_regs[DMA_WMAC], (uint8_t *)&DMAPtr, 4, 4);
@@ -1681,16 +1699,18 @@ esp_pci_dma_memory_rw(esp_t *dev, uint8_t *buf, uint32_t len, int dir)
             }
         }
     } else {
-        addr = dev->dma_regs[DMA_WAC];
+        if (len) {
+            addr = dev->dma_regs[DMA_WAC];
 
-        if (expected_dir)
-            dma_bm_write(addr, buf, len, 4);
-        else
-            dma_bm_read(addr, buf, len, 4);
+            if (expected_dir)
+                dma_bm_write(addr, buf, len, 4);
+            else
+                dma_bm_read(addr, buf, len, 4);
 
-        /* update status registers */
-        dev->dma_regs[DMA_WBC] -= len;
-        dev->dma_regs[DMA_WAC] += len;
+            /* update status registers */
+            dev->dma_regs[DMA_WBC] -= len;
+            dev->dma_regs[DMA_WAC] += len;
+        }
     }
 
     esp_log("Finished count=%d.\n", dev->dma_regs[DMA_WBC]);
@@ -1976,180 +1996,6 @@ esp_bios_disable(esp_t *dev)
 #define EE_ADAPT_OPTION_INT13           0x04
 #define EE_ADAPT_OPTION_SCAM_SUPPORT    0x08
 
-/*To do: make this separate from the SCSI card*/
-static void
-dc390_save_eeprom(esp_t *dev)
-{
-    FILE *fp = nvr_fopen(dev->nvr_path, "wb");
-    if (!fp)
-        return;
-    fwrite(dev->eeprom.data, 1, 128, fp);
-    fclose(fp);
-}
-
-static void
-dc390_write_eeprom(esp_t *dev, int ena, int clk, int dat)
-{
-    /*Actual EEPROM is the same as the one used by the ATI cards, the 93cxx series.*/
-    ati_eeprom_t *eeprom  = &dev->eeprom;
-    uint8_t       tick    = eeprom->count;
-    uint8_t       eedo    = eeprom->out;
-    uint16_t      address = eeprom->address;
-    uint8_t       command = eeprom->opcode;
-
-    esp_log("EEPROM CS=%02x,SK=%02x,DI=%02x,DO=%02x,tick=%d\n",
-            ena, clk, dat, eedo, tick);
-
-    if (!eeprom->oldena && ena) {
-        esp_log("EEPROM Start chip select cycle\n");
-        tick    = 0;
-        command = 0;
-        address = 0;
-    } else if (eeprom->oldena && !ena) {
-        if (!eeprom->wp) {
-            uint8_t subcommand = address >> 4;
-            if (command == 0 && subcommand == 2) {
-                esp_log("EEPROM Erase All\n");
-                for (address = 0; address < 64; address++)
-                    eeprom->data[address] = 0xffff;
-                dc390_save_eeprom(dev);
-            } else if (command == 3) {
-                esp_log("EEPROM Erase Word\n");
-                eeprom->data[address] = 0xffff;
-                dc390_save_eeprom(dev);
-            } else if (tick >= 26) {
-                if (command == 1) {
-                    esp_log("EEPROM Write Word\n");
-                    eeprom->data[address] &= eeprom->dat;
-                    dc390_save_eeprom(dev);
-                } else if (command == 0 && subcommand == 1) {
-                    esp_log("EEPROM Write All\n");
-                    for (address = 0; address < 64; address++)
-                        eeprom->data[address] &= eeprom->dat;
-                    dc390_save_eeprom(dev);
-                }
-            }
-        }
-        eedo = 1;
-        esp_log("EEPROM DO read\n");
-    } else if (ena && !eeprom->oldclk && clk) {
-        if (tick == 0) {
-            if (dat == 0) {
-                esp_log("EEPROM Got correct 1st start bit, waiting for 2nd start bit (1)\n");
-                tick++;
-            } else {
-                esp_log("EEPROM Wrong 1st start bit (is 1, should be 0)\n");
-                tick = 2;
-            }
-        } else if (tick == 1) {
-            if (dat != 0) {
-                esp_log("EEPROM Got correct 2nd start bit, getting command + address\n");
-                tick++;
-            } else {
-                esp_log("EEPROM 1st start bit is longer than needed\n");
-            }
-        } else if (tick < 4) {
-            tick++;
-            command <<= 1;
-            if (dat)
-                command += 1;
-        } else if (tick < 10) {
-            tick++;
-            address = (address << 1) | dat;
-            if (tick == 10) {
-                esp_log("EEPROM command = %02x, address = %02x (val = %04x)\n", command,
-                        address, eeprom->data[address]);
-                if (command == 2)
-                    eedo = 0;
-                address = address % 64;
-                if (command == 0) {
-                    switch (address >> 4) {
-                        case 0:
-                            esp_log("EEPROM Write disable command\n");
-                            eeprom->wp = 1;
-                            break;
-                        case 1:
-                            esp_log("EEPROM Write all command\n");
-                            break;
-                        case 2:
-                            esp_log("EEPROM Erase all command\n");
-                            break;
-                        case 3:
-                            esp_log("EEPROM Write enable command\n");
-                            eeprom->wp = 0;
-                            break;
-
-                        default:
-                            break;
-                    }
-                } else {
-                    esp_log("EEPROM Read, write or erase word\n");
-                    eeprom->dat = eeprom->data[address];
-                }
-            }
-        } else if (tick < 26) {
-            tick++;
-            if (command == 2) {
-                esp_log("EEPROM Read Word\n");
-                eedo = ((eeprom->dat & 0x8000) != 0);
-            }
-            eeprom->dat <<= 1;
-            eeprom->dat += dat;
-        } else {
-            esp_log("EEPROM Additional unneeded tick, not processed\n");
-        }
-    }
-
-    eeprom->count   = tick;
-    eeprom->oldena  = ena;
-    eeprom->oldclk  = clk;
-    eeprom->out     = eedo;
-    eeprom->address = address;
-    eeprom->opcode  = command;
-    esp_log("EEPROM EEDO = %d\n", eeprom->out);
-}
-
-static void
-dc390_load_eeprom(esp_t *dev)
-{
-    ati_eeprom_t *eeprom = &dev->eeprom;
-    uint8_t      *nvr    = (uint8_t *) eeprom->data;
-    int           i;
-    uint16_t      checksum = 0;
-    FILE         *fp;
-
-    eeprom->out = 1;
-
-    fp = nvr_fopen(dev->nvr_path, "rb");
-    if (fp) {
-        esp_log("EEPROM Load\n");
-        if (fread(nvr, 1, 128, fp) != 128)
-            fatal("dc390_eeprom_load(): Error reading data\n");
-        fclose(fp);
-    } else {
-        for (i = 0; i < 16; i++) {
-            nvr[i * 2]     = 0x57;
-            nvr[i * 2 + 1] = 0x00;
-        }
-
-        esp_log("EEPROM Defaults\n");
-
-        nvr[EE_ADAPT_SCSI_ID] = 7;
-        nvr[EE_MODE2]         = 0x0f;
-        nvr[EE_TAG_CMD_NUM]   = 0x04;
-        nvr[EE_ADAPT_OPTIONS] = EE_ADAPT_OPTION_F6_F8_AT_BOOT | EE_ADAPT_OPTION_BOOT_FROM_CDROM | EE_ADAPT_OPTION_INT13;
-        for (i = 0; i < EE_CHKSUM1; i += 2) {
-            checksum += ((nvr[i] & 0xff) | (nvr[i + 1] << 8));
-            esp_log("Checksum calc = %04x, nvr = %02x\n", checksum, nvr[i]);
-        }
-
-        checksum        = 0x1234 - checksum;
-        nvr[EE_CHKSUM1] = checksum & 0xff;
-        nvr[EE_CHKSUM2] = checksum >> 8;
-        esp_log("EEPROM Checksum = %04x\n", checksum);
-    }
-}
-
 static uint8_t
 esp_pci_read(UNUSED(int func), int addr, void *priv)
 {
@@ -2163,10 +2009,10 @@ esp_pci_read(UNUSED(int func), int addr, void *priv)
             if (!dev->has_bios || dev->local)
                 return 0x22;
             else {
-                if (dev->eeprom.out)
+                if (nmc93cxx_eeprom_read(dev->eeprom))
                     return 0x22;
                 else {
-                    dev->eeprom.out = 1;
+                    dev->eeprom->dev.out = 1;
                     return 2;
                 }
             }
@@ -2184,7 +2030,7 @@ esp_pci_read(UNUSED(int func), int addr, void *priv)
         case 0x07:
             return esp_pci_regs[0x07] | 0x02;
         case 0x08:
-            return 0x10; /*Revision ID*/
+            return (dev->local == 1) ? 0 : 0x10; /*Revision ID*/
         case 0x09:
             return 0; /*Programming interface*/
         case 0x0A:
@@ -2252,9 +2098,9 @@ esp_pci_write(UNUSED(int func), int addr, uint8_t val, void *priv)
             if (addr == 0x80) {
                 eesk = val & 0x80 ? 1 : 0;
                 eedi = val & 0x40 ? 1 : 0;
-                dc390_write_eeprom(dev, 1, eesk, eedi);
+                nmc93cxx_eeprom_write(dev->eeprom, 1, eesk, eedi);
             } else if (addr == 0xc0)
-                dc390_write_eeprom(dev, 0, 0, 0);
+                nmc93cxx_eeprom_write(dev->eeprom, 0, 0, 0);
             // esp_log("ESP PCI: Write value %02X to register %02X\n", val, addr);
             return;
         }
@@ -2353,26 +2199,36 @@ esp_pci_reset(void *priv)
 {
     esp_t *dev = (esp_t *) priv;
 
-    timer_disable(&dev->timer);
+    if (reset_state != NULL) {
+        esp_io_remove(dev, dev->PCIBase, 0x80);
+        esp_bios_disable(dev);
+        timer_stop(&dev->timer);
 
-    reset_state.bios.mapping     = dev->bios.mapping;
+        reset_state->bios.mapping     = dev->bios.mapping;
+        reset_state->timer            = dev->timer;
+        reset_state->pci_slot         = dev->pci_slot;
 
-    reset_state.timer            = dev->timer;
+        *dev = *reset_state;
 
-    reset_state.pci_slot         = dev->pci_slot;
-
-    memcpy(dev, &reset_state, sizeof(esp_t));
-
-    dev->sbac = 1 << 19;
+        esp_pci_soft_reset(dev);
+        esp_log("PCI Reset.\n");
+    } else
+        esp_log("NULL.\n");
 }
 
 static void *
 dc390_init(const device_t *info)
 {
     esp_t *dev = calloc(1, sizeof(esp_t));
+    reset_state = calloc(1, sizeof(esp_t));
     const char *bios_rev = NULL;
     uint32_t mask = 0;
     uint32_t size = 0x8000;
+    nmc93cxx_eeprom_params_t params;
+    char        eeprom_filename[1024] = { 0 };
+    char        filename[1024] = { 0 };
+    uint16_t    checksum = 0x0000;
+    uint8_t     i;
 
     dev->bus = scsi_get_bus();
 
@@ -2416,10 +2272,40 @@ dc390_init(const device_t *info)
         esp_bios_disable(dev);
 
     if (!dev->local) {
-        sprintf(dev->nvr_path, "dc390_%i.nvr", device_get_instance());
+        dev->eeprom_inst = device_get_instance();
+
+        snprintf(eeprom_filename, sizeof(eeprom_filename), "dc390_%d.nvr", dev->eeprom_inst);
 
         /* Load the serial EEPROM. */
-        dc390_load_eeprom(dev);
+        for (i = 0; i < 16; i++) {
+            dev->eeprom_data[i * 2]     = 0x57;
+            dev->eeprom_data[i * 2 + 1] = 0x00;
+        }
+
+        esp_log("EEPROM Defaults\n");
+
+        dev->eeprom_data[EE_ADAPT_SCSI_ID] = 7;
+        dev->eeprom_data[EE_MODE2]         = 0x0f;
+        dev->eeprom_data[EE_TAG_CMD_NUM]   = 0x04;
+        dev->eeprom_data[EE_ADAPT_OPTIONS] = EE_ADAPT_OPTION_F6_F8_AT_BOOT | EE_ADAPT_OPTION_BOOT_FROM_CDROM | EE_ADAPT_OPTION_INT13;
+        for (i = 0; i < EE_CHKSUM1; i += 2) {
+            checksum += ((dev->eeprom_data[i] & 0xff) | (dev->eeprom_data[i + 1] << 8));
+            esp_log("Checksum calc = %04x, nvr = %02x\n", checksum, dev->eeprom_data[i]);
+        }
+
+        checksum        = 0x1234 - checksum;
+        dev->eeprom_data[EE_CHKSUM1] = checksum & 0xff;
+        dev->eeprom_data[EE_CHKSUM2] = checksum >> 8;
+
+        params.nwords          = 64;
+        params.default_content = (uint16_t *) dev->eeprom_data;
+        params.filename        = filename;
+        snprintf(filename, sizeof(filename), "nmc93cxx_eeprom_%s_%d.nvr", info->internal_name, dev->eeprom_inst);
+        dev->eeprom = device_add_inst_params(&nmc93cxx_device, dev->eeprom_inst, &params);
+        if (dev->eeprom == NULL) {
+            free(dev);
+            return NULL;
+        }
     }
 
     esp_pci_hard_reset(dev);
@@ -2431,7 +2317,7 @@ dc390_init(const device_t *info)
 
     scsi_bus_set_speed(dev->bus, 10000000.0);
 
-    memcpy(&reset_state, dev, sizeof(esp_t));
+    *reset_state = *dev;
 
     return dev;
 }
@@ -2604,7 +2490,7 @@ ncr53c9x_mca_init(const device_t *info)
     fifo8_create(&dev->fifo, ESP_FIFO_SZ);
     fifo8_create(&dev->cmdfifo, ESP_CMDFIFO_SZ);
 
-    dev->pos_regs[0] = 0x4f; /* MCA board ID */
+    dev->pos_regs[0] = 0x4d; /* MCA board ID */
     dev->pos_regs[1] = 0x7f;
     mca_add(ncr53c9x_mca_read, ncr53c9x_mca_write, ncr53c9x_mca_feedb, NULL, dev);
 
@@ -2628,6 +2514,11 @@ esp_close(void *priv)
         fifo8_destroy(&dev->fifo);
         fifo8_destroy(&dev->cmdfifo);
 
+        if (reset_state != NULL) {
+            free(reset_state);
+            reset_state = NULL;
+        }
+
         free(dev);
         dev = NULL;
     }
@@ -2635,6 +2526,44 @@ esp_close(void *priv)
 
 static const device_config_t bios_enable_config[] = {
   // clang-format off
+    {
+        .name           = "bios",
+        .description    = "Enable BIOS",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+  // clang-format on
+};
+
+static const device_config_t am53c974_bios_enable_config[] = {
+  // clang-format off
+    {
+        .name           = "bios_rev",
+        .description    = "BIOS Revision",
+        .type           = CONFIG_BIOS,
+        .default_string = "v3_01_amd",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .bios           = {
+            {
+                .name          = "Version 3.01 (AMD)",
+                .internal_name = "v3_01_amd",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 16384,
+                .files         = { AM53C974_3_01_AMD_ROM, "" }
+            },
+            { .files_no = 0 }
+        },
+    },
     {
         .name           = "bios",
         .description    = "Enable BIOS",
@@ -2739,10 +2668,24 @@ const device_t dc390_pci_device = {
 };
 
 const device_t am53c974_pci_device = {
-    .name          = "AMD 53c974A PCI",
+    .name          = "AMD 53c974 PCI",
     .internal_name = "am53c974",
     .flags         = DEVICE_PCI,
     .local         = 1,
+    .init          = dc390_init,
+    .close         = esp_close,
+    .reset         = esp_pci_reset,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = am53c974_bios_enable_config
+};
+
+const device_t am53c974a_pci_device = {
+    .name          = "AMD 53c974A PCI",
+    .internal_name = "am53c974a",
+    .flags         = DEVICE_PCI,
+    .local         = 2,
     .init          = dc390_init,
     .close         = esp_close,
     .reset         = esp_pci_reset,

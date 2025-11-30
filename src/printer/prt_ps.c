@@ -9,15 +9,12 @@
  *          Implementation of a generic PostScript printer and a
  *          generic PCL 5e printer.
  *
- *
- *
  * Authors: David Hrdlička, <hrdlickadavid@outlook.com>
  *          Cacodemon345
  *
  *          Copyright 2019 David Hrdlička.
  *          Copyright 2024 Cacodemon345.
  */
-
 #include <inttypes.h>
 #include <memory.h>
 #include <stdbool.h>
@@ -48,13 +45,8 @@
 #define gs_error_Quit        -101
 
 #ifdef _WIN32
-#    if (!(defined __amd64__ || defined _M_X64 || defined __aarch64__ || defined _M_ARM64))
-#        define PATH_GHOSTSCRIPT_DLL "gsdll32.dll"
-#        define PATH_GHOSTPCL_DLL    "gpcl6dll32.dll"
-#    else
-#        define PATH_GHOSTSCRIPT_DLL "gsdll64.dll"
-#        define PATH_GHOSTPCL_DLL    "gpcl6dll64.dll"
-#    endif
+#    define PATH_GHOSTSCRIPT_DLL "gsdll64.dll"
+#    define PATH_GHOSTPCL_DLL    "gpcl6dll64.dll"
 #elif defined __APPLE__
 #    define PATH_GHOSTSCRIPT_DLL "libgs.dylib"
 #    define PATH_GHOSTPCL_DLL    "libgpcl6.9.54.dylib"
@@ -136,7 +128,7 @@ reset_ps(ps_t *dev)
     dev->buffer_pos = 0;
 
     timer_disable(&dev->pulse_timer);
-    timer_disable(&dev->timeout_timer);
+    timer_stop(&dev->timeout_timer);
 }
 
 static void
@@ -253,7 +245,7 @@ timeout_timer(void *priv)
 
     write_buffer(dev, true);
 
-    timer_disable(&dev->timeout_timer);
+    timer_stop(&dev->timeout_timer);
 }
 
 static void
@@ -323,17 +315,6 @@ process_data(ps_t *dev)
 }
 
 static void
-ps_autofeed(uint8_t val, void *priv)
-{
-    ps_t *dev = (ps_t *) priv;
-
-    if (dev == NULL)
-        return;
-
-    dev->autofeed = val & 0x02 ? true : false;
-}
-
-static void
 ps_strobe(uint8_t old, uint8_t val, void *priv)
 {
     ps_t *dev = (ps_t *) priv;
@@ -344,8 +325,8 @@ ps_strobe(uint8_t old, uint8_t val, void *priv)
     if (!(val & 0x01) && (old & 0x01)) {
         process_data(dev);
 
-        if (timer_is_enabled(&dev->timeout_timer)) {
-            timer_disable(&dev->timeout_timer);
+        if (timer_is_on(&dev->timeout_timer)) {
+            timer_stop(&dev->timeout_timer);
 #ifdef USE_DYNAREC
             if (cpu_use_dynarec)
                 update_tsc();
@@ -355,7 +336,7 @@ ps_strobe(uint8_t old, uint8_t val, void *priv)
         dev->ack = true;
 
         timer_set_delay_u64(&dev->pulse_timer, ISACONST);
-        timer_set_delay_u64(&dev->timeout_timer, 5000000 * TIMER_USEC);
+        timer_on_auto(&dev->timeout_timer, 5000000.0);
     }
 }
 
@@ -382,8 +363,8 @@ ps_write_ctrl(uint8_t val, void *priv)
     if (!(val & 0x01) && (dev->ctrl & 0x01)) {
         process_data(dev);
 
-        if (timer_is_enabled(&dev->timeout_timer)) {
-            timer_disable(&dev->timeout_timer);
+        if (timer_is_on(&dev->timeout_timer)) {
+            timer_stop(&dev->timeout_timer);
 #ifdef USE_DYNAREC
             if (cpu_use_dynarec)
                 update_tsc();
@@ -393,7 +374,7 @@ ps_write_ctrl(uint8_t val, void *priv)
         dev->ack = true;
 
         timer_set_delay_u64(&dev->pulse_timer, ISACONST);
-        timer_set_delay_u64(&dev->timeout_timer, 5000000 * TIMER_USEC);
+        timer_on_auto(&dev->timeout_timer, 5000000.0);
     }
 
     dev->ctrl = val;
@@ -533,7 +514,6 @@ const lpt_device_t lpt_prt_ps_device = {
     .close            = ps_close,
     .write_data       = ps_write_data,
     .write_ctrl       = ps_write_ctrl,
-    .autofeed         = ps_autofeed,
     .strobe           = ps_strobe,
     .read_status      = ps_read_status,
     .read_ctrl        = NULL,
@@ -551,7 +531,6 @@ const lpt_device_t lpt_prt_pcl_device = {
     .close            = ps_close,
     .write_data       = ps_write_data,
     .write_ctrl       = ps_write_ctrl,
-    .autofeed         = ps_autofeed,
     .strobe           = ps_strobe,
     .read_status      = ps_read_status,
     .read_ctrl        = NULL,

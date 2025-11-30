@@ -747,8 +747,17 @@ static void
 rdisk_buf_alloc(rdisk_t *dev, const uint32_t len)
 {
     rdisk_log(dev->log, "Allocated buffer length: %i\n", len);
-    if (dev->buffer == NULL)
+
+    if (dev->buffer == NULL) {
         dev->buffer = (uint8_t *) malloc(len);
+        dev->buffer_sz = len;
+    }
+
+    if (len > dev->buffer_sz) {
+        uint8_t *buf = (uint8_t *) realloc(dev->buffer, len);
+        dev->buffer = buf;
+        dev->buffer_sz = len;
+    }
 }
 
 static void
@@ -2091,7 +2100,7 @@ rdisk_get_max(UNUSED(const ide_t *ide), const int ide_has_dma, const int type)
 
     switch (type) {
         case TYPE_PIO:
-            ret = ide_has_dma ? 3 : 0;
+            ret = 3;
             break;
         case TYPE_SDMA:
         default:
@@ -2118,10 +2127,10 @@ rdisk_get_timings(UNUSED(const ide_t *ide), const int ide_has_dma, const int typ
             ret = ide_has_dma ? 0x96 : 0;
             break;
         case TIMINGS_PIO:
-            ret = ide_has_dma ? 0xb4 : 0;
+            ret = 0xf0;
             break;
         case TIMINGS_PIO_FC:
-            ret = ide_has_dma ? 0xb4 : 0;
+            ret = 0xb4;
             break;
         default:
             ret = 0;

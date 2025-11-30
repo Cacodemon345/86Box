@@ -8,8 +8,6 @@
  *
  *          Definitions for the video controller module.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          Miran Grca, <mgrca8@gmail.com>
  *          Fred N. van Kempen, <decwiz@yahoo.com>
@@ -18,7 +16,6 @@
  *          Copyright 2016-2019 Miran Grca.
  *          Copyright 2017-2019 Fred N. van Kempen.
  */
-
 #ifndef EMU_VIDEO_H
 #define EMU_VIDEO_H
 
@@ -30,8 +27,8 @@ using atomic_int  = std::atomic_int;
 #    include <stdatomic.h>
 #endif
 
-#define makecol(r, g, b)   ((b) | ((g) << 8) | ((r) << 16))
-#define makecol32(r, g, b) ((b) | ((g) << 8) | ((r) << 16))
+#define makecol(r, g, b)   ((b) | ((g) << 8) | ((r) << 16) | 0xff000000)
+#define makecol32(r, g, b) ((b) | ((g) << 8) | ((r) << 16) | 0xff000000)
 #define getcolr(color) (((color) >> 16) & 0xFF)
 #define getcolg(color) (((color) >> 8) & 0xFF)
 #define getcolb(color) ((color) & 0xFF)
@@ -130,6 +127,8 @@ typedef struct monitor_t {
     int                      mon_force_resize;
     int                      mon_fullchange;
     int                      mon_changeframecount;
+    int                      mon_renderedframes;
+    atomic_int               mon_actualrenderedframes;
     atomic_int               mon_screenshots;
     uint32_t                *mon_pal_lookup;
     int                     *mon_cga_palette;
@@ -137,6 +136,8 @@ typedef struct monitor_t {
     int                      mon_cga_palette_static; /* Whether it should not be freed by the API. */
     const video_timings_t   *mon_vid_timings;
     int                      mon_vid_type;
+    atomic_bool              mon_interlace;
+    atomic_bool              mon_composite;
     struct blit_data_struct *mon_blit_data_ptr;
 } monitor_t;
 
@@ -331,6 +332,9 @@ extern void da2_device_add(void);
 extern const device_t mach64gx_isa_device;
 extern const device_t mach64gx_vlb_device;
 extern const device_t mach64gx_pci_device;
+extern const device_t mach64ct_device;
+extern const device_t mach64ct_device_onboard;
+extern const device_t mach64vt_device;
 extern const device_t mach64vt2_device;
 
 /* ATi 18800 */
@@ -399,17 +403,16 @@ extern const device_t gd5446_pci_device;
 extern const device_t gd5446_stb_pci_device;
 extern const device_t gd5480_pci_device;
 
-
-/* IBM CGA*/
+/* IBM CGA */
 extern const device_t cga_device;
 
-/* pravetz CGA */
+/* Pravetz CGA */
 extern const device_t cga_pravetz_device;
 
 /* Compaq CGA */
 extern const device_t compaq_cga_device;
 extern const device_t compaq_cga_2_device;
-extern const device_t compaq_plasma_device; 
+extern const device_t compaq_plasma_device;
 
 /* Olivetti OGC */
 extern const device_t ogc_device;
@@ -433,20 +436,20 @@ extern const device_t et4000_kasan_isa_device;
 extern const device_t et4000_mca_device;
 
 /* Tseng ET4000-W32x */
-extern const device_t et4000w32_device;
+extern const device_t et4000w32_machspeed_vga_gui_2400s_isa_device;
+extern const device_t et4000w32_machspeed_vga_gui_2400s_vlb_device;
 extern const device_t et4000w32_onboard_device;
-extern const device_t et4000w32i_isa_device;
-extern const device_t et4000w32i_vlb_device;
+extern const device_t et4000w32i_axis_microdevice_isa_device;
+extern const device_t et4000w32i_hercules_dynamite_pro_vlb_device;
 extern const device_t et4000w32p_videomagic_revb_vlb_device;
-extern const device_t et4000w32p_videomagic_revb_pci_device;
-extern const device_t et4000w32p_revc_vlb_device;
-extern const device_t et4000w32p_revc_pci_device;
-extern const device_t et4000w32p_vlb_device;
-extern const device_t et4000w32p_pci_device;
-extern const device_t et4000w32p_noncardex_vlb_device;
-extern const device_t et4000w32p_noncardex_pci_device;
-extern const device_t et4000w32p_cardex_vlb_device;
-extern const device_t et4000w32p_cardex_pci_device;
+extern const device_t et4000w32p_cardex_revc_vlb_device;
+extern const device_t et4000w32p_cardex_revc_pci_device;
+extern const device_t et4000w32p_cardex_revd_vlb_device;
+extern const device_t et4000w32p_cardex_revd_pci_device;
+extern const device_t et4000w32p_diamond_revd_vlb_device;
+extern const device_t et4000w32p_diamond_revd_pci_device;
+extern const device_t et4000w32p_generic_revd_vlb_device;
+extern const device_t et4000w32p_generic_revd_pci_device;
 
 /* MDSI Genius VHR */
 extern const device_t genius_device;
@@ -487,6 +490,7 @@ extern const device_t oti067_device;
 extern const device_t oti067_acer386_device;
 extern const device_t oti067_ama932j_device;
 extern const device_t oti077_acer100t_device;
+extern const device_t oti077_pcs44c_device;
 extern const device_t oti077_device;
 
 /* Paradise/WD (S)VGA */
@@ -509,8 +513,11 @@ extern const device_t realtek_rtg3106_device;
 extern const device_t s3_orchid_86c911_isa_device;
 extern const device_t s3_diamond_stealth_vram_isa_device;
 extern const device_t s3_ami_86c924_isa_device;
+extern const device_t s3_elsa_winner1000_86c928_vlb_device;
+extern const device_t s3_elsa_winner2000_86c928_isa_device;
 extern const device_t s3_metheus_86c928_isa_device;
 extern const device_t s3_metheus_86c928_vlb_device;
+extern const device_t s3_elsa_winner1000_86c928_pci_device;
 extern const device_t s3_spea_mercury_lite_86c928_pci_device;
 extern const device_t s3_spea_mirage_86c801_isa_device;
 extern const device_t s3_winner1000_805_isa_device;
@@ -573,7 +580,6 @@ extern const device_t s3_diamond_stealth_2000pro_pci_device;
 extern const device_t s3_virge_385_pci_device;
 extern const device_t s3_virge_357_pci_device;
 extern const device_t s3_virge_357_agp_device;
-extern const device_t s3_diamond_stealth_4000_pci_device;
 extern const device_t s3_diamond_stealth_4000_agp_device;
 extern const device_t s3_trio3d2x_pci_device;
 extern const device_t s3_trio3d2x_agp_device;
@@ -628,10 +634,13 @@ extern const device_t velocity_200_agp_device;
 /* Wyse 700 */
 extern const device_t wy700_device;
 
+/* Yamaha V6355 */
+extern const device_t v6355d_device;
+
 /* Tandy */
-extern const device_t tandy_1000_video_device; 
-extern const device_t tandy_1000hx_video_device; 
-extern const device_t tandy_1000sl_video_device; 
+extern const device_t tandy_1000_video_device;
+extern const device_t tandy_1000hx_video_device;
+extern const device_t tandy_1000sl_video_device;
 
 #endif
 

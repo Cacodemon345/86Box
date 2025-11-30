@@ -8,13 +8,10 @@
  *
  *          Header files for the PCjr keyboard and video subsystems.
  *
- *
- *
  * Authors: Connor Hyde, <mario64crashed@gmail.com>
  *
  *          Copyright 2025 starfrost
  */
-
 #pragma once
 
 #define PCJR_RGB          0
@@ -22,8 +19,12 @@
 #define PCJR_RGB_NO_BROWN 4
 #define PCJR_RGB_IBM_5153 5
 
-typedef struct pcjr_s 
-{
+#define DOUBLE_NONE               0
+#define DOUBLE_SIMPLE             1
+#define DOUBLE_INTERPOLATE_SRGB   2
+#define DOUBLE_INTERPOLATE_LINEAR 3
+
+typedef struct pcjr_s {
     /* Video Controller stuff. */
     mem_mapping_t mapping;
     uint8_t       crtc[32];
@@ -41,7 +42,7 @@ typedef struct pcjr_s
     int           scanline;
     int           vc;
     int           dispon;
-    int           cursorvisible;            // Is the cursor visible on the current scanline?
+    int           cursorvisible; // Is the cursor visible on the current scanline?
     int           cursoron;
     int           blink;
     int           vsynctime;
@@ -56,14 +57,20 @@ typedef struct pcjr_s
     int           lastline;
     int           composite;
     int           apply_hd;
+    int           double_type;
 
-        /* Keyboard Controller stuff. */
+    /* Keyboard Controller stuff. */
     int        latched;
     int        data;
     int        serial_data[44];
     int        serial_pos;
     uint8_t    pa;
     uint8_t    pb;
+
+    uint8_t    option_modem;
+    uint8_t    option_fdc;
+    uint8_t    option_ir;
+
     pc_timer_t send_delay_timer;
 
 } pcjr_t; 

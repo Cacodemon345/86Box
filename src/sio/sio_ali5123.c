@@ -8,8 +8,6 @@
  *
  *          Implementation of the ALi M5123/1543C Super I/O Chip.
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *
  *          Copyright 2016-2018 Miran Grca.
@@ -82,13 +80,15 @@ ali5123_fdc_handler(ali5123_t *dev)
 static void
 ali5123_lpt_handler(ali5123_t *dev)
 {
-    uint16_t ld_port       = 0x0000;
-    uint16_t mask          = 0xfffc;
-    uint8_t  global_enable = !(dev->regs[0x22] & (1 << 3));
-    uint8_t  local_enable  = !!dev->ld_regs[3][0x30];
-    uint8_t  lpt_irq       = dev->ld_regs[3][0x70];
-    uint8_t  lpt_dma       = dev->ld_regs[3][0x74];
-    uint8_t  lpt_mode      = dev->ld_regs[3][0xf0] & 0x07;
+    uint16_t ld_port         = 0x0000;
+    uint16_t mask            = 0xfffc;
+    uint8_t  global_enable   = !(dev->regs[0x22] & (1 << 3));
+    uint8_t  local_enable    = !!dev->ld_regs[3][0x30];
+    uint8_t  lpt_irq         = dev->ld_regs[3][0x70];
+    uint8_t  lpt_dma         = dev->ld_regs[3][0x74];
+    uint8_t  lpt_mode        = dev->ld_regs[3][0xf0] & 0x07;
+    uint8_t  irq_readout[16] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x00, 0x08,
+                                 0x00, 0x10, 0x18, 0x20, 0x00, 0x28, 0x30, 0x00 };
 
     if (lpt_irq > 15)
         lpt_irq = 0xff;
@@ -137,6 +137,9 @@ ali5123_lpt_handler(ali5123_t *dev)
     }
     lpt_port_irq(dev->lpt, lpt_irq);
     lpt_port_dma(dev->lpt, lpt_dma);
+
+    lpt_set_cnfgb_readout(dev->lpt, ((lpt_irq > 15) ? 0x00 : irq_readout[lpt_irq]) |
+                                    ((lpt_dma >= 4) ? 0x00 : lpt_dma));
 }
 
 static void
@@ -525,7 +528,7 @@ ali5123_init(const device_t *info)
     io_sethandler(FDC_PRIMARY_ADDR, 0x0002,
                   ali5123_read, NULL, NULL, ali5123_write, NULL, NULL, dev);
 
-    device_add(&kbc_ps2_ali_pci_device);
+    device_add_params(&kbc_at_device, (void *) KBC_VEN_ALI);
 
     return dev;
 }

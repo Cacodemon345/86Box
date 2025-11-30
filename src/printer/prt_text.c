@@ -13,8 +13,6 @@
  *          printer mechanics. This would lead to a page being 66 lines
  *          of 80 characters each.
  *
- *
- *
  * Authors: Fred N. van Kempen, <decwiz@yahoo.com>
  *
  *          Copyright 2018-2019 Fred N. van Kempen.
@@ -214,7 +212,7 @@ timeout_timer(void *priv)
     if (dev->page->dirty)
         new_page(dev);
 
-    timer_disable(&dev->timeout_timer);
+    timer_stop(&dev->timeout_timer);
 }
 
 static void
@@ -244,7 +242,7 @@ reset_printer(prnt_t *dev)
     plat_tempfile(dev->filename, NULL, ".txt");
 
     timer_disable(&dev->pulse_timer);
-    timer_disable(&dev->timeout_timer);
+    timer_stop(&dev->timeout_timer);
 }
 
 static int
@@ -370,18 +368,6 @@ write_data(uint8_t val, void *priv)
 }
 
 static void
-autofeed(uint8_t val, void *priv)
-{
-    prnt_t *dev = (prnt_t *) priv;
-
-    if (dev == NULL)
-        return;
-
-    /* set autofeed value */
-    dev->autofeed = val & 0x02 ? 1 : 0;
-}
-
-static void
 strobe(uint8_t old, uint8_t val, void *priv)
 {
     prnt_t *dev = (prnt_t *) priv;
@@ -393,8 +379,8 @@ strobe(uint8_t old, uint8_t val, void *priv)
         /* Process incoming character. */
         handle_char(dev);
 
-        if (timer_is_enabled(&dev->timeout_timer)) {
-            timer_disable(&dev->timeout_timer);
+        if (timer_is_on(&dev->timeout_timer)) {
+            timer_stop(&dev->timeout_timer);
 #ifdef USE_DYNAREC
             if (cpu_use_dynarec)
                 update_tsc();
@@ -405,7 +391,7 @@ strobe(uint8_t old, uint8_t val, void *priv)
         dev->ack = 1;
 
         timer_set_delay_u64(&dev->pulse_timer, ISACONST);
-        timer_set_delay_u64(&dev->timeout_timer, 5000000 * TIMER_USEC);
+        timer_on_auto(&dev->timeout_timer, 5000000.0);
     }
 }
 
@@ -418,7 +404,7 @@ write_ctrl(uint8_t val, void *priv)
         return;
 
     /* set autofeed value */
-    dev->autofeed = val & 0x02 ? 1 : 0;
+    dev->autofeed = (val & 0x02) ? 1 : 0;
 
     if (val & 0x08) { /* SELECT */
         /* select printer */
@@ -439,8 +425,8 @@ write_ctrl(uint8_t val, void *priv)
         /* ACK it, will be read on next READ STATUS. */
         dev->ack = 1;
 
-        if (timer_is_enabled(&dev->timeout_timer)) {
-            timer_disable(&dev->timeout_timer);
+        if (timer_is_on(&dev->timeout_timer)) {
+            timer_stop(&dev->timeout_timer);
 #ifdef USE_DYNAREC
             if (cpu_use_dynarec)
                 update_tsc();
@@ -448,7 +434,7 @@ write_ctrl(uint8_t val, void *priv)
         }
 
         timer_set_delay_u64(&dev->pulse_timer, ISACONST);
-        timer_set_delay_u64(&dev->timeout_timer, 5000000 * TIMER_USEC);
+        timer_on_auto(&dev->timeout_timer, 5000000.0);
     }
 
     dev->ctrl = val;
@@ -562,7 +548,6 @@ const lpt_device_t lpt_prt_text_device = {
     .close            = prnt_close,
     .write_data       = write_data,
     .write_ctrl       = write_ctrl,
-    .autofeed         = autofeed,
     .strobe           = strobe,
     .read_status      = read_status,
     .read_ctrl        = NULL,

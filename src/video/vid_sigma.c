@@ -8,8 +8,6 @@
  *
  *          Sigma Color 400 emulation.
  *
- *
- *
  * Authors: John Elliott,
  *
  *          Copyright 2018 John Elliott.
@@ -234,6 +232,8 @@ sigma_out(uint16_t addr, uint8_t val, void *priv)
 
             case 0x2D8:
                 sigma->sigmamode = val;
+                sigma->fullchange = changeframecount;
+                sigma_recalctimings(sigma);
                 return;
             case 0x2D9:
                 sigma->sigma_ctl = val;
@@ -392,6 +392,7 @@ sigma_recalctimings(sigma_t *sigma)
     double disptime;
     double _dispontime;
     double _dispofftime;
+    double crtcconst = (cpuclock / 22440000.0 * (double) (1ULL << 32)) * 8.0;
 
     if (sigma->sigmamode & MODE_80COLS) {
         disptime    = (sigma->crtc[0] + 1) << 1;
@@ -402,8 +403,8 @@ sigma_recalctimings(sigma_t *sigma)
     }
 
     _dispofftime = disptime - _dispontime;
-    _dispontime *= CGACONST;
-    _dispofftime *= CGACONST;
+    _dispontime *= crtcconst;
+    _dispofftime *= crtcconst;
     sigma->dispontime  = (uint64_t) (_dispontime);
     sigma->dispofftime = (uint64_t) (_dispofftime);
 }

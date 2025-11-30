@@ -10,8 +10,6 @@
  *          it should be malloc'ed and then linked to the NETCARD def.
  *          Will be done later.
  *
- *
- *
  * Authors: Fred N. van Kempen, <decwiz@yahoo.com>
  *
  *          Copyright 2017-2019 Fred N. van Kempen.
@@ -608,6 +606,7 @@ network_reset(void)
     ui_sb_update_icon(SB_NETWORK, 0);
     ui_sb_update_icon_write(SB_NETWORK, 0);
 
+    slirp_card_num = 2;
 #ifdef ENABLE_NETWORK_LOG
     network_dump_mutex = thread_create_mutex();
 #endif
