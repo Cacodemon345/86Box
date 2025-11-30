@@ -43,6 +43,7 @@
 #include <86box/pci.h>
 #include <86box/timer.h>
 #include <86box/mouse.h>
+#include <86box/plat.h>
 
 #include "usb_common.h"
 
@@ -846,7 +847,15 @@ usb_hid_poll_wrapper(void *priv)
     int delta_x, delta_y;
     int overflow_x, overflow_y;
     int delta_z;
-    int b = mouse_get_buttons_ex();
+    int b = 0;
+    int cond = ((mouse_capture || (video_fullscreen && !fullscreen_ui_visible)) &&
+               mouse_state_changed());
+
+
+    if (!cond)
+        return 0;
+
+    b = mouse_get_buttons_ex();
 
     mouse_subtract_coords(&delta_x, &delta_y, &overflow_x, &overflow_y,
                           -128, 127, 1, 0);
@@ -859,9 +868,7 @@ int
 usb_mouse_poll(usb_device_hid *hid, uint8_t *buf, bool force)
 {
     int l = USB_RET_NAK;
-
     if (hid->device.type == USB_HID_TYPE_MOUSE) {
-        (void)usb_hid_poll_wrapper(hid);
         if (!hid->s.has_events) {
             // if there's no new movement, handle delayed one
             mouse_enq(hid, 0, 0, hid->s.mouse_z, hid->s.b_state, 0);
@@ -1107,7 +1114,7 @@ usb_device_hid_handle_data(usb_device_c *device, USBPacket *p)
             if (p->devep == 1) {
                 if ((device->type == USB_HID_TYPE_MOUSE) || (device->type == USB_HID_TYPE_TABLET)) {
                     //pclog("USB MOUSE POLLING\n");
-                    ret = usb_mouse_poll((usb_device_hid *) device, p->data, 1);
+                    ret = usb_mouse_poll((usb_device_hid *) device, p->data, 0);
                 } else {
                     goto fail;
                 }
@@ -1220,7 +1227,7 @@ usb_hid_device_create(const device_t *info)
 
     mouse_set_poll(usb_hid_poll_wrapper, hid);
     mouse_set_buttons((hid->s.model == hid_mouse_2x2x8) ? 2 : ((hid->s.model == hid_mouse_3x2x8) ? 3 : ((hid->s.model == hid_mouse_3x3x8) ? 4 : ((hid->s.model == hid_mouse_5x3x8) ? 5 : 4))));
-    mouse_set_sample_rate(-1);
+    mouse_set_sample_rate(100.0);
 
     if (!port->connect(port, &hid->device)) {
         free(hid);
