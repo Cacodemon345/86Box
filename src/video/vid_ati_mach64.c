@@ -45,6 +45,13 @@
 #    undef CLAMP
 #endif
 
+
+#define CLAMP(x)                      \
+    do {                              \
+        if ((x) & ~0xff)              \
+            x = ((x) < 0) ? 0 : 0xff; \
+    } while (0)
+
 #define BIOS_ROM_PATH     "roms/video/mach64/bios.bin"
 #define BIOS_ISA_ROM_PATH "roms/video/mach64/M64-1994.VBI"
 #define BIOS_VLB_ROM_PATH "roms/video/mach64/mach64_vlb_vram.bin"
@@ -80,7 +87,8 @@ enum {
     MACH64_CT,
     MACH64_VT,
     MACH64_VT2,
-    MACH64_VT3
+    MACH64_VT3,
+    MACH64_GT
 };
 
 typedef struct mach64_t {
@@ -155,6 +163,10 @@ typedef struct mach64_t {
     uint32_t dst_bres_err;
     uint32_t dst_bres_inc;
 
+    uint32_t trail_bres_dec;
+    uint32_t trail_bres_err;
+    uint32_t trail_bres_inc;
+
     uint32_t dst_cntl;
     uint32_t dst_height_width;
     uint32_t dst_off_pitch;
@@ -190,6 +202,44 @@ typedef struct mach64_t {
     uint32_t src_y_x_start;
     uint32_t src_height1_width1;
     uint32_t src_height2_width2;
+
+    uint32_t tex_offsets[16];
+
+    uint32_t scale_3d_cntl;
+    uint32_t z_cntl;
+
+    uint32_t s_x_inc2;
+    uint32_t s_y_inc2;
+    uint32_t s_xy_inc2;
+    uint32_t s_xinc_start; // S_X_INC as well
+    uint32_t s_y_inc;
+    uint32_t s_start;
+
+    uint32_t t_x_inc2;
+    uint32_t t_y_inc2;
+    uint32_t t_xy_inc2;
+    uint32_t t_xinc_start; // T_X_INC as well
+    uint32_t t_y_inc;
+    uint32_t t_start;
+
+    uint32_t tex_size_pitch;
+
+    union { uint32_t red_x_inc, scale_x_inc; };
+    uint32_t red_y_inc;
+    union { uint32_t scale_hacc, red_start; };
+    union { uint32_t green_x_inc, scale_y_inc; };
+    uint32_t green_y_inc;
+    uint32_t green_start;
+    union { uint32_t blue_x_inc, scale_xuv_inc; };
+    uint32_t blue_y_inc;
+    union { uint32_t blue_start, scale_uv_hacc; };
+    uint32_t z_x_inc;
+    uint32_t z_y_inc;
+    uint32_t z_start;
+
+    union { uint32_t alpha_x_inc, fog_x_inc; };
+    union { uint32_t alpha_y_inc, fog_y_inc; };
+    union { uint32_t alpha_start, fog_start; };
 
     uint32_t write_mask;
     uint32_t chain_mask;
@@ -243,6 +293,7 @@ typedef struct mach64_t {
         int      dst_pix_width;
         int      src_pix_width;
         int      host_pix_width;
+        int      scale_pix_width;
         int      dst_size;
         int      src_size;
         int      host_size;
@@ -259,6 +310,28 @@ typedef struct mach64_t {
 
         int err;
         int poly_draw;
+
+        // 3D
+        int trail_err;
+        int trail_x_dir;
+        int trail_x;
+
+        int tex_s, tex_t;
+        int red, green, blue, alpha;
+
+        uint32_t s_x_inc2;
+        uint32_t s_y_inc2;
+        uint32_t s_xy_inc2;
+        uint32_t s_xinc_start; // S_X_INC as well
+        uint32_t s_y_inc;
+        uint32_t s_start;
+
+        uint32_t t_x_inc2;
+        uint32_t t_y_inc2;
+        uint32_t t_xy_inc2;
+        uint32_t t_xinc_start; // T_X_INC as well
+        uint32_t t_y_inc;
+        uint32_t t_start;
     } accel;
 
 #ifdef DMA_BM
@@ -348,7 +421,8 @@ enum {
     SRC_FG      = 1,
     SRC_HOST    = 2,
     SRC_BLITSRC = 3,
-    SRC_PAT     = 4
+    SRC_PAT     = 4,
+    SRC_3D      = 5
 };
 
 enum {
@@ -389,7 +463,7 @@ enum {
 
 #define WIDTH_1BIT 3
 
-static int mach64_width[8] = { WIDTH_1BIT, 0, 0, 1, 1, 2, 2, 0 };
+static int mach64_width[16] = { WIDTH_1BIT, 0, 0, 1, 1, 2, 2, 0, 0, 0, 0, 2, 0, 0, 2, 1 };
 
 enum {
     DST_X_DIR      = 0x01,
@@ -448,6 +522,11 @@ mach64_log(const char *fmt, ...)
 #endif
 
 static mach64_t *reset_state[2] = { NULL, NULL };
+
+static int8_t dither2[256][2][2];
+static int8_t dither3[256][2][2];
+static int8_t dither5[256][2][2];
+static int8_t dither6[256][2][2];
 
 void
 mach64_out(uint16_t addr, uint8_t val, void *priv)
@@ -742,7 +821,6 @@ mach64_wait_fifo_idle(mach64_t *mach64)
 {
     while (!FIFO_EMPTY) {
         wake_fifo_thread(mach64);
-        thread_wait_event(mach64->fifo_not_full_event, 1);
     }
 }
 
@@ -950,6 +1028,10 @@ mach64_accel_write_fifo(mach64_t *mach64, uint32_t addr, uint8_t val)
         case 0x10d:
         case 0x10e:
         case 0x10f:
+        case 0x134:
+        case 0x135:
+        case 0x136:
+        case 0x137:
             WRITE8(addr, mach64->dst_y_x, val);
             break;
         case 0x2e8:
@@ -961,6 +1043,11 @@ mach64_accel_write_fifo(mach64_t *mach64, uint32_t addr, uint8_t val)
         case 0x110:
         case 0x111:
             WRITE8(addr + 2, mach64->dst_height_width, val);
+            if (mach64->type == MACH64_GT) {
+                int untouched = mach64->dst_bres_lnth & (1 << 31);
+                WRITE8((addr + 2) ^ 2, mach64->dst_bres_lnth, val);
+                mach64->dst_bres_lnth |= untouched;
+            }
             break;
         case 0x114:
         case 0x115:
@@ -973,6 +1060,11 @@ mach64_accel_write_fifo(mach64_t *mach64, uint32_t addr, uint8_t val)
             WRITE8(addr, mach64->dst_height_width, val);
             fallthrough;
         case 0x113:
+            if (mach64->type == MACH64_GT) {
+                int untouched = mach64->dst_bres_lnth & (1 << 31);
+                WRITE8(addr ^ 2, mach64->dst_bres_lnth, val);
+                mach64->dst_bres_lnth |= untouched;
+            }
             if (((addr & 0x3ff) == 0x11b || (addr & 0x3ff) == 0x11f || (addr & 0x3ff) == 0x113) && !(val & 0x80)) {
 start_blit_op:
                 mach64_start_fill(mach64);
@@ -998,8 +1090,16 @@ start_blit_op:
         case 0x121:
         case 0x122:
         case 0x123:
+        case 0x144:
+        case 0x145:
+        case 0x146:
+        case 0x147:
             WRITE8(addr, mach64->dst_bres_lnth, val);
-            if ((addr & 0x3ff) == 0x123 && !(val & 0x80)) {
+            if (mach64->type == MACH64_GT) {
+                WRITE8(addr ^ 2, mach64->dst_height_width, val);
+            }
+            if (((addr & 0x3ff) == 0x123 || (addr & 0x3ff) == 0x147) && ((mach64->type != MACH64_GT && !(val & 0x80)) || (mach64->type == MACH64_GT && (!(val & 0x80) || (mach64->dst_bres_lnth & (1 << 15)))))) {
+start_line_op:
                 mach64_start_line(mach64);
 
                 if ((mach64->dst_bres_lnth & 0x7fff) && ((mach64->dp_src & 7) != SRC_HOST) && (((mach64->dp_src >> 8) & 7) != SRC_HOST) && (((mach64->dp_src >> 16) & 3) != MONO_SRC_HOST))
@@ -1030,6 +1130,34 @@ start_blit_op:
         case 0x132:
         case 0x133:
             WRITE8(addr, mach64->dst_cntl, val);
+            break;
+
+        case 0x138:
+        case 0x139:
+        case 0x13A:
+        case 0x13B:
+            WRITE8(addr, mach64->trail_bres_err, val);
+            break;
+
+        case 0x13C:
+        case 0x13D:
+        case 0x13E:
+        case 0x13F:
+            WRITE8(addr, mach64->trail_bres_inc, val);
+            break;
+
+        case 0x140:
+        case 0x141:
+        case 0x142:
+        case 0x143:
+            WRITE8(addr, mach64->trail_bres_dec, val);
+            break;
+
+        case 0x14C:
+        case 0x14D:
+        case 0x14E:
+        case 0x14F:
+            WRITE8(addr, mach64->z_cntl, val);
             break;
 
         case 0x180:
@@ -1106,6 +1234,17 @@ start_blit_op:
             else
                 pclog("Bus master disabled\n");
 #endif
+            break;
+
+        case 0x1c0 ... 0x1e8:
+            WRITE8(addr, mach64->tex_offsets[(addr >> 2) & 0xF], val);
+            break;
+        
+        case 0x1fc:
+        case 0x1fd:
+        case 0x1fe:
+        case 0x1ff:
+            WRITE8(addr, mach64->scale_3d_cntl, val);
             break;
 
         case 0x200:
@@ -1324,7 +1463,171 @@ start_blit_op:
                 mach64->host_cntl &= ~HOST_BYTE_ALIGN;
             break;
 
+        case 0x340:
+        case 0x341:
+        case 0x342:
+        case 0x343:
+            WRITE8(addr, mach64->s_x_inc2, val);
+            break;
+        case 0x344:
+        case 0x345:
+        case 0x346:
+        case 0x347:
+            WRITE8(addr, mach64->s_y_inc2, val);
+            break;
+        case 0x348:
+        case 0x349:
+        case 0x34a:
+        case 0x34b:
+            WRITE8(addr, mach64->s_xy_inc2, val);
+            break;
+        case 0x34c:
+        case 0x34d:
+        case 0x34e:
+        case 0x34f:
+            WRITE8(addr, mach64->s_xinc_start, val);
+            break;
+        case 0x350:
+        case 0x351:
+        case 0x352:
+        case 0x353:
+            WRITE8(addr, mach64->s_y_inc, val);
+            break;
+        case 0x354:
+        case 0x355:
+        case 0x356:
+        case 0x357:
+            WRITE8(addr, mach64->s_start, val);
+            break;
+        
+        case 0x358:
+        case 0x359:
+        case 0x35a:
+        case 0x35b:
+            WRITE8(addr, mach64->t_x_inc2, val);
+            break;
+        case 0x35c:
+        case 0x35d:
+        case 0x35e:
+        case 0x35f:
+            WRITE8(addr, mach64->t_y_inc2, val);
+            break;
+        case 0x360:
+        case 0x361:
+        case 0x362:
+        case 0x363:
+            WRITE8(addr, mach64->t_xy_inc2, val);
+            break;
+        case 0x364:
+        case 0x365:
+        case 0x366:
+        case 0x367:
+            WRITE8(addr, mach64->t_xinc_start, val);
+            break;
+        case 0x368:
+        case 0x369:
+        case 0x36a:
+        case 0x36b:
+            WRITE8(addr, mach64->t_y_inc, val);
+            break;
+        case 0x36c:
+        case 0x36d:
+        case 0x36e:
+        case 0x36f:
+            WRITE8(addr, mach64->t_start, val);
+            break;
+        case 0x370:
+        case 0x371:
+        case 0x372:
+        case 0x373:
+            WRITE8(addr, mach64->tex_size_pitch, val);
+            break;
+        case 0x1f0:
+        case 0x1f1:
+        case 0x1f2:
+        case 0x1f3:
+        case 0x3c0:
+        case 0x3c1:
+        case 0x3c2:
+        case 0x3c3:
+            WRITE8(addr, mach64->red_x_inc, val);
+            break;
+        case 0x3c4:
+        case 0x3c5:
+        case 0x3c6:
+        case 0x3c7:
+            WRITE8(addr, mach64->red_y_inc, val);
+            break;
+        case 0x3c8:
+        case 0x3c9:
+        case 0x3ca:
+        case 0x3cb:
+            WRITE8(addr, mach64->red_start, val);
+            break;
+        
+        case 0x3cc:
+        case 0x3cd:
+        case 0x3ce:
+        case 0x3cf:
+        case 0x1f4:
+        case 0x1f5:
+        case 0x1f6:
+        case 0x1f7:
+            WRITE8(addr, mach64->green_x_inc, val);
+            break;
+        case 0x3d0:
+        case 0x3d1:
+        case 0x3d2:
+        case 0x3d3:
+            WRITE8(addr, mach64->green_y_inc, val);
+            break;
+        case 0x3d4:
+        case 0x3d5:
+        case 0x3d6:
+        case 0x3d7:
+            WRITE8(addr, mach64->green_start, val);
+            break;
+        case 0x3d8:
+        case 0x3d9:
+        case 0x3da:
+        case 0x3db:
+            WRITE8(addr, mach64->blue_x_inc, val);
+            break;
+        
+        case 0x3dc:
+        case 0x3dd:
+        case 0x3de:
+        case 0x3df:
+            WRITE8(addr, mach64->blue_y_inc, val);
+            break;
+        case 0x3e0:
+        case 0x3e1:
+        case 0x3e2:
+        case 0x3e3:
+            WRITE8(addr, mach64->blue_start, val);
+            break;
+        case 0x3e4:
+        case 0x3e5:
+        case 0x3e6:
+        case 0x3e7:
+            WRITE8(addr, mach64->z_x_inc, val);
+            break;
+        case 0x3e8:
+        case 0x3e9:
+        case 0x3ea:
+        case 0x3eb:
+            WRITE8(addr, mach64->z_y_inc, val);
+            break;
+        case 0x3ec:
+        case 0x3ed:
+        case 0x3ee:
+        case 0x3ef:
+            WRITE8(addr, mach64->z_start, val);
+            break;
+
+
         default:
+            //pclog("Unknown write 0x%X\n", addr & 0x3ff);
             break;
     }
 }
@@ -1703,6 +2006,11 @@ mach64_start_fill(mach64_t *mach64)
     mach64->accel.clr_cmp_fn   = mach64->clr_cmp_cntl & 7;
     mach64->accel.clr_cmp_src  = mach64->clr_cmp_cntl & (1 << 24);
 
+    if (mach64->dst_bres_lnth & (1 << 15))
+    {
+        pclog("SCALE_3D_CNTL = 0%08X\n", mach64->scale_3d_cntl);
+    }
+
     mach64->accel.poly_draw = 0;
 
     mach64->accel.busy = 1;
@@ -1713,6 +2021,7 @@ mach64_start_fill(mach64_t *mach64)
 void
 mach64_start_line(mach64_t *mach64)
 {
+    const int scalemsk = (mach64->type == MACH64_GT) ? 15 : 7;
     mach64->accel.dst_x = (mach64->dst_y_x >> 16) & 0xfff;
     if ((mach64->dst_y_x >> 16) & 0x1000)
         mach64->accel.dst_x |= ~0xfff;
@@ -1740,9 +2049,10 @@ mach64_start_line(mach64_t *mach64)
     mach64->accel.source_fg  = (mach64->dp_src >> 8) & 7;
     mach64->accel.source_mix = (mach64->dp_src >> 16) & 7;
 
-    mach64->accel.dst_pix_width  = mach64->dp_pix_width & 7;
-    mach64->accel.src_pix_width  = (mach64->dp_pix_width >> 8) & 7;
-    mach64->accel.host_pix_width = (mach64->dp_pix_width >> 16) & 7;
+    mach64->accel.dst_pix_width  = mach64->dp_pix_width & scalemsk;
+    mach64->accel.src_pix_width  = (mach64->dp_pix_width >> 8) & scalemsk;
+    mach64->accel.host_pix_width = (mach64->dp_pix_width >> 16) & scalemsk;
+    mach64->accel.scale_pix_width = (mach64->dp_pix_width >> 28) & scalemsk;
 
     mach64->accel.dst_size  = mach64_width[mach64->accel.dst_pix_width];
     mach64->accel.src_size  = mach64_width[mach64->accel.src_pix_width];
@@ -1777,8 +2087,9 @@ mach64_start_line(mach64_t *mach64)
     mach64->accel.dp_bkgd_clr = mach64->dp_bkgd_clr;
     mach64->accel.write_mask  = mach64->write_mask;
 
-    mach64->accel.x_count = mach64->dst_bres_lnth & 0x7fff;
-    mach64->accel.err     = (mach64->dst_bres_err & 0x3ffff) | ((mach64->dst_bres_err & 0x40000) ? 0xfffc0000 : 0);
+    mach64->accel.x_count   = mach64->dst_bres_lnth & 0x7fff;
+    mach64->accel.err       = (mach64->dst_bres_err & 0x3ffff) | ((mach64->dst_bres_err & 0x40000) ? 0xfffc0000 : 0);
+    mach64->accel.trail_err = (mach64->trail_bres_err & 0x3ffff) | ((mach64->trail_bres_err & 0x40000) ? 0xfffc0000 : 0);
 
     mach64->accel.clr_cmp_clr  = mach64->clr_cmp_clr & mach64->clr_cmp_mask;
     mach64->accel.clr_cmp_mask = mach64->clr_cmp_mask;
@@ -1787,6 +2098,34 @@ mach64_start_line(mach64_t *mach64)
 
     mach64->accel.xinc = (mach64->dst_cntl & DST_X_DIR) ? 1 : -1;
     mach64->accel.yinc = (mach64->dst_cntl & DST_Y_DIR) ? 1 : -1;
+
+    if ((mach64->dst_bres_lnth & (1 << 31)) && (mach64->dst_bres_lnth & (1 << 15))) {
+        mach64->accel.trail_x = (mach64->dst_bres_lnth >> 16) & 0x7fff;
+    }
+
+    {
+        mach64->accel.red = mach64->red_start;
+        mach64->accel.green = mach64->green_start;
+        mach64->accel.blue = mach64->blue_start;
+        mach64->accel.alpha = mach64->alpha_start;
+
+        mach64->accel.tex_s = mach64->s_start;
+        mach64->accel.tex_t = mach64->t_start;
+
+        mach64->accel.s_x_inc2 = mach64->s_x_inc2;
+        mach64->accel.s_y_inc2 = mach64->s_y_inc2;
+        mach64->accel.s_xy_inc2 = mach64->s_xy_inc2;
+        mach64->accel.s_xinc_start = mach64->s_xinc_start;
+        mach64->accel.s_y_inc = mach64->s_y_inc;
+        mach64->accel.s_start = mach64->s_start;
+
+        mach64->accel.t_x_inc2 = mach64->t_x_inc2;
+        mach64->accel.t_y_inc2 = mach64->t_y_inc2;
+        mach64->accel.t_xy_inc2 = mach64->t_xy_inc2;
+        mach64->accel.t_xinc_start = mach64->t_xinc_start;
+        mach64->accel.t_y_inc = mach64->t_y_inc;
+        mach64->accel.t_start = mach64->t_start;
+    }
 
     mach64->accel.busy = 1;
     mach64_log("mach64_start_line\n");
@@ -1885,6 +2224,267 @@ mach64_start_line(mach64_t *mach64)
         }                                                                                                   \
         svga->changedvram[(((addr) >> 3) & mach64->vram_mask) >> 12] = svga->monitor->mon_changeframecount; \
     }
+
+
+static inline uint16_t
+dither_8bpp(mach64_t* mach64, int r, int g, int b, int x, int y)
+{
+    x &= 1;
+    y &= 1;
+    return dither2[b][y][x] | (dither3[g][y][x] << 2) | (dither3[r][y][x] << 5);
+}    
+
+static inline uint16_t
+dither_15bpp(mach64_t* mach64, int r, int g, int b, int x, int y)
+{
+    x &= 1;
+    y &= 1;
+    return dither5[b][y][x] | (dither5[g][y][x] << 5) | (dither5[r][y][x] << 10);
+}
+
+static inline uint16_t
+dither_16bpp(mach64_t* mach64, int r, int g, int b, int x, int y)
+{
+    x &= 1;
+    y &= 1;    
+    return dither5[b][y][x] | (dither6[g][y][x] << 5) | (dither5[r][y][x] << 11);
+}
+
+void
+mach64_texel_fetch(mach64_t* mach64, int* red, int* green, int* blue, int* alpha)
+{
+    int s = mach64->accel.tex_s >> 5;
+    int t = mach64->accel.tex_t >> 5;
+    int selsize = (mach64->tex_size_pitch >> 4) & 0xF;
+    int size = 1 << selsize;
+    int pitch = 1 << (mach64->tex_size_pitch & 0xF);
+    int height = 1 << ((mach64->tex_size_pitch >> 8) & 0xF);
+    int mask = size - 1;
+    int hmask = height - 1;
+    uint8_t* texptr = &mach64->svga.vram[mach64->tex_offsets[selsize]];
+
+    s >>= 11;
+    t >>= 11;
+
+    s &= mask;
+    t &= mask;
+
+    *alpha = 255;
+
+    switch (mach64->accel.scale_pix_width)
+    {
+        //case 2: // Commented out until it is figured out how Rage II's texture palette works.
+        default:
+        {
+            pclog("Unknown texture format %d\n", mach64->accel.scale_pix_width);
+            break;
+        }
+        case 3:
+        {
+            *red = (((*(uint16_t*)&texptr[t * pitch * 2 + s * 2]) >> 10) << 3) & 0xFF;
+            *green = (((*(uint16_t*)&texptr[t * pitch * 2 + s * 2]) >> 5) << 3) & 0xFF;
+            *blue = ((*(uint16_t*)&texptr[t * pitch * 2 + s * 2]) << 3) & 0xFF;
+            *alpha = ((*(uint16_t*)&texptr[t * pitch * 2 + s * 2]) & (1 << 15)) ? 255 : 0;
+            break;
+        }
+        case 4:
+        {
+            *red = (((*(uint16_t*)&texptr[t * pitch * 2 + s * 2]) >> 11) << 3) & 0xFF;
+            *green = (((*(uint16_t*)&texptr[t * pitch * 2 + s * 2]) >> 5) << 2) & 0xFF;
+            *blue = ((*(uint16_t*)&texptr[t * pitch * 2 + s * 2]) << 3) & 0xFF;
+            break;
+        }
+        case 6:
+        {
+            *red = getcolr((*(uint32_t*)&texptr[t * pitch * 4 + s * 4]));
+            *green = getcolg((*(uint32_t*)&texptr[t * pitch * 4 + s * 4]));
+            *blue = getcolb((*(uint32_t*)&texptr[t * pitch * 4 + s * 4]));
+            *alpha = (*(uint32_t*)&texptr[t * pitch * 4 + s * 4]) >> 24;
+            break;
+        }
+        case 7:
+        {
+            *red = ((texptr[t * pitch + s] >> 5) << 5) & 0xFF;
+            *green = ((texptr[t * pitch + s] >> 2) << 5) & 0xFF;
+            *blue = ((texptr[t * pitch + s]) << 5) & 0xFF;
+            break;
+        }
+    }
+}
+
+void
+mach64_draw_trapezoid(mach64_t* mach64)
+{
+    //int direction = (mach64->dst_bres_lnth & (1 << 14)) ? -1 : 1;
+    int x_l = mach64->accel.dst_x;
+    int x_r = mach64->accel.trail_x;
+    uint32_t dest_dat = 0;
+    uint32_t src_dat = 0;
+    uint32_t cmp_clr = 0;
+    svga_t* svga = &mach64->svga;
+    int mix = 1;
+    int r_back = mach64->accel.red;
+    int g_back = mach64->accel.green;
+    int b_back = mach64->accel.blue;
+    int s_back = mach64->accel.tex_s;
+    int t_back = mach64->accel.tex_t;
+    int s_inc_back = mach64->s_xinc_start;
+    int t_inc_back = mach64->t_xinc_start;
+
+    mach64->accel.red &= (1 << 25) - 1;
+    mach64->accel.green &= (1 << 25) - 1;
+    mach64->accel.blue &= (1 << 25) - 1;
+
+    mach64->accel.red &= ~0xF;
+    mach64->accel.green &= ~0xF;
+    mach64->accel.blue &= ~0xF;
+
+    mach64->red_x_inc &= ((1 << 25) - 1) & ~0xF;
+    mach64->green_x_inc &= ((1 << 25) - 1) & ~0xF;
+    mach64->blue_x_inc &= ((1 << 25) - 1) & ~0xF;
+
+    mach64->red_y_inc &= ((1 << 25) - 1) & ~0xF;
+    mach64->green_y_inc &= ((1 << 25) - 1) & ~0xF;
+    mach64->blue_y_inc &= ((1 << 25) - 1) & ~0xF;
+
+    if (((mach64->scale_3d_cntl >> 6) & 3) != 3 && ((mach64->scale_3d_cntl >> 6) & 3) != 2)
+        return;
+    
+    while (x_l != x_r)
+    {
+        int texel_red = 0;
+        int texel_green = 0;
+        int texel_blue = 0;
+        int texel_alpha = 255;
+
+        //uint8_t red = CLAMP(((mach64->accel.red >> 4) >> 12) | (mach64->accel.red & (1 << 24)));
+        int red = (mach64->accel.red & (1 << 24)) ? 0 : ((((mach64->accel.red >> 4) >> 12) & 0xFF));
+        CLAMP(red);
+        int green = (mach64->accel.green & (1 << 24)) ? 0 : (((mach64->accel.green >> 4) >> 12) & 0xFF);
+        CLAMP(green);
+        int blue = (mach64->accel.blue & (1 << 24)) ? 0 : (((mach64->accel.blue >> 4) >> 12) & 0xFF);
+        CLAMP(blue);
+        int alpha = (mach64->accel.alpha & (1 << 24)) ? 0 : (((mach64->accel.alpha >> 4) >> 12) & 0xFF);
+        CLAMP(alpha);
+        
+
+        if (!(x_l >= mach64->accel.sc_left && x_l <= mach64->accel.sc_right)) {
+            goto advance_x;
+        }
+
+        if (((mach64->scale_3d_cntl >> 6) & 3) == 2) {
+            mach64_texel_fetch(mach64, &texel_red, &texel_green, &texel_blue, &texel_alpha);
+            if (((mach64->scale_3d_cntl >> 22) & 3) == 1) {
+                red *= texel_red;
+                green *= texel_green;
+                blue *= texel_blue;
+                red >>= 8;
+                green >>= 8;
+                blue >>= 8;
+            } else {
+                red = texel_red;
+                green = texel_green;
+                blue = texel_blue;
+            }
+            alpha = texel_alpha;
+        }
+
+        switch (mach64->accel.dst_pix_width)
+        {
+            case 2:
+            case 7:
+            {
+                src_dat = dither_8bpp(mach64, red, green, blue, x_l, mach64->accel.dst_y);
+                break;
+            }
+            case 4:
+            {
+                src_dat = dither_16bpp(mach64, red, green, blue, x_l, mach64->accel.dst_y);
+                //src_dat = (blue >> 3) | ((green >> 2) << 5) | ((red >> 3) << 11);
+                break;
+            }
+            case 3:
+            {
+                src_dat = dither_15bpp(mach64, red, green, blue, x_l, mach64->accel.dst_y);
+                break;
+            }
+            default:
+            {
+                pclog("Unknown dst_pix_width %d for shading\n", mach64->accel.dst_pix_width);
+            }
+            fallthrough;
+            case 6:
+            {
+                src_dat = ((red & 0xFF) << 16) | ((green & 0xFF) << 8) | (blue & 0xFF);
+                break;
+            }
+        }
+
+        READ(mach64->accel.dst_offset + (mach64->accel.dst_y * mach64->accel.dst_pitch) + x_l, dest_dat, mach64->accel.dst_size);
+        switch (mach64->accel.clr_cmp_fn) {
+            case 1: /*TRUE*/
+                cmp_clr = 1;
+                break;
+            case 4: /*DST_CLR != CLR_CMP_CLR*/
+                cmp_clr = (((mach64->accel.clr_cmp_src) ? src_dat : dest_dat) & mach64->accel.clr_cmp_mask) != mach64->accel.clr_cmp_clr;
+                break;
+            case 5: /*DST_CLR == CLR_CMP_CLR*/
+                cmp_clr = (((mach64->accel.clr_cmp_src) ? src_dat : dest_dat) & mach64->accel.clr_cmp_mask) == mach64->accel.clr_cmp_clr;
+                break;
+            default:
+                break;
+        }
+        if (!cmp_clr)
+            MIX
+
+        WRITE(mach64->accel.dst_offset + (mach64->accel.dst_y * mach64->accel.dst_pitch) + x_l, mach64->accel.dst_size);
+
+advance_x:
+        mach64->accel.red += mach64->red_x_inc;
+        mach64->accel.green += mach64->green_x_inc;
+        mach64->accel.blue += mach64->blue_x_inc;
+        mach64->accel.alpha += mach64->alpha_x_inc;
+
+        mach64->accel.tex_s += mach64->accel.s_xinc_start;
+        mach64->accel.tex_t += mach64->accel.t_xinc_start;
+        mach64->accel.s_xinc_start += mach64->accel.s_x_inc2;
+        mach64->accel.t_xinc_start += mach64->accel.t_x_inc2;
+
+        if (!(mach64->red_x_inc & (1 << 24)) && (mach64->accel.red & (1 << 24))) {
+            mach64->accel.red = 0xfffff0;
+        }
+
+        if (!(mach64->green_x_inc & (1 << 24)) && (mach64->accel.green & (1 << 24))) {
+            mach64->accel.green = 0xfffff0;
+        }
+
+        if (!(mach64->blue_x_inc & (1 << 24)) && (mach64->accel.blue & (1 << 24))) {
+            mach64->accel.blue = 0xfffff0;
+        }
+
+
+        mach64->accel.red &= (1 << 25) - 1;
+        mach64->accel.green &= (1 << 25) - 1;
+        mach64->accel.blue &= (1 << 25) - 1;
+
+        mach64->accel.red &= ~0xF;
+        mach64->accel.green &= ~0xF;
+        mach64->accel.blue &= ~0xF;
+
+        if (x_l > x_r)
+            x_l--;
+        else
+            x_l++;
+    }
+
+    mach64->accel.red = r_back;
+    mach64->accel.green = g_back;
+    mach64->accel.blue = b_back;
+    mach64->accel.tex_s = s_back;
+    mach64->accel.tex_t = t_back;
+    mach64->s_xinc_start = s_inc_back;
+    mach64->t_xinc_start = t_inc_back;
+}
 
 void
 mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
@@ -2308,6 +2908,16 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                     int      mix        = 0;
                     int      draw_pixel = !(mach64->dst_cntl & DST_POLYGON_EN);
 
+                    if (mach64->type == MACH64_GT && (mach64 ->src_cntl & (1 << 7))) {
+                        mach64->accel.src_x = mach64->accel.dst_x;
+                        mach64->accel.src_y = mach64->accel.dst_y;
+                    }
+
+                    //if (draw_pixel && (mach64->dst_bres_lnth & (1 << 15))) {
+                    //    // We can't afford overdrawing.
+                    //    draw_pixel = 0;
+                    //}
+
                     if (mach64->accel.source_host) {
                         host_dat = cpu_dat;
                         switch (mach64->accel.host_size) {
@@ -2343,7 +2953,7 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                             break;
                     }
 
-                    if (mach64->dst_cntl & DST_POLYGON_EN) {
+                    if (!draw_pixel) {
                         if (mach64->dst_cntl & DST_Y_MAJOR)
                             draw_pixel = 1;
                         else if ((mach64->dst_cntl & DST_X_DIR) && mach64->accel.err < (mach64->dst_bres_dec + mach64->dst_bres_inc)) /*X+*/
@@ -2355,7 +2965,12 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                     if (mach64->accel.x_count == 1 && !(mach64->dst_cntl & DST_LAST_PEL))
                         draw_pixel = 0;
 
-                    if (mach64->accel.dst_x >= mach64->accel.sc_left && mach64->accel.dst_x <= mach64->accel.sc_right && mach64->accel.dst_y >= mach64->accel.sc_top && mach64->accel.dst_y <= mach64->accel.sc_bottom && draw_pixel) {
+                    mach64->red_x_inc &= ((1 << 25) - 1) & ~0xF;
+                    mach64->green_x_inc &= ((1 << 25) - 1) & ~0xF;
+                    mach64->blue_x_inc &= ((1 << 25) - 1) & ~0xF;
+                    if (mach64->type == MACH64_GT && draw_pixel && mach64->accel.dst_y >= mach64->accel.sc_top && mach64->accel.dst_y <= mach64->accel.sc_bottom && (mach64->dst_bres_lnth & (1 << 15)))
+                        mach64_draw_trapezoid(mach64);
+                    else if (mach64->accel.dst_x >= mach64->accel.sc_left && mach64->accel.dst_x <= mach64->accel.sc_right && mach64->accel.dst_y >= mach64->accel.sc_top && mach64->accel.dst_y <= mach64->accel.sc_bottom && draw_pixel) {
                         switch (mix ? mach64->accel.source_fg : mach64->accel.source_bg) {
                             case SRC_HOST:
                                 src_dat = host_dat;
@@ -2395,6 +3010,9 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                             MIX
 
                         WRITE(mach64->accel.dst_offset + (mach64->accel.dst_y * mach64->accel.dst_pitch) + mach64->accel.dst_x, mach64->accel.dst_size);
+                        if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
+                            WRITE(mach64->accel.dst_offset + (mach64->accel.dst_y * mach64->accel.dst_pitch) + mach64->accel.trail_x, mach64->accel.dst_size);
+                        }
                     }
 
                     mach64->accel.x_count--;
@@ -2410,21 +3028,117 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                         case 2:
                             mach64->accel.src_x--;
                             mach64->accel.dst_x--;
+                            if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
+                                mach64->accel.red += mach64->red_x_inc;
+                                mach64->accel.green += mach64->green_x_inc;
+                                mach64->accel.blue += mach64->blue_x_inc;
+                                mach64->accel.alpha += mach64->alpha_x_inc;
+
+                                mach64->accel.tex_s += mach64->accel.s_xinc_start;
+                                mach64->accel.tex_t += mach64->accel.t_xinc_start;
+                                mach64->accel.s_xinc_start += mach64->accel.s_x_inc2;
+                                mach64->accel.t_xinc_start += mach64->accel.t_x_inc2;
+
+                                if (!(mach64->red_x_inc & (1 << 24)) && (mach64->accel.red & (1 << 24))) {
+                                    mach64->accel.red = 0xfffff0;
+                                }
+
+                                if (!(mach64->green_x_inc & (1 << 24)) && (mach64->accel.green & (1 << 24))) {
+                                    mach64->accel.green = 0xfffff0;
+                                }
+
+                                if (!(mach64->blue_x_inc & (1 << 24)) && (mach64->accel.blue & (1 << 24))) {
+                                    mach64->accel.blue = 0xfffff0;
+                                }
+                            }
                             break;
                         case 1:
                         case 3:
                             mach64->accel.src_x++;
                             mach64->accel.dst_x++;
+                            if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
+                                mach64->accel.red += mach64->red_x_inc;
+                                mach64->accel.green += mach64->green_x_inc;
+                                mach64->accel.blue += mach64->blue_x_inc;
+                                mach64->accel.alpha += mach64->alpha_x_inc;
+
+                                mach64->accel.tex_s += mach64->accel.s_xinc_start;
+                                mach64->accel.tex_t += mach64->accel.t_xinc_start;
+                                mach64->accel.s_xinc_start += mach64->accel.s_x_inc2;
+                                mach64->accel.t_xinc_start += mach64->accel.t_x_inc2;
+
+                                if (!(mach64->red_x_inc & (1 << 24)) && (mach64->accel.red & (1 << 24))) {
+                                    mach64->accel.red = 0xfffff0;
+                                }
+
+                                if (!(mach64->green_x_inc & (1 << 24)) && (mach64->accel.green & (1 << 24))) {
+                                    mach64->accel.green = 0xfffff0;
+                                }
+
+                                if (!(mach64->blue_x_inc & (1 << 24)) && (mach64->accel.blue & (1 << 24))) {
+                                    mach64->accel.blue = 0xfffff0;
+                                }
+                            }
                             break;
                         case 4:
                         case 5:
                             mach64->accel.src_y--;
                             mach64->accel.dst_y--;
+                            if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
+                                mach64->accel.red += mach64->red_y_inc;
+                                mach64->accel.green += mach64->green_y_inc;
+                                mach64->accel.blue += mach64->blue_y_inc;
+                                mach64->accel.alpha += mach64->alpha_y_inc;
+                                mach64->accel.tex_s += mach64->accel.s_y_inc;
+                                mach64->accel.tex_t += mach64->accel.t_y_inc;
+
+                                mach64->accel.s_y_inc += mach64->accel.s_y_inc2;
+                                mach64->accel.t_y_inc += mach64->accel.t_y_inc2;
+                                mach64->accel.s_xinc_start += mach64->accel.s_xy_inc2;
+                                mach64->accel.t_xinc_start += mach64->accel.t_xy_inc2;
+
+                                if (!(mach64->red_y_inc & (1 << 24)) && (mach64->accel.red & (1 << 24))) {
+                                    mach64->accel.red = 0xfffff0;
+                                }
+
+                                if (!(mach64->green_y_inc & (1 << 24)) && (mach64->accel.green & (1 << 24))) {
+                                    mach64->accel.green = 0xfffff0;
+                                }
+
+                                if (!(mach64->blue_y_inc & (1 << 24)) && (mach64->accel.blue & (1 << 24))) {
+                                    mach64->accel.blue = 0xfffff0;
+                                }
+                            }
                             break;
                         case 6:
                         case 7:
                             mach64->accel.src_y++;
                             mach64->accel.dst_y++;
+                            if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
+                                mach64->accel.red += mach64->red_y_inc;
+                                mach64->accel.green += mach64->green_y_inc;
+                                mach64->accel.blue += mach64->blue_y_inc;
+                                mach64->accel.alpha += mach64->alpha_y_inc;
+                                mach64->accel.tex_s += mach64->s_y_inc;
+                                mach64->accel.tex_t += mach64->t_y_inc;
+
+                                mach64->accel.s_y_inc += mach64->accel.s_y_inc2;
+                                mach64->accel.t_y_inc += mach64->accel.t_y_inc2;
+                                mach64->accel.s_xinc_start += mach64->accel.s_xy_inc2;
+                                mach64->accel.t_xinc_start += mach64->accel.t_xy_inc2;
+
+                                if (!(mach64->red_y_inc & (1 << 24)) && (mach64->accel.red & (1 << 24))) {
+                                    mach64->accel.red = 0xfffff0;
+                                }
+
+                                if (!(mach64->green_y_inc & (1 << 24)) && (mach64->accel.green & (1 << 24))) {
+                                    mach64->accel.green = 0xfffff0;
+                                }
+
+                                if (!(mach64->blue_y_inc & (1 << 24)) && (mach64->accel.blue & (1 << 24))) {
+                                    mach64->accel.blue = 0xfffff0;
+                                }
+                            }
                             break;
 
                         default:
@@ -2439,21 +3153,117 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                             case 1:
                                 mach64->accel.src_y--;
                                 mach64->accel.dst_y--;
+                                if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
+                                    mach64->accel.red += mach64->red_y_inc;
+                                    mach64->accel.green += mach64->green_y_inc;
+                                    mach64->accel.blue += mach64->blue_y_inc;
+                                    mach64->accel.alpha += mach64->alpha_y_inc;
+                                    mach64->accel.tex_s += mach64->accel.s_y_inc;
+                                    mach64->accel.tex_t += mach64->accel.t_y_inc;
+
+                                    mach64->accel.s_y_inc += mach64->accel.s_y_inc2;
+                                    mach64->accel.t_y_inc += mach64->accel.t_y_inc2;
+                                    mach64->accel.s_xinc_start += mach64->accel.s_xy_inc2;
+                                    mach64->accel.t_xinc_start += mach64->accel.t_xy_inc2;
+
+                                    if (!(mach64->red_y_inc & (1 << 24)) && (mach64->accel.red & (1 << 24))) {
+                                        mach64->accel.red = 0xfffff0;
+                                    }
+
+                                    if (!(mach64->green_y_inc & (1 << 24)) && (mach64->accel.green & (1 << 24))) {
+                                        mach64->accel.green = 0xfffff0;
+                                    }
+
+                                    if (!(mach64->blue_y_inc & (1 << 24)) && (mach64->accel.blue & (1 << 24))) {
+                                        mach64->accel.blue = 0xfffff0;
+                                    }
+                                }
                                 break;
                             case 2:
                             case 3:
                                 mach64->accel.src_y++;
                                 mach64->accel.dst_y++;
+                                if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
+                                    mach64->accel.red += mach64->red_y_inc;
+                                    mach64->accel.green += mach64->green_y_inc;
+                                    mach64->accel.blue += mach64->blue_y_inc;
+                                    mach64->accel.alpha += mach64->alpha_y_inc;
+                                    mach64->accel.tex_s += mach64->accel.s_y_inc;
+                                    mach64->accel.tex_t += mach64->accel.t_y_inc;
+
+                                    mach64->accel.s_y_inc += mach64->accel.s_y_inc2;
+                                    mach64->accel.t_y_inc += mach64->accel.t_y_inc2;
+                                    mach64->accel.s_xinc_start += mach64->accel.s_xy_inc2;
+                                    mach64->accel.t_xinc_start += mach64->accel.t_xy_inc2;
+
+                                    if (!(mach64->red_y_inc & (1 << 24)) && (mach64->accel.red & (1 << 24))) {
+                                        mach64->accel.red = 0xfffff0;
+                                    }
+
+                                    if (!(mach64->green_y_inc & (1 << 24)) && (mach64->accel.green & (1 << 24))) {
+                                        mach64->accel.green = 0xfffff0;
+                                    }
+
+                                    if (!(mach64->blue_y_inc & (1 << 24)) && (mach64->accel.blue & (1 << 24))) {
+                                        mach64->accel.blue = 0xfffff0;
+                                    }
+                                }
                                 break;
                             case 4:
                             case 6:
                                 mach64->accel.src_x--;
                                 mach64->accel.dst_x--;
+                                if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
+                                    mach64->accel.red += mach64->red_x_inc;
+                                    mach64->accel.green += mach64->green_x_inc;
+                                    mach64->accel.blue += mach64->blue_x_inc;
+                                    mach64->accel.alpha += mach64->alpha_x_inc;
+
+                                    mach64->accel.tex_s += mach64->accel.s_xinc_start;
+                                    mach64->accel.tex_t += mach64->accel.t_xinc_start;
+                                    mach64->accel.s_xinc_start += mach64->accel.s_x_inc2;
+                                    mach64->accel.t_xinc_start += mach64->accel.t_x_inc2;
+
+                                    if (!(mach64->red_x_inc & (1 << 24)) && (mach64->accel.red & (1 << 24))) {
+                                        mach64->accel.red = 0xfffff0;
+                                    }
+
+                                    if (!(mach64->green_x_inc & (1 << 24)) && (mach64->accel.green & (1 << 24))) {
+                                        mach64->accel.green = 0xfffff0;
+                                    }
+
+                                    if (!(mach64->blue_x_inc & (1 << 24)) && (mach64->accel.blue & (1 << 24))) {
+                                        mach64->accel.blue = 0xfffff0;
+                                    }
+                                }
                                 break;
                             case 5:
                             case 7:
                                 mach64->accel.src_x++;
                                 mach64->accel.dst_x++;
+                                if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
+                                    mach64->accel.red += mach64->red_x_inc;
+                                    mach64->accel.green += mach64->green_x_inc;
+                                    mach64->accel.blue += mach64->blue_x_inc;
+                                    mach64->accel.alpha += mach64->alpha_x_inc;
+
+                                    mach64->accel.tex_s += mach64->accel.s_xinc_start;
+                                    mach64->accel.tex_t += mach64->accel.t_xinc_start;
+                                    mach64->accel.s_xinc_start += mach64->accel.s_x_inc2;
+                                    mach64->accel.t_xinc_start += mach64->accel.t_x_inc2;
+
+                                    if (!(mach64->red_x_inc & (1 << 24)) && (mach64->accel.red & (1 << 24))) {
+                                        mach64->accel.red = 0xfffff0;
+                                    }
+
+                                    if (!(mach64->green_x_inc & (1 << 24)) && (mach64->accel.green & (1 << 24))) {
+                                        mach64->accel.green = 0xfffff0;
+                                    }
+
+                                    if (!(mach64->blue_x_inc & (1 << 24)) && (mach64->accel.blue & (1 << 24))) {
+                                        mach64->accel.blue = 0xfffff0;
+                                    }
+                                }
                                 break;
 
                             default:
@@ -2461,6 +3271,17 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                         }
                     } else
                         mach64->accel.err += mach64->dst_bres_inc;
+                    
+                    if (mach64->accel.trail_err >= 0)
+                    {
+                        if (mach64->dst_cntl & (1 << 13))
+                            mach64->accel.trail_x++;
+                        else
+                            mach64->accel.trail_x--;
+
+                        mach64->accel.trail_err += mach64->trail_bres_dec;
+                    } else
+                        mach64->accel.trail_err += mach64->trail_bres_inc;
                 }
             }
             break;
@@ -2588,7 +3409,7 @@ mach64_vblank_start(svga_t *svga)
     svga->overlay.cur_xsize = ((mach64->overlay_y_x_end >> 16) & 0x7ff) - svga->overlay.x;
     svga->overlay.cur_ysize = (mach64->overlay_y_x_end & 0x7ff) - svga->overlay.y;
 
-    if (mach64->type >= MACH64_VT3) {
+    if (mach64->type == MACH64_VT3) {
         svga->overlay.addr  = mach64->scaler_buf_offset[0] & 0x3fffff;
         svga->overlay.pitch = mach64->scaler_buf_pitch & 0xfff;
     } else {
@@ -2854,7 +3675,7 @@ mach64_ext_readb(uint32_t addr, void *priv)
 
             case 0x79:
                 ret = 0x30;
-                if (mach64->type == MACH64_VT3)
+                if (mach64->type == MACH64_VT3 || mach64->type == MACH64_GT)
                 {
                     ret = (((i2c_gpio_get_scl(mach64->i2c_tv) << 3)) & (~(mach64->gp_io >> 24) & 0xFF)) | ((mach64->gp_io >> 8) & (mach64->gp_io >> 24) & 0xFF);
                     ret &= ~((1 << 4) | (1 << 5));
@@ -2863,14 +3684,14 @@ mach64_ext_readb(uint32_t addr, void *priv)
                 }
                 break;
             case 0x78:
-                if (mach64->type == MACH64_VT3)
+                if (mach64->type == MACH64_VT3 || mach64->type == MACH64_GT)
                 {
                     ret = ((i2c_gpio_get_sda(mach64->i2c_tv) << 4) & (~(mach64->gp_io >> 16) & 0xFF)) | ((mach64->gp_io & 0xFF) & ((mach64->gp_io >> 16) & 0xFF));
                     break;
                 }
             case 0x7A:
             case 0x7B:
-                if (mach64->type == MACH64_VT3)
+                if (mach64->type == MACH64_VT3 || mach64->type == MACH64_GT)
                 {
                     READ8(addr, mach64->gp_io);
                 }
@@ -2935,7 +3756,7 @@ mach64_ext_readb(uint32_t addr, void *priv)
 
             case 0xc7:
                 READ8(addr, mach64->dac_cntl);
-                if (mach64->type >= MACH64_CT && mach64->type != MACH64_VT3) {
+                if (mach64->type >= MACH64_CT && mach64->type != MACH64_VT3 && mach64->type == MACH64_GT) {
                     ret &= 0xf9;
                     if (i2c_gpio_get_scl(mach64->i2c))
                         ret |= 0x04;
@@ -2998,9 +3819,43 @@ mach64_ext_readb(uint32_t addr, void *priv)
             case 0x10d:
             case 0x10e:
             case 0x10f:
+            case 0x134:
+            case 0x135:
+            case 0x136:
+            case 0x137:
                 mach64_wait_fifo_idle(mach64);
                 READ8(addr, mach64->dst_y_x);
                 break;
+
+            case 0x138:
+            case 0x139:
+            case 0x13A:
+            case 0x13B:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->trail_bres_err);
+                break;
+
+            case 0x13C:
+            case 0x13D:
+            case 0x13E:
+            case 0x13F:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->trail_bres_inc);
+                break;
+
+            case 0x140:
+            case 0x141:
+            case 0x142:
+            case 0x143:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->trail_bres_dec);
+                break;
+
+            case 0x1c0 ... 0x1eb:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->tex_offsets[(addr >> 2) & 0xF]);
+                break;
+
             case 0x2e8:
             case 0x2e9:
             case 0x2ea:
@@ -3036,6 +3891,10 @@ mach64_ext_readb(uint32_t addr, void *priv)
             case 0x121:
             case 0x122:
             case 0x123:
+            case 0x144:
+            case 0x145:
+            case 0x146:
+            case 0x147:
                 mach64_wait_fifo_idle(mach64);
                 READ8(addr, mach64->dst_bres_lnth);
                 break;
@@ -3068,7 +3927,13 @@ mach64_ext_readb(uint32_t addr, void *priv)
                 mach64_wait_fifo_idle(mach64);
                 READ8(addr, mach64->dst_cntl);
                 break;
-
+            case 0x14C:
+            case 0x14D:
+            case 0x14E:
+            case 0x14F:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->z_cntl);
+                break;
             case 0x180:
             case 0x181:
             case 0x182:
@@ -3151,6 +4016,16 @@ mach64_ext_readb(uint32_t addr, void *priv)
             case 0x1b7:
                 mach64_wait_fifo_idle(mach64);
                 READ8(addr, mach64->src_cntl);
+                break;
+
+
+                
+            case 0x1fc:
+            case 0x1fd:
+            case 0x1fe:
+            case 0x1ff:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->scale_3d_cntl);
                 break;
 
             case 0x240:
@@ -3334,6 +4209,206 @@ mach64_ext_readb(uint32_t addr, void *priv)
             
             case 0x33a:
                 ret = FIFO_EMPTY ? 32 : 31;
+                break;
+
+            case 0x340:
+            case 0x341:
+            case 0x342:
+            case 0x343:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->s_x_inc2);
+                break;
+
+            case 0x344:
+            case 0x345:
+            case 0x346:
+            case 0x347:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->s_y_inc2);
+                break;
+
+            case 0x348:
+            case 0x349:
+            case 0x34a:
+            case 0x34b:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->s_xy_inc2);
+                break;
+
+            case 0x34c:
+            case 0x34d:
+            case 0x34e:
+            case 0x34f:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->s_xinc_start);
+                break;
+
+            case 0x350:
+            case 0x351:
+            case 0x352:
+            case 0x353:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->s_y_inc);
+                break;
+
+            case 0x354:
+            case 0x355:
+            case 0x356:
+            case 0x357:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->s_start);
+                break;
+            
+            case 0x358:
+            case 0x359:
+            case 0x35a:
+            case 0x35b:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->t_x_inc2);
+                break;
+
+            case 0x35c:
+            case 0x35d:
+            case 0x35e:
+            case 0x35f:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->t_y_inc2);
+                break;
+
+            case 0x360:
+            case 0x361:
+            case 0x362:
+            case 0x363:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->t_xy_inc2);
+                break;
+
+            case 0x364:
+            case 0x365:
+            case 0x366:
+            case 0x367:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->t_xinc_start);
+                break;
+
+            case 0x368:
+            case 0x369:
+            case 0x36a:
+            case 0x36b:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->t_y_inc);
+                break;
+
+            case 0x36c:
+            case 0x36d:
+            case 0x36e:
+            case 0x36f:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->t_start);
+                break;
+
+            case 0x370:
+            case 0x371:
+            case 0x372:
+            case 0x373:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->tex_size_pitch);
+                break;
+
+            case 0x3c0:
+            case 0x3c1:
+            case 0x3c2:
+            case 0x3c3:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->red_x_inc);
+                break;
+
+            case 0x3c4:
+            case 0x3c5:
+            case 0x3c6:
+            case 0x3c7:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->red_y_inc);
+                break;
+
+            case 0x3c8:
+            case 0x3c9:
+            case 0x3ca:
+            case 0x3cb:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->red_start);
+                break;
+            
+            case 0x3cc:
+            case 0x3cd:
+            case 0x3ce:
+            case 0x3cf:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->green_x_inc);
+                break;
+
+            case 0x3d0:
+            case 0x3d1:
+            case 0x3d2:
+            case 0x3d3:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->green_y_inc);
+                break;
+
+            case 0x3d4:
+            case 0x3d5:
+            case 0x3d6:
+            case 0x3d7:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->green_start);
+                break;
+
+            case 0x3d8:
+            case 0x3d9:
+            case 0x3da:
+            case 0x3db:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->blue_x_inc);
+                break;
+            
+            case 0x3dc:
+            case 0x3dd:
+            case 0x3de:
+            case 0x3df:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->blue_y_inc);
+                break;
+
+            case 0x3e0:
+            case 0x3e1:
+            case 0x3e2:
+            case 0x3e3:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->blue_start);
+                break;
+
+            case 0x3e4:
+            case 0x3e5:
+            case 0x3e6:
+            case 0x3e7:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->z_x_inc);
+                break;
+
+            case 0x3e8:
+            case 0x3e9:
+            case 0x3ea:
+            case 0x3eb:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->z_y_inc);
+                break;
+
+            case 0x3ec:
+            case 0x3ed:
+            case 0x3ee:
+            case 0x3ef:
+                mach64_wait_fifo_idle(mach64);
+                READ8(addr, mach64->z_start);
                 break;
 
             default:
@@ -3726,7 +4801,7 @@ mach64_ext_writeb(uint32_t addr, uint8_t val, void *priv)
             case 0x79:
             case 0x7A:
             case 0x7B:
-                if (mach64->type == MACH64_VT3) {
+                if (mach64->type == MACH64_VT3 || mach64->type == MACH64_GT) {
                     WRITE8(addr, mach64->gp_io, val);
                     {
                         i2c_gpio_set(mach64->i2c_tv, !!(mach64->gp_io & (1 << 11)) || !(mach64->gp_io & (1 << (11 + 16))), !!(mach64->gp_io & (1 << 4)) || !(mach64->gp_io & (1 << (4 + 16))));
@@ -3822,7 +4897,7 @@ mach64_ext_writeb(uint32_t addr, uint8_t val, void *priv)
                     if (mach64->type == MACH64_GX)
                         ati68860_set_ramdac_type(svga->ramdac, !!(mach64->dac_cntl & 0x100));
                 }
-                if (mach64->type != MACH64_VT3)
+                if (mach64->type != MACH64_VT3 && mach64->type != MACH64_GT)
                     i2c_gpio_set(mach64->i2c, !(mach64->dac_cntl & 0x20000000) || (mach64->dac_cntl & 0x04000000), !(mach64->dac_cntl & 0x10000000) || (mach64->dac_cntl & 0x02000000));
                 break;
 
@@ -4555,12 +5630,6 @@ mach64_int_hwcursor_draw(svga_t *svga, int displine)
         svga->hwcursor_latch.addr += 2;
     }
 }
-
-#define CLAMP(x)                      \
-    do {                              \
-        if ((x) & ~0xff)              \
-            x = ((x) < 0) ? 0 : 0xff; \
-    } while (0)
 
 #define DECODE_ARGB1555()                                            \
     do {                                                             \
@@ -5387,8 +6456,62 @@ mach64_common_init(const device_t *info)
     svga = &mach64->svga;
 
     mach64->type = info->local & 0xff;
-    mach64->vram_size = (mach64->type == MACH64_CT || mach64->type == MACH64_VT || mach64->type == MACH64_VT3) ? 2 : ((info->local & (1 << 20)) ? 4 : device_get_config_int("memory"));
+    mach64->vram_size = (mach64->type == MACH64_CT || mach64->type == MACH64_VT || mach64->type == MACH64_VT3 || mach64->type == MACH64_GT) ? 2 : ((info->local & (1 << 20)) ? 4 : device_get_config_int("memory"));
     mach64->vram_mask = (mach64->vram_size << 20) - 1;
+
+    if (mach64->type == MACH64_GT)
+    {
+        for (uint16_t c = 0; c < 256; c++) {
+            // I don't think the tables are perfect.
+            dither2[c][0][0] = c >> 6;
+            dither2[c][1][1] = (c + 16) >> 6;
+            dither2[c][1][0] = (c + 32) >> 6;
+            dither2[c][0][1] = (c + 48) >> 6;
+
+            if (dither2[c][1][1] > 3)
+                dither2[c][1][1] = 3;
+            if (dither2[c][1][0] > 3)
+                dither2[c][1][0] = 3;
+            if (dither2[c][0][1] > 3)
+                dither2[c][0][1] = 3;
+
+            dither3[c][0][0] = c >> 5;
+            dither3[c][1][1] = (c + 8) >> 5;
+            dither3[c][1][0] = (c + 16) >> 5;
+            dither3[c][0][1] = (c + 24) >> 5;
+
+            if (dither3[c][1][1] > 7)
+                dither3[c][1][1] = 7;
+            if (dither3[c][1][0] > 7)
+                dither3[c][1][0] = 7;
+            if (dither3[c][0][1] > 7)
+                dither3[c][0][1] = 7;
+
+            dither5[c][0][0] = c >> 3;
+            dither5[c][1][1] = (c + 2) >> 3;
+            dither5[c][1][0] = (c + 4) >> 3;
+            dither5[c][0][1] = (c + 6) >> 3;
+
+            if (dither5[c][1][1] > 31)
+                dither5[c][1][1] = 31;
+            if (dither5[c][1][0] > 31)
+                dither5[c][1][0] = 31;
+            if (dither5[c][0][1] > 31)
+                dither5[c][0][1] = 31;
+
+            dither6[c][0][0] = c >> 2;
+            dither6[c][1][1] = (c + 1) >> 2;
+            dither6[c][1][0] = (c + 2) >> 2;
+            dither6[c][0][1] = (c + 3) >> 2;
+
+            if (dither6[c][1][1] > 63)
+                dither6[c][1][1] = 63;
+            if (dither6[c][1][0] > 63)
+                dither6[c][1][0] = 63;
+            if (dither6[c][0][1] > 63)
+                dither6[c][0][1] = 63;
+        }
+    }
 
     if (mach64->type > MACH64_GX)
         svga_init(info, svga, mach64, mach64->vram_size << 20,
@@ -5606,6 +6729,36 @@ mach64vt3_onboard_init(const device_t *info)
     mach64->vlb                  = 0;
     mach64->pci_id               = 0x5655;
     mach64->config_chip_id       = 0x9A005655;
+    mach64->dac_cntl             = 1 << 16; /*Internal 24-bit DAC*/
+    mach64->config_stat0         = 4;
+    mach64->use_block_decoded_io = 4;
+
+    mem_mapping_disable(&mach64->bios_rom.mapping);
+
+    svga->vblank_start = mach64_vblank_start;
+    svga->adv_flags   |= FLAG_PANNING_ATI;
+
+    *reset_state[monitor_index_global] = *mach64;
+    return mach64;
+}
+
+static void *
+mach64gt_onboard_init(const device_t *info)
+{
+    mach64_t *mach64 = mach64_common_init(info);
+    svga_t   *svga   = &mach64->svga;
+
+    svga->dac_hwcursor_draw = NULL;
+
+    svga->hwcursor.cur_ysize = 64;
+    svga->hwcursor.cur_xsize = 64;
+
+    video_inform(VIDEO_FLAG_TYPE_SPECIAL, &timing_mach64_pci);
+
+    mach64->pci                  = 1;
+    mach64->vlb                  = 0;
+    mach64->pci_id               = 0x4754;
+    mach64->config_chip_id       = 0x40004754;
     mach64->dac_cntl             = 1 << 16; /*Internal 24-bit DAC*/
     mach64->config_stat0         = 4;
     mach64->use_block_decoded_io = 4;
@@ -5838,6 +6991,20 @@ const device_t mach64vt3_onboard_device = {
     .flags         = DEVICE_PCI,
     .local         = MACH64_VT3 | (1 << 19),
     .init          = mach64vt3_onboard_init,
+    .close         = mach64_close,
+    .reset         = mach64_reset,
+    .available     = NULL,
+    .speed_changed = mach64_speed_changed,
+    .force_redraw  = mach64_force_redraw,
+    .config        = NULL
+};
+
+const device_t mach64gt_onboard_device = {
+    .name          = "ATI Mach64GT (Onboard)",
+    .internal_name = "mach64gt_onboard",
+    .flags         = DEVICE_PCI,
+    .local         = MACH64_GT | (1 << 19),
+    .init          = mach64gt_onboard_init,
     .close         = mach64_close,
     .reset         = mach64_reset,
     .available     = NULL,
