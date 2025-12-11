@@ -251,8 +251,8 @@ typedef struct mach64_t {
         int op;
         int      y_changed;
 
-        int      dst_x;
-        int      dst_y;
+        short      dst_x;
+        short      dst_y;
         int      dst_x_start;
         int      dst_y_start;
         int      src_x;
@@ -2276,8 +2276,8 @@ mach64_texel_fetch(mach64_t* mach64, int* red, int* green, int* blue, int* alpha
     int hmask = height - 1;
     uint8_t* texptr = &mach64->svga.vram[mach64->tex_offsets[selsize]];
 
-    s >>= 13;
-    t >>= 13;
+    s >>= 11;
+    t >>= 11;
 
     s &= mask;
     t &= mask;
@@ -2343,23 +2343,7 @@ mach64_draw_trapezoid(mach64_t* mach64)
     int t_back = mach64->accel.tex_t;
     int s_inc_back = mach64->s_xinc_start;
     int t_inc_back = mach64->t_xinc_start;
-    int len = abs(x_l - x_r);
-
-    mach64->accel.red &= (1 << 25) - 1;
-    mach64->accel.green &= (1 << 25) - 1;
-    mach64->accel.blue &= (1 << 25) - 1;
-
-    mach64->accel.red &= ~0xF;
-    mach64->accel.green &= ~0xF;
-    mach64->accel.blue &= ~0xF;
-
-    mach64->red_x_inc &= ((1 << 25) - 1) & ~0xF;
-    mach64->green_x_inc &= ((1 << 25) - 1) & ~0xF;
-    mach64->blue_x_inc &= ((1 << 25) - 1) & ~0xF;
-
-    mach64->red_y_inc &= ((1 << 25) - 1) & ~0xF;
-    mach64->green_y_inc &= ((1 << 25) - 1) & ~0xF;
-    mach64->blue_y_inc &= ((1 << 25) - 1) & ~0xF;
+    int len = abs((x_r < x_l) ? (x_l - x_r) : (x_r - x_l));
 
     if (((mach64->scale_3d_cntl >> 6) & 3) != 3 && ((mach64->scale_3d_cntl >> 6) & 3) != 2)
         return;
@@ -2372,13 +2356,13 @@ mach64_draw_trapezoid(mach64_t* mach64)
         int texel_alpha = 255;
 
         //uint8_t red = CLAMP(((mach64->accel.red >> 4) >> 12) | (mach64->accel.red & (1 << 24)));
-        int red = (mach64->accel.red & (1 << 24)) ? 0 : ((((mach64->accel.red >> 4) >> 12) & 0xFF));
+        int red = (mach64->accel.red & ~((1 << 24) - 1)) ? 0 : ((((mach64->accel.red >> 4) >> 12) & 0xFF));
         CLAMP(red);
-        int green = (mach64->accel.green & (1 << 24)) ? 0 : (((mach64->accel.green >> 4) >> 12) & 0xFF);
+        int green = (mach64->accel.green & ~((1 << 24) - 1)) ? 0 : (((mach64->accel.green >> 4) >> 12) & 0xFF);
         CLAMP(green);
-        int blue = (mach64->accel.blue & (1 << 24)) ? 0 : (((mach64->accel.blue >> 4) >> 12) & 0xFF);
+        int blue = (mach64->accel.blue & ~((1 << 24) - 1)) ? 0 : (((mach64->accel.blue >> 4) >> 12) & 0xFF);
         CLAMP(blue);
-        int alpha = (mach64->accel.alpha & (1 << 24)) ? 0 : (((mach64->accel.alpha >> 4) >> 12) & 0xFF);
+        int alpha = (mach64->accel.alpha & ~((1 << 24) - 1)) ? 0 : (((mach64->accel.alpha >> 4) >> 12) & 0xFF);
         CLAMP(alpha);
         
 
@@ -2455,36 +2439,15 @@ mach64_draw_trapezoid(mach64_t* mach64)
 
 advance_x:
         len--;
-        mach64->accel.red += mach64->red_x_inc;
-        mach64->accel.green += mach64->green_x_inc;
-        mach64->accel.blue += mach64->blue_x_inc;
-        mach64->accel.alpha += mach64->alpha_x_inc;
+        mach64->accel.red += mach64->red_x_inc * mach64->accel.xinc;
+        mach64->accel.green += mach64->green_x_inc * mach64->accel.xinc;
+        mach64->accel.blue += mach64->blue_x_inc * mach64->accel.xinc;
+        mach64->accel.alpha += mach64->alpha_x_inc * mach64->accel.xinc;
 
-        mach64->accel.tex_s += mach64->accel.s_xinc_start;
-        mach64->accel.tex_t += mach64->accel.t_xinc_start;
-        mach64->accel.s_xinc_start += mach64->accel.s_x_inc2;
-        mach64->accel.t_xinc_start += mach64->accel.t_x_inc2;
-
-        if (!(mach64->red_x_inc & (1 << 24)) && (mach64->accel.red & (1 << 24))) {
-            mach64->accel.red = 0xfffff0;
-        }
-
-        if (!(mach64->green_x_inc & (1 << 24)) && (mach64->accel.green & (1 << 24))) {
-            mach64->accel.green = 0xfffff0;
-        }
-
-        if (!(mach64->blue_x_inc & (1 << 24)) && (mach64->accel.blue & (1 << 24))) {
-            mach64->accel.blue = 0xfffff0;
-        }
-
-
-        mach64->accel.red &= (1 << 25) - 1;
-        mach64->accel.green &= (1 << 25) - 1;
-        mach64->accel.blue &= (1 << 25) - 1;
-
-        mach64->accel.red &= ~0xF;
-        mach64->accel.green &= ~0xF;
-        mach64->accel.blue &= ~0xF;
+        mach64->accel.tex_s += mach64->accel.s_xinc_start * mach64->accel.xinc;
+        mach64->accel.tex_t += mach64->accel.t_xinc_start * mach64->accel.xinc;
+        mach64->accel.s_xinc_start += mach64->accel.s_x_inc2 * mach64->accel.xinc;
+        mach64->accel.t_xinc_start += mach64->accel.t_x_inc2 * mach64->accel.xinc;
 
         if (x_l > x_r)
             x_l--;
@@ -2507,22 +2470,23 @@ mach64_advance_trapezoid_y(mach64_t* mach64)
     mach64->accel.dst_y += mach64->accel.yinc;
     mach64->accel.src_y += mach64->accel.yinc;
 
-    mach64->accel.red += mach64->red_y_inc;
-    mach64->accel.green += mach64->green_y_inc;
-    mach64->accel.blue += mach64->blue_y_inc;
-    mach64->accel.alpha += mach64->alpha_y_inc;
+    mach64->accel.red += mach64->red_y_inc * mach64->accel.yinc;
+    mach64->accel.green += mach64->green_y_inc * mach64->accel.yinc;
+    mach64->accel.blue += mach64->blue_y_inc * mach64->accel.yinc;
+    mach64->accel.alpha += mach64->alpha_y_inc * mach64->accel.yinc;
 
-    mach64->accel.tex_s += mach64->accel.s_y_inc;
-    mach64->accel.tex_t += mach64->accel.t_y_inc;
+    mach64->accel.tex_s += mach64->accel.s_y_inc * mach64->accel.yinc;
+    mach64->accel.tex_t += mach64->accel.t_y_inc * mach64->accel.yinc;
 
-    mach64->accel.s_y_inc += mach64->accel.s_y_inc2;
-    mach64->accel.t_y_inc += mach64->accel.t_y_inc2;
-    mach64->accel.s_xinc_start += mach64->accel.s_xy_inc2;
-    mach64->accel.t_xinc_start += mach64->accel.t_xy_inc2;
+    mach64->accel.s_y_inc += mach64->accel.s_y_inc2 * mach64->accel.yinc;
+    mach64->accel.t_y_inc += mach64->accel.t_y_inc2 * mach64->accel.yinc;
+    mach64->accel.s_xinc_start += mach64->accel.s_xy_inc2 * mach64->accel.yinc;
+    mach64->accel.t_xinc_start += mach64->accel.t_xy_inc2 * mach64->accel.yinc;
 
-    if (mach64->accel.err < 0 && mach64->accel.inc) {
+    if (mach64->accel.err <= 0 && mach64->accel.inc) {
         mach64->accel.err += mach64->accel.inc;
-        while (mach64->accel.err >= 0) {
+dec:
+        while (mach64->accel.err > 0) {
             mach64->accel.dst_x += mach64->accel.xinc;
             {
                 mach64->accel.red += mach64->red_x_inc * mach64->accel.xinc;
@@ -2538,9 +2502,10 @@ mach64_advance_trapezoid_y(mach64_t* mach64)
         }
     }
 
-    if (mach64->accel.trail_err < 0 && mach64->accel.trail_inc) {
+    if (mach64->accel.trail_err <= 0 && mach64->accel.trail_inc) {
         mach64->accel.trail_err += mach64->accel.trail_inc;
-        while (mach64->accel.trail_err >= 0) {
+
+        while (mach64->accel.trail_err > 0) {
             mach64->accel.trail_x += (mach64->dst_cntl & (1 << 13)) ? 1 : -1;
             mach64->accel.trail_err += mach64->accel.trail_dec;
         }
@@ -3023,9 +2988,6 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                     if (mach64->accel.x_count == 1 && !(mach64->dst_cntl & DST_LAST_PEL))
                         draw_pixel = 0;
 
-                    mach64->red_x_inc &= ((1 << 25) - 1) & ~0xF;
-                    mach64->green_x_inc &= ((1 << 25) - 1) & ~0xF;
-                    mach64->blue_x_inc &= ((1 << 25) - 1) & ~0xF;
                     if (mach64->type == MACH64_GT && mach64->accel.dst_y >= mach64->accel.sc_top && mach64->accel.dst_y <= mach64->accel.sc_bottom && (mach64->dst_bres_lnth & (1 << 15)))
                         mach64_draw_trapezoid(mach64);
                     else if (mach64->accel.dst_x >= mach64->accel.sc_left && mach64->accel.dst_x <= mach64->accel.sc_right && mach64->accel.dst_y >= mach64->accel.sc_top && mach64->accel.dst_y <= mach64->accel.sc_bottom && draw_pixel) {
@@ -3067,15 +3029,7 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                         if (!cmp_clr)
                             MIX
 
-                        if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
-                            dest_dat = -1;
-                        }
                         WRITE(mach64->accel.dst_offset + (mach64->accel.dst_y * mach64->accel.dst_pitch) + mach64->accel.dst_x, mach64->accel.dst_size);
-                        if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
-                            WRITE(mach64->accel.dst_offset + (mach64->accel.dst_y * mach64->accel.dst_pitch) + mach64->accel.trail_x, mach64->accel.dst_size);
-                            if (mach64->accel.x_count <= 1)
-                                mach64_draw_trapezoid(mach64);
-                        }
                     }
 
                     mach64->accel.x_count--;
@@ -3089,143 +3043,28 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                         mach64_advance_trapezoid_y(mach64);
                         continue;
                     }
-                    if ((mach64->dst_cntl & DST_Y_MAJOR) || ((mach64->dst_bres_lnth & (1 << 15)) && mach64->type == MACH64_GT)) {
+                    if (mach64->dst_cntl & DST_Y_MAJOR) {
                         mach64->accel.dst_y += mach64->accel.yinc;
                         mach64->accel.src_y += mach64->accel.yinc;
-                        if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
-                            mach64->accel.red += mach64->red_y_inc;
-                            mach64->accel.green += mach64->green_y_inc;
-                            mach64->accel.blue += mach64->blue_y_inc;
-                            mach64->accel.alpha += mach64->alpha_y_inc;
-                            mach64->accel.tex_s += mach64->accel.s_y_inc;
-                            mach64->accel.tex_t += mach64->accel.t_y_inc;
-
-                            mach64->accel.s_y_inc += mach64->accel.s_y_inc2;
-                            mach64->accel.t_y_inc += mach64->accel.t_y_inc2;
-                            mach64->accel.s_xinc_start += mach64->accel.s_xy_inc2;
-                            mach64->accel.t_xinc_start += mach64->accel.t_xy_inc2;
-
-                            if (!(mach64->red_y_inc & (1 << 24)) && (mach64->accel.red & (1 << 24))) {
-                                mach64->accel.red = 0xfffff0;
-                            }
-
-                            if (!(mach64->green_y_inc & (1 << 24)) && (mach64->accel.green & (1 << 24))) {
-                                mach64->accel.green = 0xfffff0;
-                            }
-
-                            if (!(mach64->blue_y_inc & (1 << 24)) && (mach64->accel.blue & (1 << 24))) {
-                                mach64->accel.blue = 0xfffff0;
-                            }
-                            
-                            mach64->accel.y_changed = 1;
-                        }
                         mach64->accel.y_changed = 1;
                         if (mach64->accel.err >= 0) {
-                            while (mach64->accel.err >= 0) {
-                                mach64->accel.err += mach64->accel.dec;
-                                mach64->accel.dst_x += mach64->accel.xinc;
-                                mach64->accel.src_x += mach64->accel.xinc;
-                                if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
-                                    mach64->accel.red += mach64->red_x_inc;
-                                    mach64->accel.green += mach64->green_x_inc;
-                                    mach64->accel.blue += mach64->blue_x_inc;
-                                    mach64->accel.alpha += mach64->alpha_x_inc;
-
-                                    mach64->accel.tex_s += mach64->accel.s_xinc_start;
-                                    mach64->accel.tex_t += mach64->accel.t_xinc_start;
-                                    mach64->accel.s_xinc_start += mach64->accel.s_x_inc2;
-                                    mach64->accel.t_xinc_start += mach64->accel.t_x_inc2;
-
-                                    if (!(mach64->red_x_inc & (1 << 24)) && (mach64->accel.red & (1 << 24))) {
-                                        mach64->accel.red = 0xfffff0;
-                                    }
-
-                                    if (!(mach64->green_x_inc & (1 << 24)) && (mach64->accel.green & (1 << 24))) {
-                                        mach64->accel.green = 0xfffff0;
-                                    }
-
-                                    if (!(mach64->blue_x_inc & (1 << 24)) && (mach64->accel.blue & (1 << 24))) {
-                                        mach64->accel.blue = 0xfffff0;
-                                    }
-                                }
-                            }
+                            mach64->accel.err += mach64->dst_bres_dec;
+                            mach64->accel.dst_x += mach64->accel.xinc;
+                            mach64->accel.src_x += mach64->accel.xinc;
                         } else {
-                            mach64->accel.err += mach64->accel.inc;
+                            mach64->accel.err += mach64->dst_bres_inc;
                         }
                     } else {
                         mach64->accel.dst_x += mach64->accel.xinc;
                         mach64->accel.src_x += mach64->accel.xinc;
-                        if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
-                            mach64->accel.red += mach64->red_x_inc;
-                            mach64->accel.green += mach64->green_x_inc;
-                            mach64->accel.blue += mach64->blue_x_inc;
-                            mach64->accel.alpha += mach64->alpha_x_inc;
-
-                            mach64->accel.tex_s += mach64->accel.s_xinc_start;
-                            mach64->accel.tex_t += mach64->accel.t_xinc_start;
-                            mach64->accel.s_xinc_start += mach64->accel.s_x_inc2;
-                            mach64->accel.t_xinc_start += mach64->accel.t_x_inc2;
-
-                            if (!(mach64->red_x_inc & (1 << 24)) && (mach64->accel.red & (1 << 24))) {
-                                mach64->accel.red = 0xfffff0;
-                            }
-
-                            if (!(mach64->green_x_inc & (1 << 24)) && (mach64->accel.green & (1 << 24))) {
-                                mach64->accel.green = 0xfffff0;
-                            }
-
-                            if (!(mach64->blue_x_inc & (1 << 24)) && (mach64->accel.blue & (1 << 24))) {
-                                mach64->accel.blue = 0xfffff0;
-                            }
-                        }
                         if (mach64->accel.err >= 0) {
-                            mach64->accel.err += mach64->accel.dec;
+                            mach64->accel.err += mach64->dst_bres_dec;
                             mach64->accel.dst_y += mach64->accel.yinc;
                             mach64->accel.src_y += mach64->accel.yinc;
-                            if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
-                                mach64->accel.red += mach64->red_y_inc;
-                                mach64->accel.green += mach64->green_y_inc;
-                                mach64->accel.blue += mach64->blue_y_inc;
-                                mach64->accel.alpha += mach64->alpha_y_inc;
-                                mach64->accel.tex_s += mach64->accel.s_y_inc;
-                                mach64->accel.tex_t += mach64->accel.t_y_inc;
-
-                                mach64->accel.s_y_inc += mach64->accel.s_y_inc2;
-                                mach64->accel.t_y_inc += mach64->accel.t_y_inc2;
-                                mach64->accel.s_xinc_start += mach64->accel.s_xy_inc2;
-                                mach64->accel.t_xinc_start += mach64->accel.t_xy_inc2;
-
-                                if (!(mach64->red_y_inc & (1 << 24)) && (mach64->accel.red & (1 << 24))) {
-                                    mach64->accel.red = 0xfffff0;
-                                }
-
-                                if (!(mach64->green_y_inc & (1 << 24)) && (mach64->accel.green & (1 << 24))) {
-                                    mach64->accel.green = 0xfffff0;
-                                }
-
-                                if (!(mach64->blue_y_inc & (1 << 24)) && (mach64->accel.blue & (1 << 24))) {
-                                    mach64->accel.blue = 0xfffff0;
-                                }
-                            }
                             mach64->accel.y_changed = 1;
                         } else {
-                            mach64->accel.err += mach64->accel.inc;
+                            mach64->accel.err += mach64->dst_bres_inc;
                         }
-                    }
-
-                    if (mach64->type == MACH64_GT && (mach64->dst_bres_lnth & (1 << 15))) {
-                        if (mach64->accel.trail_err >= 0)
-                        {
-                            while (mach64->accel.trail_err >= 0) {
-                                if (mach64->dst_cntl & (1 << 13))
-                                    mach64->accel.trail_x++;
-                                else
-                                    mach64->accel.trail_x--;
-
-                                mach64->accel.trail_err += mach64->accel.trail_dec;
-                            }
-                        } else
-                            mach64->accel.trail_err += mach64->accel.trail_inc;
                     }
                 }
             }
