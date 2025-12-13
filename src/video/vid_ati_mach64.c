@@ -2097,12 +2097,12 @@ mach64_start_line(mach64_t *mach64)
     mach64->accel.write_mask  = mach64->write_mask;
 
     mach64->accel.x_count   = mach64->dst_bres_lnth & 0x7fff;
-    mach64->accel.err       = (mach64->dst_bres_err & 0x3ffff) | ((mach64->dst_bres_err & 0x40000) ? 0xfffc0000 : 0);
-    mach64->accel.inc       = (mach64->dst_bres_inc & 0x3ffff) | ((mach64->dst_bres_inc & 0x40000) ? 0xfffc0000 : 0);
-    mach64->accel.dec       = (mach64->dst_bres_dec & 0x3ffff) | ((mach64->dst_bres_dec & 0x40000) ? 0xfffc0000 : 0);
-    mach64->accel.trail_err = (mach64->trail_bres_err & 0x3ffff) | ((mach64->trail_bres_err & 0x40000) ? 0xfffc0000 : 0);
-    mach64->accel.trail_inc = (mach64->trail_bres_inc & 0x3ffff) | ((mach64->trail_bres_inc & 0x40000) ? 0xfffc0000 : 0);
-    mach64->accel.trail_dec = (mach64->trail_bres_dec & 0x3ffff) | ((mach64->trail_bres_dec & 0x40000) ? 0xfffc0000 : 0);
+    mach64->accel.err       = (mach64->dst_bres_err & 0x1ffff) | ((mach64->dst_bres_err & 0x20000) ? 0xfffe0000 : 0);
+    mach64->accel.inc       = (mach64->dst_bres_inc & 0x1ffff) | ((mach64->dst_bres_inc & 0x20000) ? 0xfffe0000 : 0);
+    mach64->accel.dec       = (mach64->dst_bres_dec & 0x1ffff) | ((mach64->dst_bres_dec & 0x20000) ? 0xfffe0000 : 0);
+    mach64->accel.trail_err = (mach64->trail_bres_err & 0x1ffff) | ((mach64->trail_bres_err & 0x20000) ? 0xfffe0000 : 0);
+    mach64->accel.trail_inc = (mach64->trail_bres_inc & 0x1ffff) | ((mach64->trail_bres_inc & 0x20000) ? 0xfffe0000 : 0);
+    mach64->accel.trail_dec = (mach64->trail_bres_dec & 0x1ffff) | ((mach64->trail_bres_dec & 0x20000) ? 0xfffe0000 : 0);
 
     mach64->accel.clr_cmp_clr  = mach64->clr_cmp_clr & mach64->clr_cmp_mask;
     mach64->accel.clr_cmp_mask = mach64->clr_cmp_mask;
@@ -2113,7 +2113,7 @@ mach64_start_line(mach64_t *mach64)
     mach64->accel.yinc = (mach64->dst_cntl & DST_Y_DIR) ? 1 : -1;
 
     if ((mach64->dst_bres_lnth & (1 << 15))) {
-        mach64->accel.trail_x = (mach64->dst_bres_lnth >> 16) & 0x7fff;
+        mach64->accel.trail_x = ((mach64->dst_bres_lnth >> 16) & 0xfff) | (((mach64->dst_bres_lnth >> 16) & 0x1000) ? ~0xfff : 0);
     }
 
     {
@@ -2267,8 +2267,8 @@ dither_16bpp(mach64_t* mach64, int r, int g, int b, int x, int y)
 void
 mach64_texel_fetch(mach64_t* mach64, int* red, int* green, int* blue, int* alpha)
 {
-    int s = mach64->accel.tex_s >> 5;
-    int t = mach64->accel.tex_t >> 5;
+    int s = mach64->accel.tex_s >> 7;
+    int t = mach64->accel.tex_t >> 7;
     int selsize = (mach64->tex_size_pitch >> 4) & 0xF;
     int size = 1 << selsize;
     int pitch = 1 << (mach64->tex_size_pitch & 0xF);
