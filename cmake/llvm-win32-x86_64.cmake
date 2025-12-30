@@ -19,8 +19,8 @@ include(${CMAKE_CURRENT_LIST_DIR}/flags-gcc-x86_64.cmake)
 set(CMAKE_C_COMPILER    clang)
 set(CMAKE_CXX_COMPILER  clang++)
 
-# `llvm-rc` is barely usable as of LLVM 13, using MS' rc.exe for now
-set(CMAKE_RC_COMPILER   rc)
+# Use llvm-rc for resource compilation in CLANG64 environment
+set(CMAKE_RC_COMPILER   llvm-rc)
 
 set(CMAKE_C_COMPILER_TARGET     x86_64-w64-windows-gnu)
 set(CMAKE_CXX_COMPILER_TARGET   x86_64-w64-windows-gnu)
