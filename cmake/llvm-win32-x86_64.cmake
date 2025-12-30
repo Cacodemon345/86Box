@@ -27,4 +27,9 @@ set(CMAKE_CXX_COMPILER_TARGET   x86_64-pc-windows-msvc)
 
 set(CMAKE_SYSTEM_PROCESSOR AMD64)
 
+# Override debug flags to ensure PDB generation
+set(CMAKE_C_FLAGS_DEBUG "-g -gcodeview -O0" CACHE STRING "Flags used by the C compiler during DEBUG builds." FORCE)
+set(CMAKE_CXX_FLAGS_DEBUG "-g -gcodeview -O0" CACHE STRING "Flags used by the CXX compiler during DEBUG builds." FORCE)
+set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-Wl,/DEBUG" CACHE STRING "Flags used by the linker during DEBUG builds." FORCE)
+
 # TODO: set the vcpkg target triplet perhaps?
