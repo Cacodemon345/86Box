@@ -134,6 +134,7 @@ target_link_libraries(86Box
     scsi
     sio
     snd
+    usb
     utils
     vid
     voodoo
@@ -259,7 +260,6 @@ elseif(WIN32)
         OPTIONAL)
 endif()
 
-
 add_subdirectory(device)
 add_subdirectory(disk)
 add_subdirectory(floppy)
@@ -272,6 +272,7 @@ add_subdirectory(sio)
 add_subdirectory(scsi)
 add_subdirectory(sound)
 add_subdirectory(utils)
+add_subdirectory(usb)
 add_subdirectory(video)
 
 if (APPLE)

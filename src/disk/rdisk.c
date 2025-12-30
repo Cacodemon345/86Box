@@ -61,7 +61,7 @@ const uint8_t rdisk_command_flags[0x100] = {
     [0x1b]          = IMPLEMENTED | CHECK_READY,
     [0x1d]          = IMPLEMENTED,
     [0x1e]          = IMPLEMENTED | CHECK_READY,
-    [0x23]          = IMPLEMENTED | ATAPI_ONLY,
+    [0x23]          = IMPLEMENTED,
     [0x25]          = IMPLEMENTED | CHECK_READY,
     [0x28]          = IMPLEMENTED | CHECK_READY,
     [0x2a ... 0x2b] = IMPLEMENTED | CHECK_READY,
@@ -1851,6 +1851,7 @@ atapi_out:
 
         case GPCMD_READ_FORMAT_CAPACITIES:
             len = (cdb[7] << 8) | cdb[8];
+
 
             rdisk_buf_alloc(dev, len);
             memset(dev->buffer, 0, len);

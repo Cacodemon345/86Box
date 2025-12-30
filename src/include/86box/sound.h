@@ -244,6 +244,9 @@ extern const device_t pssj_isa_device;
 /* Tandy PSG */
 extern const device_t tndy_device;
 
+/* USB Audio */
+extern const device_t usb_audio_device;
+
 /* Windows Sound System */
 extern const device_t wss_device;
 extern const device_t ncr_business_audio_device;
