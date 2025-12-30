@@ -2999,7 +2999,7 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                     if (mach64->accel.x_count == 1 && !(mach64->dst_cntl & DST_LAST_PEL))
                         draw_pixel = 0;
 
-                    if (mach64->type == MACH64_GT && mach64->accel.dst_y >= mach64->accel.sc_top && mach64->accel.dst_y <= mach64->accel.sc_bottom && (mach64->dst_bres_lnth & (1 << 15)))
+                    if (mach64->type == MACH64_GT && mach64->accel.dst_y >= mach64->accel.sc_top && mach64->accel.dst_y <= mach64->accel.sc_bottom && (mach64->dst_bres_lnth & (1 << 15)) && draw_pixel)
                         mach64_draw_trapezoid(mach64);
                     else if (mach64->accel.dst_x >= mach64->accel.sc_left && mach64->accel.dst_x <= mach64->accel.sc_right && mach64->accel.dst_y >= mach64->accel.sc_top && mach64->accel.dst_y <= mach64->accel.sc_bottom && draw_pixel) {
                         switch (mix ? mach64->accel.source_fg : mach64->accel.source_bg) {
