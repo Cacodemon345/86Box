@@ -74,16 +74,16 @@ jobs:
 #            toolchain: ./cmake/flags-gcc-x86_64.cmake
 #            slug: "MINGW64"
 #            runner: windows-2022
-#          - msystem: CLANG64
-#            prefix: mingw-w64-clang-x86_64
-#            toolchain: ./cmake/llvm-win32-x86_64.cmake
-#            slug: "CLANG64"
-#            runner: windows-2022
-          - msystem: UCRT64
-            prefix: mingw-w64-ucrt-x86_64
-            toolchain: ./cmake/flags-gcc-x86_64.cmake
-            slug: "-64"
+          - msystem: CLANG64
+            prefix: mingw-w64-clang-x86_64
+            toolchain: ./cmake/llvm-win32-x86_64.cmake
+            slug: "CLANG64"
             runner: windows-2022
+#          - msystem: UCRT64
+#            prefix: mingw-w64-ucrt-x86_64
+#            toolchain: ./cmake/flags-gcc-x86_64.cmake
+#            slug: "-64"
+#            runner: windows-2022
           - msystem: CLANGARM64
             toolchain: ./cmake/flags-gcc-aarch64.cmake
             slug: -arm64
@@ -104,6 +104,7 @@ jobs:
           pacboy: >-
             ninja:p
             cmake:p
+            clang:p
             gcc:p
             pkgconf:p
             freetype:p
