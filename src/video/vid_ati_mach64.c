@@ -2263,8 +2263,8 @@ dither_16bpp(mach64_t* mach64, int r, int g, int b, int x, int y)
 void
 mach64_texel_fetch(mach64_t* mach64, int* red, int* green, int* blue, int* alpha)
 {
-    int s = mach64->accel.tex_s >> 7;
-    int t = mach64->accel.tex_t >> 7;
+    int s = mach64->accel.tex_s >> 11;
+    int t = mach64->accel.tex_t >> 11;
     int selsize = (mach64->tex_size_pitch >> 4) & 0xF;
     int size = 1 << selsize;
     int pitch = 1 << (mach64->tex_size_pitch & 0xF);
@@ -2273,8 +2273,8 @@ mach64_texel_fetch(mach64_t* mach64, int* red, int* green, int* blue, int* alpha
     int hmask = height - 1;
     uint8_t* texptr = &mach64->svga.vram[mach64->tex_offsets[selsize]];
 
-    s >>= 11;
-    t >>= 11;
+    s >>= 15 - selsize;
+    t >>= 15 - selsize;
 
     s &= mask;
     t &= mask;
@@ -2468,18 +2468,18 @@ mach64_advance_trapezoid_y(mach64_t* mach64)
     mach64->accel.dst_y += mach64->accel.yinc;
     mach64->accel.src_y += mach64->accel.yinc;
 
-    mach64->accel.red += mach64->red_y_inc * mach64->accel.yinc;
-    mach64->accel.green += mach64->green_y_inc * mach64->accel.yinc;
-    mach64->accel.blue += mach64->blue_y_inc * mach64->accel.yinc;
-    mach64->accel.alpha += mach64->alpha_y_inc * mach64->accel.yinc;
+    mach64->accel.red += mach64->red_y_inc;
+    mach64->accel.green += mach64->green_y_inc;
+    mach64->accel.blue += mach64->blue_y_inc;
+    mach64->accel.alpha += mach64->alpha_y_inc;
 
-    mach64->accel.tex_s += mach64->accel.s_y_inc * mach64->accel.yinc;
-    mach64->accel.tex_t += mach64->accel.t_y_inc * mach64->accel.yinc;
+    mach64->accel.tex_s += mach64->accel.s_y_inc;
+    mach64->accel.tex_t += mach64->accel.t_y_inc;
 
-    mach64->accel.s_y_inc += mach64->accel.s_y_inc2 * mach64->accel.yinc;
-    mach64->accel.t_y_inc += mach64->accel.t_y_inc2 * mach64->accel.yinc;
-    mach64->accel.s_xinc_start += mach64->accel.s_xy_inc2 * mach64->accel.yinc;
-    mach64->accel.t_xinc_start += mach64->accel.t_xy_inc2 * mach64->accel.yinc;
+    mach64->accel.s_y_inc += mach64->accel.s_y_inc2;
+    mach64->accel.t_y_inc += mach64->accel.t_y_inc2;
+    mach64->accel.s_xinc_start += mach64->accel.s_xy_inc2;
+    mach64->accel.t_xinc_start += mach64->accel.t_xy_inc2;
 
     if (mach64->accel.err <= 0 && mach64->accel.inc) {
         mach64->accel.err += mach64->accel.inc;
@@ -2487,14 +2487,14 @@ dec:
         while (mach64->accel.err > 0) {
             mach64->accel.dst_x += mach64->accel.xinc;
             {
-                mach64->accel.red += mach64->red_x_inc * mach64->accel.xinc;
-                mach64->accel.green += mach64->green_x_inc * mach64->accel.xinc;
-                mach64->accel.blue += mach64->blue_x_inc * mach64->accel.xinc;
-                mach64->accel.alpha += mach64->alpha_x_inc * mach64->accel.xinc;
-                mach64->accel.tex_s += mach64->accel.s_xinc_start * mach64->accel.xinc;
-                mach64->accel.tex_t += mach64->accel.t_xinc_start * mach64->accel.xinc;
-                mach64->accel.s_xinc_start += mach64->accel.s_x_inc2 * mach64->accel.xinc;
-                mach64->accel.t_xinc_start += mach64->accel.t_x_inc2 * mach64->accel.xinc;
+                mach64->accel.red += mach64->red_x_inc;
+                mach64->accel.green += mach64->green_x_inc;
+                mach64->accel.blue += mach64->blue_x_inc;
+                mach64->accel.alpha += mach64->alpha_x_inc;
+                mach64->accel.tex_s += mach64->accel.s_xinc_start;
+                mach64->accel.tex_t += mach64->accel.t_xinc_start;
+                mach64->accel.s_xinc_start += mach64->accel.s_x_inc2;
+                mach64->accel.t_xinc_start += mach64->accel.t_x_inc2;
             }
             mach64->accel.err += mach64->accel.dec;
         }
