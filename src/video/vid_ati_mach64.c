@@ -2335,8 +2335,8 @@ mach64_draw_trapezoid(mach64_t* mach64)
     int a_back = mach64->accel.alpha;
     int s_back = mach64->accel.tex_s;
     int t_back = mach64->accel.tex_t;
-    int s_inc_back = mach64->s_xinc_start;
-    int t_inc_back = mach64->t_xinc_start;
+    int s_inc_back = mach64->accel.s_xinc_start;
+    int t_inc_back = mach64->accel.t_xinc_start;
     int sign = (x_l > x_r) ? -1 : 1;
 
     if (((mach64->scale_3d_cntl >> 6) & 3) != 3 && ((mach64->scale_3d_cntl >> 6) & 3) != 2)
