@@ -2454,8 +2454,8 @@ advance_x:
     mach64->accel.alpha = a_back;
     mach64->accel.tex_s = s_back;
     mach64->accel.tex_t = t_back;
-    mach64->s_xinc_start = s_inc_back;
-    mach64->t_xinc_start = t_inc_back;
+    mach64->accel.s_xinc_start = s_inc_back;
+    mach64->accel.t_xinc_start = t_inc_back;
 }
 
 void
