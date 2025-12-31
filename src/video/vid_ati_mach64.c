@@ -328,14 +328,12 @@ typedef struct mach64_t {
         uint32_t s_xy_inc2;
         uint32_t s_xinc_start; // S_X_INC as well
         uint32_t s_y_inc;
-        uint32_t s_start;
 
         uint32_t t_x_inc2;
         uint32_t t_y_inc2;
         uint32_t t_xy_inc2;
         uint32_t t_xinc_start; // T_X_INC as well
         uint32_t t_y_inc;
-        uint32_t t_start;
     } accel;
 
 #ifdef DMA_BM
@@ -2126,14 +2124,12 @@ mach64_start_line(mach64_t *mach64)
         mach64->accel.s_xy_inc2 = mach64->s_xy_inc2;
         mach64->accel.s_xinc_start = mach64->s_xinc_start;
         mach64->accel.s_y_inc = mach64->s_y_inc;
-        mach64->accel.s_start = mach64->s_start;
 
         mach64->accel.t_x_inc2 = mach64->t_x_inc2;
         mach64->accel.t_y_inc2 = mach64->t_y_inc2;
         mach64->accel.t_xy_inc2 = mach64->t_xy_inc2;
         mach64->accel.t_xinc_start = mach64->t_xinc_start;
         mach64->accel.t_y_inc = mach64->t_y_inc;
-        mach64->accel.t_start = mach64->t_start;
     }
 
     mach64->accel.busy = 1;
@@ -2514,22 +2510,19 @@ dec:
     mach64->blue_start   = mach64->accel.blue;
     mach64->alpha_start  = mach64->accel.alpha;
 
-    mach64->s_start      = mach64->accel.s_start;
-    mach64->t_start      = mach64->accel.t_start;
-
     mach64->s_x_inc2     = mach64->accel.s_x_inc2;
     mach64->s_y_inc2     = mach64->accel.s_y_inc2;
     mach64->s_xy_inc2    = mach64->accel.s_xy_inc2;
     mach64->s_xinc_start = mach64->accel.s_xinc_start;
     mach64->s_y_inc      = mach64->accel.s_y_inc;
-    mach64->s_start      = mach64->accel.s_start;
+    mach64->s_start      = mach64->accel.tex_s;
 
     mach64->t_x_inc2     = mach64->accel.t_x_inc2;
     mach64->t_y_inc2     = mach64->accel.t_y_inc2;
     mach64->t_xy_inc2    = mach64->accel.t_xy_inc2;
     mach64->t_xinc_start = mach64->accel.t_xinc_start;
     mach64->t_y_inc      = mach64->accel.t_y_inc;
-    mach64->t_start      = mach64->accel.t_start;
+    mach64->t_start      = mach64->accel.tex_t;
 
     mach64->dst_bres_lnth &= ~(0x1fff << 16);
     mach64->dst_bres_lnth |= ((mach64->accel.trail_x & 0xfff) << 16) | ((mach64->accel.trail_x < 0) ? (0x1000 << 16) : 0);
