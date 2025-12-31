@@ -2110,11 +2110,9 @@ mach64_start_line(mach64_t *mach64)
     mach64->accel.xinc = (mach64->dst_cntl & DST_X_DIR) ? 1 : -1;
     mach64->accel.yinc = (mach64->dst_cntl & DST_Y_DIR) ? 1 : -1;
 
-    if ((mach64->dst_bres_lnth & (1 << 15))) {
-        mach64->accel.trail_x = ((mach64->dst_bres_lnth >> 16) & 0xfff) | (((mach64->dst_bres_lnth >> 16) & 0x1000) ? ~0xfff : 0);
-    }
-
     {
+        mach64->accel.trail_x = ((mach64->dst_bres_lnth >> 16) & 0xfff) | (((mach64->dst_bres_lnth >> 16) & 0x1000) ? ~0xfff : 0);
+
         mach64->accel.red = mach64->red_start;
         mach64->accel.green = mach64->green_start;
         mach64->accel.blue = mach64->blue_start;
@@ -2338,16 +2336,17 @@ mach64_draw_trapezoid(mach64_t* mach64)
     int r_back = mach64->accel.red;
     int g_back = mach64->accel.green;
     int b_back = mach64->accel.blue;
+    int a_back = mach64->accel.alpha;
     int s_back = mach64->accel.tex_s;
     int t_back = mach64->accel.tex_t;
     int s_inc_back = mach64->s_xinc_start;
     int t_inc_back = mach64->t_xinc_start;
-    int len = abs((x_r < x_l) ? (x_l - x_r) : (x_r - x_l));
+    int sign = (x_l > x_r) ? -1 : 1;
 
     if (((mach64->scale_3d_cntl >> 6) & 3) != 3 && ((mach64->scale_3d_cntl >> 6) & 3) != 2)
         return;
     
-    while (len)
+    while (x_l != x_r)
     {
         int texel_red = 0;
         int texel_green = 0;
@@ -2437,16 +2436,15 @@ mach64_draw_trapezoid(mach64_t* mach64)
         WRITE(mach64->accel.dst_offset + (mach64->accel.dst_y * mach64->accel.dst_pitch) + x_l, mach64->accel.dst_size);
 
 advance_x:
-        len--;
-        mach64->accel.red += mach64->red_x_inc * mach64->accel.xinc;
-        mach64->accel.green += mach64->green_x_inc * mach64->accel.xinc;
-        mach64->accel.blue += mach64->blue_x_inc * mach64->accel.xinc;
-        mach64->accel.alpha += mach64->alpha_x_inc * mach64->accel.xinc;
+        mach64->accel.red += mach64->red_x_inc * sign;
+        mach64->accel.green += mach64->green_x_inc * sign;
+        mach64->accel.blue += mach64->blue_x_inc * sign;
+        mach64->accel.alpha += mach64->alpha_x_inc * sign;
 
-        mach64->accel.tex_s += mach64->accel.s_xinc_start * mach64->accel.xinc;
-        mach64->accel.tex_t += mach64->accel.t_xinc_start * mach64->accel.xinc;
-        mach64->accel.s_xinc_start += mach64->accel.s_x_inc2 * mach64->accel.xinc;
-        mach64->accel.t_xinc_start += mach64->accel.t_x_inc2 * mach64->accel.xinc;
+        mach64->accel.tex_s += mach64->accel.s_xinc_start * sign;
+        mach64->accel.tex_t += mach64->accel.t_xinc_start * sign;
+        mach64->accel.s_xinc_start += mach64->accel.s_x_inc2 * sign;
+        mach64->accel.t_xinc_start += mach64->accel.t_x_inc2 * sign;
 
         if (x_l > x_r)
             x_l--;
@@ -2457,6 +2455,7 @@ advance_x:
     mach64->accel.red = r_back;
     mach64->accel.green = g_back;
     mach64->accel.blue = b_back;
+    mach64->accel.alpha = a_back;
     mach64->accel.tex_s = s_back;
     mach64->accel.tex_t = t_back;
     mach64->s_xinc_start = s_inc_back;
@@ -2509,6 +2508,31 @@ dec:
             mach64->accel.trail_err += mach64->accel.trail_dec;
         }
     }
+
+    mach64->red_start    = mach64->accel.red;
+    mach64->green_start  = mach64->accel.green;
+    mach64->blue_start   = mach64->accel.blue;
+    mach64->alpha_start  = mach64->accel.alpha;
+
+    mach64->s_start      = mach64->accel.s_start;
+    mach64->t_start      = mach64->accel.t_start;
+
+    mach64->s_x_inc2     = mach64->accel.s_x_inc2;
+    mach64->s_y_inc2     = mach64->accel.s_y_inc2;
+    mach64->s_xy_inc2    = mach64->accel.s_xy_inc2;
+    mach64->s_xinc_start = mach64->accel.s_xinc_start;
+    mach64->s_y_inc      = mach64->accel.s_y_inc;
+    mach64->s_start      = mach64->accel.s_start;
+
+    mach64->t_x_inc2     = mach64->accel.t_x_inc2;
+    mach64->t_y_inc2     = mach64->accel.t_y_inc2;
+    mach64->t_xy_inc2    = mach64->accel.t_xy_inc2;
+    mach64->t_xinc_start = mach64->accel.t_xinc_start;
+    mach64->t_y_inc      = mach64->accel.t_y_inc;
+    mach64->t_start      = mach64->accel.t_start;
+
+    mach64->dst_bres_lnth &= ~(0x1fff << 16);
+    mach64->dst_bres_lnth |= ((mach64->accel.trail_x & 0xfff) << 16) | ((mach64->accel.trail_x < 0) ? (0x1000 << 16) : 0);
 }
 
 void
@@ -2999,7 +3023,7 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                     if (mach64->accel.x_count == 1 && !(mach64->dst_cntl & DST_LAST_PEL))
                         draw_pixel = 0;
 
-                    if (mach64->type == MACH64_GT && mach64->accel.dst_y >= mach64->accel.sc_top && mach64->accel.dst_y <= mach64->accel.sc_bottom && (mach64->dst_bres_lnth & (1 << 15)) && draw_pixel)
+                    if (mach64->type == MACH64_GT && mach64->accel.dst_y >= mach64->accel.sc_top && mach64->accel.dst_y <= mach64->accel.sc_bottom && (mach64->dst_bres_lnth & (1 << 15)))
                         mach64_draw_trapezoid(mach64);
                     else if (mach64->accel.dst_x >= mach64->accel.sc_left && mach64->accel.dst_x <= mach64->accel.sc_right && mach64->accel.dst_y >= mach64->accel.sc_top && mach64->accel.dst_y <= mach64->accel.sc_bottom && draw_pixel) {
                         switch (mix ? mach64->accel.source_fg : mach64->accel.source_bg) {
@@ -3047,6 +3071,17 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                     if (mach64->accel.x_count <= 0) {
                         /*Blit finished*/
                         mach64_log("mach64 blit finished\n");
+                        if (((mach64->dst_bres_lnth & (1 << 15)) && mach64->type == MACH64_GT)) {
+                            //pclog("End trail_x = %d\n", ((mach64->dst_bres_lnth >> 16) & 0xfff) | (((mach64->dst_bres_lnth >> 16) & 0x1000) ? ~0xfff : 0));
+                            mach64->dst_y_x = (mach64->dst_y_x & 0x1fff) | ((mach64->accel.dst_x << 16) & 0xfff0000);
+                            if (mach64->accel.dst_x < 0) {
+                                mach64->dst_y_x |= (0x1000 << 16);
+                            }
+                            mach64->dst_y_x = (mach64->dst_y_x & 0x1fff0000) | ((mach64->accel.dst_y) & 0x3fff);
+                            if (mach64->accel.dst_y < 0) {
+                                mach64->dst_y_x |= (0x4000);
+                            }
+                        }
                         mach64->accel.busy = 0;
                         return;
                     }
