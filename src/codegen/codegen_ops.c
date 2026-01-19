@@ -5,22 +5,21 @@
 
 #include <86box/86box.h>
 #include <86box/mem.h>
+#include <86box/plat_unused.h>
 #include "cpu.h"
 #include "x86.h"
 #include "x86_ops.h"
 #include "x86_flags.h"
+#include "x86seg_common.h"
+#include "x86seg.h"
+#include "x87_sf.h"
 #include "x87.h"
 #include "386_common.h"
 #include "cpu.h"
 #include "codegen.h"
 #include "codegen_ops.h"
-
-#if defined __amd64__ || defined _M_X64
-#    include "codegen_ops_x86-64.h"
-#elif defined i386 || defined __i386 || defined __i386__ || defined _X86_ || defined _M_IX86
-#    include "codegen_ops_x86.h"
-#endif
-
+// Old dynarec now x86-64 only
+#include "codegen_ops_x86-64.h"
 #include "codegen_ops_arith.h"
 #include "codegen_ops_fpu.h"
 #include "codegen_ops_jump.h"

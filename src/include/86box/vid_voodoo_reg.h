@@ -8,17 +8,14 @@
  *
  *          Voodoo Graphics, 2, Banshee, 3 emulation.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          leilei
  *
  *          Copyright 2008-2020 Sarah Walker.
  */
-
 #ifndef VIDEO_VOODOO_REG_H
 #define VIDEO_VOODOO_REG_H
 
-void voodoo_reg_writel(uint32_t addr, uint32_t val, void *p);
+void voodoo_reg_writel(uint32_t addr, uint32_t val, void *priv);
 
 #endif /*VIDEO_VOODOO_REG_H*/

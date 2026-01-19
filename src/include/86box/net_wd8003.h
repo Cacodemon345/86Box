@@ -11,8 +11,6 @@
  *            - SMC/WD 8013EBT (ISA 16-bit);
  *            - SMC/WD 8013EP/A (MCA).
  *
- *
- *
  * Authors: Fred N. van Kempen, <decwiz@yahoo.com>
  *          TheCollector1995, <mariogplayer@gmail.com>
  *          Miran Grca, <mgrca8@gmail.com>
@@ -40,7 +38,6 @@
  *   Boston, MA 02111-1307
  *   USA.
  */
-
 #ifndef NET_WD8003_H
 #define NET_WD8003_H
 
@@ -53,12 +50,5 @@ enum {
     WD8003EA  = 5, /* WD8003E/A : 16-bit MCA, 5x3 interface chip */
     WD8013EPA = 6
 };
-
-extern const device_t wd8003e_device;
-extern const device_t wd8003eb_device;
-extern const device_t wd8013ebt_device;
-extern const device_t wd8003eta_device;
-extern const device_t wd8003ea_device;
-extern const device_t wd8013epa_device;
 
 #endif /*NET_WD8003_H*/

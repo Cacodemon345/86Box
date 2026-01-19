@@ -6,8 +6,6 @@
  *
  *          Definitions for the generic NVRAM/CMOS driver.
  *
- *
- *
  * Authors: Fred N. van Kempen, <decwiz@yahoo.com>,
  *          David Hrdlička, <hrdlickadavid@outlook.com>
  *
@@ -44,7 +42,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING  IN ANY  WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
 #ifndef EMU_NVR_H
 #define EMU_NVR_H
 
@@ -60,6 +57,7 @@
 #define TIME_SYNC_ENABLED  1
 #define TIME_SYNC_UTC      2
 
+#ifdef _TIMER_H_
 /* Define a generic RTC/NVRAM device. */
 typedef struct _nvr_ {
     char    *fn;   /* pathname of image file */
@@ -85,6 +83,7 @@ extern int nvr_dosave;
 #ifdef EMU_DEVICE_H
 extern const device_t at_nvr_old_device;
 extern const device_t at_nvr_device;
+extern const device_t at_mb_nvr_device;
 extern const device_t ps_nvr_device;
 extern const device_t amstrad_nvr_device;
 extern const device_t amstrad_megapc_nvr_device;
@@ -96,15 +95,15 @@ extern const device_t ami_1992_nvr_device;
 extern const device_t ami_1994_nvr_device;
 extern const device_t ami_1995_nvr_device;
 extern const device_t via_nvr_device;
+extern const device_t piix4_ami_1995_nvr_device;
 extern const device_t p6rp4_nvr_device;
+extern const device_t martin_nvr_device;
 extern const device_t elt_nvr_device;
 #endif
 
 extern void rtc_tick(void);
 
 extern void  nvr_init(nvr_t *);
-extern char *nvr_path(char *str);
-extern FILE *nvr_fopen(char *str, char *mode);
 extern int   nvr_load(void);
 extern void  nvr_close(void);
 extern void  nvr_set_ven_save(void (*ven_save)(void));
@@ -113,18 +112,27 @@ extern int   nvr_save(void);
 extern int  nvr_is_leap(int year);
 extern int  nvr_get_days(int month, int year);
 extern void nvr_time_sync(void);
-extern void nvr_time_get(struct tm *);
-extern void nvr_time_set(struct tm *);
+extern void nvr_time_get(void *priv);
+extern void nvr_time_set(void *priv);
 
 extern void nvr_reg_write(uint16_t reg, uint8_t val, void *priv);
 extern void nvr_at_handler(int set, uint16_t base, nvr_t *nvr);
 extern void nvr_at_sec_handler(int set, uint16_t base, nvr_t *nvr);
 extern void nvr_at_index_read_handler(int set, uint16_t base, nvr_t *nvr);
 extern void nvr_read_addr_set(int set, nvr_t *nvr);
+extern uint8_t nvr_get_index(void *priv, uint8_t addr_id);
+extern void nvr_at_data_port(int set, nvr_t *nvr);
 extern void nvr_wp_set(int set, int h, nvr_t *nvr);
 extern void nvr_via_wp_set(int set, int reg, nvr_t *nvr);
 extern void nvr_bank_set(int base, uint8_t bank, nvr_t *nvr);
 extern void nvr_lock_set(int base, int size, int lock, nvr_t *nvr);
 extern void nvr_irq_set(int irq, nvr_t *nvr);
+extern void nvr_smi_enable(int enable, nvr_t *nvr);
+extern uint8_t nvr_smi_status(nvr_t *nvr);
+extern void nvr_smi_status_clear(nvr_t *nvr);
+#endif
+
+extern char *nvr_path(char *str);
+extern FILE *nvr_fopen(char *str, char *mode);
 
 #endif /*EMU_NVR_H*/

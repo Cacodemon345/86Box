@@ -8,8 +8,6 @@
  *
  *          Implementation of the ALi M1543 Desktop South Bridge.
  *
- *
- *
  * Authors: Tiseno100,
  *
  *          Copyright 2021 Tiseno100.
@@ -22,6 +20,7 @@
 #include <wchar.h>
 #define HAVE_STDARG_H
 #include <86box/86box.h>
+#include "cpu.h"
 #include <86box/timer.h>
 #include <86box/device.h>
 #include <86box/io.h>
@@ -47,6 +46,7 @@
 #include <86box/chipset.h>
 
 typedef struct ali1543_t {
+    uint8_t mirq_states[8];
     uint8_t pci_conf[256];
     uint8_t pmu_conf[256];
     uint8_t usb_conf[256];
@@ -69,7 +69,6 @@ typedef struct ali1543_t {
     sff8038i_t      *ide_controller[2];
     smbus_ali7101_t *smbus;
     usb_t           *usb;
-    usb_params_t     usb_params;
 
 } ali1543_t;
 
@@ -197,8 +196,8 @@ ali1533_write(int func, int addr, uint8_t val, void *priv)
         case 0x44: /* Set IRQ Line for Primary IDE if it's on native mode */
             dev->pci_conf[addr] = val & 0xdf;
             soft_reset_pci      = !!(val & 0x80);
-            sff_set_irq_level(dev->ide_controller[0], 0, !(val & 0x10));
-            sff_set_irq_level(dev->ide_controller[1], 0, !(val & 0x10));
+            pci_set_mirq_level(PCI_MIRQ0, !(val & 0x10));
+            pci_set_mirq_level(PCI_MIRQ2, !(val & 0x10));
             ali1543_log("INTAJ = IRQ %i\n", ali1533_irq_routing[val & 0x0f]);
             pci_set_mirq_routing(PCI_MIRQ0, ali1533_irq_routing[val & 0x0f]);
             pci_set_mirq_routing(PCI_MIRQ2, ali1533_irq_routing[val & 0x0f]);
@@ -413,13 +412,14 @@ ali1533_write(int func, int addr, uint8_t val, void *priv)
         case 0x74: /* USB IRQ Routing - we cheat and use MIRQ4 */
             dev->pci_conf[addr] = val & 0xdf;
             /* TODO: MIRQ level/edge control - if bit 4 = 1, it's level */
+            pci_set_mirq_level(PCI_MIRQ4, !(val & 0x10));
             pci_set_mirq_routing(PCI_MIRQ4, ali1533_irq_routing[val & 0x0f]);
             break;
 
         case 0x75: /* Set IRQ Line for Secondary IDE if it's on native mode */
             dev->pci_conf[addr] = val & 0x1f;
-            sff_set_irq_level(dev->ide_controller[0], 1, !(val & 0x10));
-            sff_set_irq_level(dev->ide_controller[1], 1, !(val & 0x10));
+            pci_set_mirq_level(PCI_MIRQ1, !(val & 0x10));
+            pci_set_mirq_level(PCI_MIRQ3, !(val & 0x10));
             ali1543_log("INTBJ = IRQ %i\n", ali1533_irq_routing[val & 0x0f]);
             pci_set_mirq_routing(PCI_MIRQ1, ali1533_irq_routing[val & 0x0f]);
             pci_set_mirq_routing(PCI_MIRQ3, ali1533_irq_routing[val & 0x0f]);
@@ -491,46 +491,39 @@ static void
 ali5229_ide_irq_handler(ali1543_t *dev)
 {
     int ctl = 0;
-    int ch = 0;
     int bit = 0;
 
     if (dev->ide_conf[0x52] & 0x10) {
         ctl ^= 1;
-        ch ^= 1;
         bit ^= 5;
     }
 
     if (dev->ide_conf[0x09] & (1 ^ bit)) {
         /* Primary IDE is native. */
         ali1543_log("Primary IDE IRQ mode: Native, Native\n");
-        sff_set_irq_mode(dev->ide_controller[ctl], 0 ^ ch, 4);
-        sff_set_irq_mode(dev->ide_controller[ctl], 1 ^ ch, 4);
+        sff_set_irq_mode(dev->ide_controller[ctl], IRQ_MODE_ALI_ALADDIN);
     } else {
         /* Primary IDE is legacy. */
         switch (dev->pci_conf[0x58] & 0x03) {
             case 0x00:
                 /* SIRQI, SIRQII */
                 ali1543_log("Primary IDE IRQ mode: SIRQI, SIRQII\n");
-                sff_set_irq_mode(dev->ide_controller[ctl], 0 ^ ch, 2);
-                sff_set_irq_mode(dev->ide_controller[ctl], 1 ^ ch, 5);
+                sff_set_irq_mode(dev->ide_controller[ctl], ctl ? IRQ_MODE_MIRQ_1 : IRQ_MODE_MIRQ_0);
                 break;
             case 0x01:
                 /* IRQ14, IRQ15 */
                 ali1543_log("Primary IDE IRQ mode: IRQ14, IRQ15\n");
-                sff_set_irq_mode(dev->ide_controller[ctl], 0 ^ ch, 0);
-                sff_set_irq_mode(dev->ide_controller[ctl], 1 ^ ch, 0);
+                sff_set_irq_mode(dev->ide_controller[ctl], IRQ_MODE_LEGACY);
                 break;
             case 0x02:
                 /* IRQ14, SIRQII */
                 ali1543_log("Primary IDE IRQ mode: IRQ14, SIRQII\n");
-                sff_set_irq_mode(dev->ide_controller[ctl], 0 ^ ch, 0);
-                sff_set_irq_mode(dev->ide_controller[ctl], 1 ^ ch, 5);
+                sff_set_irq_mode(dev->ide_controller[ctl], ctl ? IRQ_MODE_MIRQ_1 : IRQ_MODE_LEGACY);
                 break;
             case 0x03:
                 /* IRQ14, SIRQI */
                 ali1543_log("Primary IDE IRQ mode: IRQ14, SIRQI\n");
-                sff_set_irq_mode(dev->ide_controller[ctl], 0 ^ ch, 0);
-                sff_set_irq_mode(dev->ide_controller[ctl], 1 ^ ch, 2);
+                sff_set_irq_mode(dev->ide_controller[ctl], ctl ? IRQ_MODE_MIRQ_0 : IRQ_MODE_LEGACY);
                 break;
 
             default:
@@ -543,34 +536,29 @@ ali5229_ide_irq_handler(ali1543_t *dev)
     if (dev->ide_conf[0x09] & (4 ^ bit)) {
         /* Secondary IDE is native. */
         ali1543_log("Secondary IDE IRQ mode: Native, Native\n");
-        sff_set_irq_mode(dev->ide_controller[ctl], 0 ^ ch, 4);
-        sff_set_irq_mode(dev->ide_controller[ctl], 1 ^ ch, 4);
+        sff_set_irq_mode(dev->ide_controller[ctl], IRQ_MODE_ALI_ALADDIN);
     } else {
         /* Secondary IDE is legacy. */
         switch (dev->pci_conf[0x58] & 0x03) {
             case 0x00:
                 /* SIRQI, SIRQII */
                 ali1543_log("Secondary IDE IRQ mode: SIRQI, SIRQII\n");
-                sff_set_irq_mode(dev->ide_controller[ctl], 0 ^ ch, 2);
-                sff_set_irq_mode(dev->ide_controller[ctl], 1 ^ ch, 5);
+                sff_set_irq_mode(dev->ide_controller[ctl], ctl ? IRQ_MODE_MIRQ_1 : IRQ_MODE_MIRQ_0);
                 break;
             case 0x01:
                 /* IRQ14, IRQ15 */
                 ali1543_log("Secondary IDE IRQ mode: IRQ14, IRQ15\n");
-                sff_set_irq_mode(dev->ide_controller[ctl], 0 ^ ch, 0);
-                sff_set_irq_mode(dev->ide_controller[ctl], 1 ^ ch, 0);
+                sff_set_irq_mode(dev->ide_controller[ctl], IRQ_MODE_LEGACY);
                 break;
             case 0x02:
                 /* IRQ14, SIRQII */
                 ali1543_log("Secondary IDE IRQ mode: IRQ14, SIRQII\n");
-                sff_set_irq_mode(dev->ide_controller[ctl], 0 ^ ch, 0);
-                sff_set_irq_mode(dev->ide_controller[ctl], 1 ^ ch, 5);
+                sff_set_irq_mode(dev->ide_controller[ctl], ctl ? IRQ_MODE_MIRQ_1 : IRQ_MODE_LEGACY);
                 break;
             case 0x03:
                 /* IRQ14, SIRQI */
                 ali1543_log("Secondary IDE IRQ mode: IRQ14, SIRQI\n");
-                sff_set_irq_mode(dev->ide_controller[ctl], 0 ^ ch, 0);
-                sff_set_irq_mode(dev->ide_controller[ctl], 1 ^ ch, 2);
+                sff_set_irq_mode(dev->ide_controller[ctl], ctl ? IRQ_MODE_MIRQ_0 : IRQ_MODE_LEGACY);
                 break;
 
             default:
@@ -636,7 +624,6 @@ ali5229_ide_handler(ali1543_t *dev)
             ali1543_log("ali5229_ide_handler(): Enabling primary IDE...\n");
             ide_pri_enable();
 
-            sff_bus_master_handler(dev->ide_controller[0], dev->ide_conf[0x04] & 0x01, ((dev->ide_conf[0x20] & 0xf0) | (dev->ide_conf[0x21] << 8)) + (0 ^ ch));
             ali1543_log("M5229 PRI: BASE %04x SIDE %04x\n", current_pri_base, current_pri_side);
         }
 
@@ -650,13 +637,14 @@ ali5229_ide_handler(ali1543_t *dev)
             ali1543_log("ali5229_ide_handler(): Enabling secondary IDE...\n");
             ide_sec_enable();
 
-            sff_bus_master_handler(dev->ide_controller[1], dev->ide_conf[0x04] & 0x01, ((dev->ide_conf[0x20] & 0xf0) | (dev->ide_conf[0x21] << 8)) + (8 ^ ch));
             ali1543_log("M5229 SEC: BASE %04x SIDE %04x\n", current_sec_base, current_sec_side);
         }
-    } else {
-        sff_bus_master_handler(dev->ide_controller[0], dev->ide_conf[0x04] & 0x01, (dev->ide_conf[0x20] & 0xf0) | (dev->ide_conf[0x21] << 8));
-        sff_bus_master_handler(dev->ide_controller[1], dev->ide_conf[0x04] & 0x01, ((dev->ide_conf[0x20] & 0xf0) | (dev->ide_conf[0x21] << 8)) + 8);
     }
+
+    sff_bus_master_handler(dev->ide_controller[0], dev->ide_conf[0x04] & 0x01,
+                           ((dev->ide_conf[0x20] & 0xf0) | (dev->ide_conf[0x21] << 8)) + (0 ^ ch));
+    sff_bus_master_handler(dev->ide_controller[1], dev->ide_conf[0x04] & 0x01,
+                           ((dev->ide_conf[0x20] & 0xf0) | (dev->ide_conf[0x21] << 8)) + (8 ^ ch));
 }
 
 static void
@@ -718,12 +706,12 @@ ali5229_chip_reset(ali1543_t *dev)
     ali5229_write(0, 0x09, 0xfa, dev);
     ali5229_write(0, 0x52, 0x00, dev);
 
-    ali5229_write(0, 0x50, 0x00, dev);
+    ali5229_write(0, 0x50, 0x02, dev);
 
     sff_set_slot(dev->ide_controller[0], dev->ide_slot);
     sff_set_slot(dev->ide_controller[1], dev->ide_slot);
-    sff_bus_master_reset(dev->ide_controller[0], (dev->ide_conf[0x20] & 0xf0) | (dev->ide_conf[0x21] << 8));
-    sff_bus_master_reset(dev->ide_controller[1], ((dev->ide_conf[0x20] & 0xf0) | (dev->ide_conf[0x21] << 8)) + 8);
+    sff_bus_master_reset(dev->ide_controller[0]);
+    sff_bus_master_reset(dev->ide_controller[1]);
     ali5229_ide_handler(dev);
 }
 
@@ -731,7 +719,7 @@ static void
 ali5229_write(int func, int addr, uint8_t val, void *priv)
 {
     ali1543_t *dev = (ali1543_t *) priv;
-    ali1543_log("M5229: dev->ide_conf[%02x] = %02x\n", addr, val);
+    ali1543_log("M5229: [W] dev->ide_conf[%02x] = %02x\n", addr, val);
 
     if (func > 0)
         return;
@@ -770,6 +758,10 @@ ali5229_write(int func, int addr, uint8_t val, void *priv)
             ali5229_ide_irq_handler(dev);
             break;
 
+        case 0x0d: /* LT - Latency Timer */
+            dev->ide_conf[addr] = val;
+            break;
+
         /* Primary Base Address */
         case 0x10:
         case 0x11:
@@ -790,9 +782,9 @@ ali5229_write(int func, int addr, uint8_t val, void *priv)
             /* Datasheet erratum: the PCI BAR's actually have different sizes. */
             if (addr == 0x20)
                 dev->ide_conf[addr] = (val & 0xe0) | 0x01;
-            else if ((addr & 0x43) == 0x00)
+            else if ((addr & 0x07) == 0x00)
                 dev->ide_conf[addr] = (val & 0xf8) | 0x01;
-            else if ((addr & 0x43) == 0x40)
+            else if ((addr & 0x07) == 0x04)
                 dev->ide_conf[addr] = (val & 0xfc) | 0x01;
             else
                 dev->ide_conf[addr] = val;
@@ -844,8 +836,8 @@ ali5229_write(int func, int addr, uint8_t val, void *priv)
             if (val & 0x80)
                 ali5229_chip_reset(dev);
             else if (val & 0x40) {
-                sff_bus_master_reset(dev->ide_controller[0], (dev->ide_conf[0x20] & 0xf0) | (dev->ide_conf[0x21] << 8));
-                sff_bus_master_reset(dev->ide_controller[1], ((dev->ide_conf[0x20] & 0xf0) | (dev->ide_conf[0x21] << 8)) + 8);
+                sff_bus_master_reset(dev->ide_controller[0]);
+                sff_bus_master_reset(dev->ide_controller[1]);
             }
             break;
 
@@ -901,13 +893,15 @@ ali5229_read(int func, int addr, void *priv)
     if (dev->ide_dev_enable && (func == 0)) {
         ret = dev->ide_conf[addr];
         if ((addr == 0x09) && !(dev->ide_conf[0x50] & 0x02))
-            ret &= 0x0f;
+            ret = (ret & 0x0f) | 0x80;
         else if (addr == 0x50)
             ret = (ret & 0xfe) | (dev->ide_dev_enable ? 0x01 : 0x00);
         else if (addr == 0x75)
             ret = ide_read_ali_75();
         else if (addr == 0x76)
             ret = ide_read_ali_76();
+
+        ali1543_log("M5229: [R] dev->ide_conf[%02x] = %02x\n", addr, ret);
     }
 
     return ret;
@@ -996,7 +990,7 @@ static void
 ali7101_write(int func, int addr, uint8_t val, void *priv)
 {
     ali1543_t *dev = (ali1543_t *) priv;
-    ali1543_log("M7101: dev->pmu_conf[%02x] = %02x\n", addr, val);
+    ali1543_log("M7101: [W] dev->pmu_conf[%02x] = %02x\n", addr, val);
 
     if (func > 0)
         return;
@@ -1068,7 +1062,7 @@ ali7101_write(int func, int addr, uint8_t val, void *priv)
 
         case 0x40:
             dev->pmu_conf[addr] = val & 0x1f;
-            pic_set_smi_irq_mask(8, (dev->pmu_conf[0x77] & 0x08) && (dev->pmu_conf[0x40] & 0x03));
+            nvr_smi_enable((dev->pmu_conf[0x77] & 0x08) && (dev->pmu_conf[0x40] & 0x08), dev->nvr);
             break;
         case 0x41:
             dev->pmu_conf[addr] = val & 0x10;
@@ -1079,6 +1073,8 @@ ali7101_write(int func, int addr, uint8_t val, void *priv)
         /* TODO: Is the status R/W or R/WC? */
         case 0x42:
             dev->pmu_conf[addr] &= ~(val & 0x1f);
+            if (val & 0x08)
+                nvr_smi_status_clear(dev->nvr);
             break;
         case 0x43:
             dev->pmu_conf[addr] &= ~(val & 0x10);
@@ -1216,8 +1212,8 @@ ali7101_write(int func, int addr, uint8_t val, void *priv)
         case 0x77:
             /* TODO: If bit 1 is clear, then status bit is set even if SMI is disabled. */
             dev->pmu_conf[addr] = val;
-            pic_set_smi_irq_mask(8, (dev->pmu_conf[0x77] & 0x08) && (dev->pmu_conf[0x40] & 0x03));
             ali1543_log("PMU77: %02X\n", val);
+            nvr_smi_enable((dev->pmu_conf[0x77] & 0x08) && (dev->pmu_conf[0x40] & 0x08), dev->nvr);
             apm_set_do_smi(dev->acpi->apm, (dev->pmu_conf[0x77] & 0x08) && (dev->pmu_conf[0x41] & 0x10));
             break;
 
@@ -1418,68 +1414,79 @@ ali7101_read(int func, int addr, void *priv)
     uint8_t    ret = 0xff;
 
     if (dev->pmu_dev_enable && (func == 0)) {
-        if ((dev->pmu_conf[0xc9] & 0x01) && (addr >= 0x40) && (addr != 0xc9))
-            return 0xff;
-
-        /* TODO: C4, C5 = GPIREG (masks: 0D, 0E) */
-        if (addr == 0x43)
-            ret = acpi_ali_soft_smi_status_read(dev->acpi) ? 0x10 : 0x00;
-        else if (addr == 0x7f)
-            ret = 0x80;
-        else if (addr == 0xbc)
-            ret = inb(0x70);
-        else
-            ret = dev->pmu_conf[addr];
-
-        if (dev->pmu_conf[0x77] & 0x10) {
+        if (!(dev->pmu_conf[0xc9] & 0x01) || (addr < 0x40) || (addr == 0xc9)) {
+            /* TODO: C4, C5 = GPIREG (masks: 0D, 0E) */
             switch (addr) {
+                default:
+                    ret = dev->pmu_conf[addr];
+                    break;
+                case 0x10 ... 0x13:
+                    if (dev->pmu_conf[0x5b] & 0x02)
+                        ret = 0x00;
+                    else
+                        ret = dev->pmu_conf[addr];
+                    break;
+                case 0x14 ... 0x17:
+                    if (dev->pmu_conf[0x5b] & 0x04)
+                        ret = 0x00;
+                    else
+                        ret = dev->pmu_conf[addr];
+                    break;
                 case 0x42:
-                    dev->pmu_conf[addr] &= 0xe0;
+                    ret = (dev->pmu_conf[addr] & 0xf7) | (nvr_smi_status(dev->nvr) ? 0x08 : 0x00);
                     break;
                 case 0x43:
-                    dev->pmu_conf[addr] &= 0xef;
-                    acpi_ali_soft_smi_status_write(dev->acpi, 0);
+                    ret = acpi_ali_soft_smi_status_read(dev->acpi) ? 0x10 : 0x00;
                     break;
+                case 0x7f:
+                    ret = 0x80;
+                    break;
+                case 0xbc:
+                    ret = inb(0x70);
+                    break;
+            }
 
-                case 0x48:
-                    dev->pmu_conf[addr] = 0x00;
-                    break;
-                case 0x49:
-                    dev->pmu_conf[addr] &= 0x60;
-                    break;
-                case 0x4a:
-                    dev->pmu_conf[addr] &= 0xc7;
-                    break;
+            if (dev->pmu_conf[0x77] & 0x10) {
+                switch (addr) {
+                    case 0x42:
+                        dev->pmu_conf[addr] &= 0xe0;
+                        break;
+                    case 0x43:
+                        dev->pmu_conf[addr] &= 0xef;
+                        acpi_ali_soft_smi_status_write(dev->acpi, 0);
+                        break;
 
-                case 0x4e:
-                    dev->pmu_conf[addr] &= 0xfa;
-                    break;
-                case 0x4f:
-                    dev->pmu_conf[addr] &= 0xfe;
-                    break;
+                    case 0x48:
+                        dev->pmu_conf[addr] = 0x00;
+                        break;
+                    case 0x49:
+                        dev->pmu_conf[addr] &= 0x60;
+                        break;
+                    case 0x4a:
+                        dev->pmu_conf[addr] &= 0xc7;
+                        break;
 
-                case 0x74:
-                    dev->pmu_conf[addr] &= 0xcc;
-                    break;
+                    case 0x4e:
+                        dev->pmu_conf[addr] &= 0xfa;
+                        break;
+                    case 0x4f:
+                        dev->pmu_conf[addr] &= 0xfe;
+                        break;
 
-                default:
-                    break;
+                    case 0x74:
+                        dev->pmu_conf[addr] &= 0xcc;
+                        break;
+
+                    default:
+                        break;
+                }
             }
         }
     }
 
+    ali1543_log("M7101: [R] dev->pmu_conf[%02x] = %02x\n", addr, ret);
+
     return ret;
-}
-
-static void
-ali5237_usb_update_interrupt(usb_t* usb, void *priv)
-{
-    const ali1543_t *dev = (ali1543_t *) priv;
-
-    if (usb->irq_level)
-        pci_set_mirq(4, !!(dev->pci_conf[0x74] & 0x10));
-    else
-        pci_clear_mirq(4, !!(dev->pci_conf[0x74] & 0x10));
 }
 
 static void
@@ -1591,20 +1598,19 @@ ali1543_close(void *priv)
 static void *
 ali1543_init(const device_t *info)
 {
-    ali1543_t *dev = (ali1543_t *) malloc(sizeof(ali1543_t));
-    memset(dev, 0, sizeof(ali1543_t));
+    ali1543_t *dev = (ali1543_t *) calloc(1, sizeof(ali1543_t));
 
     /* Device 02: M1533 Southbridge */
-    dev->pci_slot = pci_add_card(PCI_ADD_SOUTHBRIDGE, ali1533_read, ali1533_write, dev);
+    pci_add_card(PCI_ADD_SOUTHBRIDGE, ali1533_read, ali1533_write, dev, &dev->pci_slot);
 
     /* Device 0B: M5229 IDE Controller*/
-    dev->ide_slot = pci_add_card(PCI_ADD_SOUTHBRIDGE_IDE, ali5229_read, ali5229_write, dev);
+    pci_add_card(PCI_ADD_SOUTHBRIDGE_IDE, ali5229_read, ali5229_write, dev, &dev->ide_slot);
 
     /* Device 0C: M7101 Power Managment Controller */
-    dev->pmu_slot = pci_add_card(PCI_ADD_SOUTHBRIDGE_PMU, ali7101_read, ali7101_write, dev);
+    pci_add_card(PCI_ADD_SOUTHBRIDGE_PMU, ali7101_read, ali7101_write, dev, &dev->pmu_slot);
 
     /* Device 0F: M5237 USB */
-    dev->usb_slot = pci_add_card(PCI_ADD_SOUTHBRIDGE_USB, ali5237_read, ali5237_write, dev);
+    pci_add_card(PCI_ADD_SOUTHBRIDGE_USB, ali5237_read, ali5237_write, dev, &dev->usb_slot);
 
     /* ACPI */
     dev->acpi = device_add(&acpi_ali_device);
@@ -1632,10 +1638,7 @@ ali1543_init(const device_t *info)
     dev->smbus = device_add(&ali7101_smbus_device);
 
     /* USB */
-    dev->usb_params.parent_priv      = dev;
-    dev->usb_params.smi_handle       = NULL;
-    dev->usb_params.update_interrupt = ali5237_usb_update_interrupt;
-    dev->usb                         = device_add_parameters(&usb_device, &dev->usb_params);
+    dev->usb = device_add(&usb_device);
 
     dev->type   = info->local & 0xff;
     dev->offset = (info->local >> 8) & 0x7f;
@@ -1668,7 +1671,7 @@ const device_t ali1543_device = {
     .init  = ali1543_init,
     .close = ali1543_close,
     .reset = ali1543_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -1682,7 +1685,7 @@ const device_t ali1543c_device = {
     .init          = ali1543_init,
     .close         = ali1543_close,
     .reset         = ali1543_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL

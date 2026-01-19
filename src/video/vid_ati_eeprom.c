@@ -8,8 +8,6 @@
  *
  *          Emulation of the EEPROM on select ATI cards.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          Miran Grca, <mgrca8@gmail.com>
  *
@@ -43,11 +41,12 @@ ati_eeprom_load(ati_eeprom_t *eeprom, char *fn, int type)
     }
     if (fread(eeprom->data, 1, size, fp) != size)
         memset(eeprom->data, 0, size);
+
     fclose(fp);
 }
 
 void
-ati_eeprom_load_mach8(ati_eeprom_t *eeprom, char *fn)
+ati_eeprom_load_mach8(ati_eeprom_t *eeprom, char *fn, int mca)
 {
     FILE *fp;
     int   size;
@@ -55,14 +54,42 @@ ati_eeprom_load_mach8(ati_eeprom_t *eeprom, char *fn)
     strncpy(eeprom->fn, fn, sizeof(eeprom->fn) - 1);
     fp   = nvr_fopen(eeprom->fn, "rb");
     size = 128;
-    if (!fp) { /*The ATI Graphics Ultra bios expects an immediate write to nvram if none is present at boot time otherwise
+    if (fp == NULL) {
+        if (mca) {
+            memset(eeprom->data + 2, 0xff, size - 2);
+            fp = nvr_fopen(eeprom->fn, "wb");
+            fwrite(eeprom->data, 1, size, fp);
+            fclose(fp);
+        } else
+            memset(eeprom->data, 0xff, size);
+        return;
+    }
+    if (fread(eeprom->data, 1, size, fp) != size)
+        memset(eeprom->data, 0, size);
+
+    fclose(fp);
+}
+
+void
+ati_eeprom_load_mach8_vga(ati_eeprom_t *eeprom, char *fn)
+{
+    FILE *fp;
+    int   size;
+    eeprom->type = 0;
+    strncpy(eeprom->fn, fn, sizeof(eeprom->fn) - 1);
+    fp   = nvr_fopen(eeprom->fn, "rb");
+    size = 128;
+    if (!fp) { /*The ATI Graphics Ultra bios expects a fresh nvram zero'ed at boot time otherwise
             it would hang the machine.*/
         memset(eeprom->data, 0, size);
         fp = nvr_fopen(eeprom->fn, "wb");
         fwrite(eeprom->data, 1, size, fp);
+        fclose(fp);
+        return;
     }
     if (fread(eeprom->data, 1, size, fp) != size)
         memset(eeprom->data, 0, size);
+
     fclose(fp);
 }
 
@@ -79,9 +106,9 @@ ati_eeprom_save(ati_eeprom_t *eeprom)
 void
 ati_eeprom_write(ati_eeprom_t *eeprom, int ena, int clk, int dat)
 {
-    if (!ena) {
+    if (!ena)
         eeprom->out = 1;
-    }
+
     if (clk && !eeprom->oldclk) {
         if (ena && !eeprom->oldena) {
             eeprom->state  = EEPROM_WAIT;
@@ -94,9 +121,7 @@ ati_eeprom_write(ati_eeprom_t *eeprom, int ena, int clk, int dat)
                     if (!dat)
                         break;
                     eeprom->state = EEPROM_OPCODE;
-#ifdef FALLTHROUGH_ANNOTATION
-                    [[fallthrough]];
-#endif
+                    fallthrough;
                 case EEPROM_OPCODE:
                     eeprom->opcode = (eeprom->opcode << 1) | (dat ? 1 : 0);
                     eeprom->count--;

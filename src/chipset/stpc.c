@@ -8,8 +8,6 @@
  *
  *          Implementation of the STMicroelectronics STPC series of SoCs.
  *
- *
- *
  * Authors: RichardG, <richardg867@gmail.com>
  *
  *          Copyright 2020 RichardG.
@@ -45,6 +43,11 @@
 #define STPC_CLIENT    0x100e55cc
 
 typedef struct stpc_t {
+    uint8_t nb_slot;
+    uint8_t sb_slot;
+    uint8_t ide_slot;
+    uint8_t usb_slot;
+
     uint32_t local;
 
     /* Main registers (port 22h/23h) */
@@ -54,23 +57,20 @@ typedef struct stpc_t {
     /* Host bus interface */
     uint16_t host_base;
     uint8_t  host_offset;
+    uint8_t  usb_irq_state;
     uint8_t  host_regs[256];
 
     /* Local bus */
     uint16_t localbus_base;
     uint8_t  localbus_offset;
+    uint8_t  pad0;
     uint8_t  localbus_regs[256];
 
     /* PCI devices */
     uint8_t     pci_conf[4][256];
     smram_t    *smram;
     usb_t      *usb;
-    int         ide_slot;
-    int         usb_slot;
     sff8038i_t *bm[2];
-
-    /* Miscellaneous */
-    usb_params_t usb_params;
 } stpc_t;
 
 typedef struct stpc_serial_t {
@@ -78,10 +78,12 @@ typedef struct stpc_serial_t {
 } stpc_serial_t;
 
 typedef struct stpc_lpt_t {
-    uint8_t unlocked;
-    uint8_t offset;
-    uint8_t reg1;
-    uint8_t reg4;
+    uint8_t  unlocked;
+    uint8_t  offset;
+    uint8_t  reg1;
+    uint8_t  reg4;
+
+    lpt_t   *lpt;
 } stpc_lpt_t;
 
 #ifdef ENABLE_STPC_LOG
@@ -894,17 +896,6 @@ stpc_setup(stpc_t *dev)
 }
 
 static void
-stpc_usb_update_interrupt(usb_t* usb, void* priv)
-{
-    const stpc_t *dev = (stpc_t *) priv;
-
-    if (usb->irq_level)
-        pci_set_irq(dev->usb_slot, PCI_INTA);
-    else
-        pci_clear_irq(dev->usb_slot, PCI_INTA);
-}
-
-static void
 stpc_close(void *priv)
 {
     stpc_t *dev = (stpc_t *) priv;
@@ -921,31 +912,25 @@ stpc_init(const device_t *info)
 {
     stpc_log("STPC: init()\n");
 
-    stpc_t *dev = (stpc_t *) malloc(sizeof(stpc_t));
-    memset(dev, 0, sizeof(stpc_t));
+    stpc_t *dev = (stpc_t *) calloc(1, sizeof(stpc_t));
 
     dev->local = info->local;
 
-    pci_add_card(PCI_ADD_NORTHBRIDGE, stpc_nb_read, stpc_nb_write, dev);
-    dev->ide_slot = pci_add_card(PCI_ADD_SOUTHBRIDGE, stpc_isab_read, stpc_isab_write, dev);
+    pci_add_card(PCI_ADD_NORTHBRIDGE, stpc_nb_read, stpc_nb_write, dev, &dev->nb_slot);
+    pci_add_card(PCI_ADD_SOUTHBRIDGE, stpc_isab_read, stpc_isab_write, dev, &dev->sb_slot);
     if (dev->local == STPC_ATLAS) {
-        dev->usb_params.smi_handle       = NULL;
-        dev->usb_params.update_interrupt = stpc_usb_update_interrupt;
-        dev->usb_params.parent_priv      = dev;
+        pci_add_card(PCI_ADD_SOUTHBRIDGE_IDE, stpc_ide_read, stpc_ide_write, dev, &dev->ide_slot);
 
-        dev->ide_slot = pci_add_card(PCI_ADD_SOUTHBRIDGE, stpc_ide_read, stpc_ide_write, dev);
-        dev->usb      = device_add_parameters(&usb_device, &dev->usb_params);
-        dev->usb_slot = pci_add_card(PCI_ADD_SOUTHBRIDGE, stpc_usb_read, stpc_usb_write, dev);
+        dev->usb = device_add(&usb_device);
+        pci_add_card(PCI_ADD_SOUTHBRIDGE_USB, stpc_usb_read, stpc_usb_write, dev, &dev->usb_slot);
     }
 
     dev->bm[0] = device_add_inst(&sff8038i_device, 1);
     dev->bm[1] = device_add_inst(&sff8038i_device, 2);
 
-    sff_set_irq_mode(dev->bm[0], 0, 0);
-    sff_set_irq_mode(dev->bm[0], 1, 0);
+    sff_set_irq_mode(dev->bm[0], IRQ_MODE_LEGACY);
 
-    sff_set_irq_mode(dev->bm[1], 0, 0);
-    sff_set_irq_mode(dev->bm[1], 1, 0);
+    sff_set_irq_mode(dev->bm[1], IRQ_MODE_LEGACY);
 
     stpc_setup(dev);
     stpc_reset(dev);
@@ -977,8 +962,7 @@ stpc_serial_init(UNUSED(const device_t *info))
 {
     stpc_log("STPC: serial_init()\n");
 
-    stpc_serial_t *dev = (stpc_serial_t *) malloc(sizeof(stpc_serial_t));
-    memset(dev, 0, sizeof(stpc_serial_t));
+    stpc_serial_t *dev = (stpc_serial_t *) calloc(1, sizeof(stpc_serial_t));
 
     dev->uart[0] = device_add_inst(&ns16550_device, 1);
     dev->uart[1] = device_add_inst(&ns16550_device, 2);
@@ -991,39 +975,24 @@ stpc_serial_init(UNUSED(const device_t *info))
 static void
 stpc_lpt_handlers(stpc_lpt_t *dev, uint8_t val)
 {
-    uint8_t old_addr = (dev->reg1 & 0x03);
-    uint8_t new_addr = (val & 0x03);
+    const uint8_t new_addr = (val & 0x03);
 
-    switch (old_addr) {
-        case 0x1:
-            lpt3_remove();
-            break;
-
-        case 0x2:
-            lpt1_remove();
-            break;
-
-        case 0x3:
-            lpt2_remove();
-            break;
-        default:
-            break;
-    }
+    lpt_port_remove(dev->lpt);
 
     switch (new_addr) {
         case 0x1:
             stpc_log("STPC: Remapping parallel port to LPT3\n");
-            lpt3_init(0x3bc);
+            lpt_port_setup(dev->lpt, LPT_MDA_ADDR);
             break;
 
         case 0x2:
             stpc_log("STPC: Remapping parallel port to LPT1\n");
-            lpt1_init(0x378);
+            lpt_port_setup(dev->lpt, LPT1_ADDR);
             break;
 
         case 0x3:
             stpc_log("STPC: Remapping parallel port to LPT2\n");
-            lpt2_init(0x278);
+            lpt_port_setup(dev->lpt, LPT2_ADDR);
             break;
 
         default:
@@ -1031,9 +1000,11 @@ stpc_lpt_handlers(stpc_lpt_t *dev, uint8_t val)
             break;
     }
 
-    dev->reg1 = (val & 0x08);
-    dev->reg1 |= new_addr;
-    dev->reg1 |= 0x84; /* reserved bits that default to 1; hardwired? */
+    if (dev != NULL) {
+        dev->reg1 = (val & 0x08);
+        dev->reg1 |= new_addr;
+        dev->reg1 |= 0x84; /* reserved bits that default to 1; hardwired? */
+    }
 }
 
 static void
@@ -1090,8 +1061,9 @@ stpc_lpt_init(UNUSED(const device_t *info))
 {
     stpc_log("STPC: lpt_init()\n");
 
-    stpc_lpt_t *dev = (stpc_lpt_t *) malloc(sizeof(stpc_lpt_t));
-    memset(dev, 0, sizeof(stpc_lpt_t));
+    stpc_lpt_t *dev = (stpc_lpt_t *) calloc(1, sizeof(stpc_lpt_t));
+
+    dev->lpt = device_add_inst(&lpt_port_device, 1);
 
     stpc_lpt_reset(dev);
 
@@ -1110,7 +1082,7 @@ const device_t stpc_client_device = {
     .init          = stpc_init,
     .close         = stpc_close,
     .reset         = stpc_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -1124,7 +1096,7 @@ const device_t stpc_consumer2_device = {
     .init          = stpc_init,
     .close         = stpc_close,
     .reset         = stpc_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -1138,7 +1110,7 @@ const device_t stpc_elite_device = {
     .init          = stpc_init,
     .close         = stpc_close,
     .reset         = stpc_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -1152,7 +1124,7 @@ const device_t stpc_atlas_device = {
     .init          = stpc_init,
     .close         = stpc_close,
     .reset         = stpc_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -1167,7 +1139,7 @@ const device_t stpc_serial_device = {
     .init          = stpc_serial_init,
     .close         = stpc_serial_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -1181,7 +1153,7 @@ const device_t stpc_lpt_device = {
     .init          = stpc_lpt_init,
     .close         = stpc_lpt_close,
     .reset         = stpc_lpt_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL

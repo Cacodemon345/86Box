@@ -82,7 +82,6 @@ typedef struct adgold_t {
     int treble;
     int bass;
 
-    int16_t opl_buffer[SOUNDBUFLEN * 2];
     int16_t mma_buffer[2][SOUNDBUFLEN];
 
     int pos;
@@ -90,6 +89,8 @@ typedef struct adgold_t {
     int gameport_enabled;
 
     int surround_enabled;
+
+    int finish_dma;
 } adgold_t;
 
 static int attenuation[0x40];
@@ -173,11 +174,13 @@ adgold_update_irq_status(adgold_t *adgold)
         temp &= ~2;
     if ((adgold->adgold_mma_status & 0x02) && !(adgold->adgold_mma_regs[1][0xc] & 2))
         temp &= ~2;
+
     adgold->adgold_status = temp;
 
-    if ((adgold->adgold_status ^ 0xf) && !adgold->adgold_irq_status) {
+    if ((adgold->adgold_status ^ 0xf) && !adgold->adgold_irq_status)
         picint(1 << adgold->irq);
-    }
+    else if (!(adgold->adgold_status ^ 0xf) && adgold->adgold_irq_status)
+        picintc(1 << adgold->irq);
 
     adgold->adgold_irq_status = adgold->adgold_status ^ 0xf;
 }
@@ -185,21 +188,27 @@ adgold_update_irq_status(adgold_t *adgold)
 void
 adgold_getsamp_dma(adgold_t *adgold, int channel)
 {
-    int temp;
-    dma_set_drq(adgold->dma, 1);
+    int dma_dat;
 
-    if ((adgold->adgold_mma_regs[channel][0xc] & 0x60) && (((adgold->adgold_mma_fifo_end[channel] - adgold->adgold_mma_fifo_start[channel]) & 255) >= 127))
-        return;
+    adgold->finish_dma = 0;
 
-    temp = dma_channel_read(adgold->dma);
-    if (temp == DMA_NODATA) {
+    if ((adgold->adgold_mma_regs[channel][0xc] & 0x60) && (((adgold->adgold_mma_fifo_end[channel] - adgold->adgold_mma_fifo_start[channel]) & 255) >= 127)) {
+        adgold->finish_dma = 1;
         return;
     }
-    adgold->adgold_mma_fifo[channel][adgold->adgold_mma_fifo_end[channel]] = temp;
-    adgold->adgold_mma_fifo_end[channel]                                   = (adgold->adgold_mma_fifo_end[channel] + 1) & 255;
+
+    dma_set_drq(adgold->dma, 1);
+    dma_dat = dma_channel_read(adgold->dma);
+    if (dma_dat == DMA_NODATA)
+        return;
+
+    adgold->adgold_mma_fifo[channel][adgold->adgold_mma_fifo_end[channel]] = dma_dat;
+    adgold->adgold_mma_fifo_end[channel] = (adgold->adgold_mma_fifo_end[channel] + 1) & 255;
     if (adgold->adgold_mma_regs[channel][0xc] & 0x60) {
-        temp                                                                   = dma_channel_read(adgold->dma);
-        adgold->adgold_mma_fifo[channel][adgold->adgold_mma_fifo_end[channel]] = temp;
+        dma_dat = dma_channel_read(adgold->dma);
+        if (dma_dat == DMA_NODATA)
+            return;
+        adgold->adgold_mma_fifo[channel][adgold->adgold_mma_fifo_end[channel]] = dma_dat;
         adgold->adgold_mma_fifo_end[channel]                                   = (adgold->adgold_mma_fifo_end[channel] + 1) & 255;
     }
     if (((adgold->adgold_mma_fifo_end[channel] - adgold->adgold_mma_fifo_start[channel]) & 255) >= adgold->adgold_mma_intpos[channel]) {
@@ -289,7 +298,8 @@ adgold_write(uint16_t addr, uint8_t val, void *priv)
 
                     case 0x18: /*Surround*/
                         adgold->adgold_38x_regs[0x18] = val;
-                        ym7128_write(&adgold->ym7128, val);
+                        if (adgold->surround_enabled)
+                            ym7128_write(&adgold->ym7128, val);
                         break;
 
                     default:
@@ -379,6 +389,8 @@ adgold_write(uint16_t addr, uint8_t val, void *priv)
                                 while (((adgold->adgold_mma_fifo_end[0] - adgold->adgold_mma_fifo_start[0]) & 255) < 128) {
                                     adgold_getsamp_dma(adgold, 0);
                                     adgold_getsamp_dma(adgold, 1);
+                                    if (adgold->finish_dma)
+                                        break;
                                 }
                                 if (((adgold->adgold_mma_fifo_end[0] - adgold->adgold_mma_fifo_start[0]) & 255) >= adgold->adgold_mma_intpos[0]) {
                                     adgold->adgold_mma_status &= ~0x01;
@@ -393,6 +405,8 @@ adgold_write(uint16_t addr, uint8_t val, void *priv)
                             } else {
                                 while (((adgold->adgold_mma_fifo_end[0] - adgold->adgold_mma_fifo_start[0]) & 255) < 128) {
                                     adgold_getsamp_dma(adgold, 0);
+                                    if (adgold->finish_dma)
+                                        break;
                                 }
                                 if (((adgold->adgold_mma_fifo_end[0] - adgold->adgold_mma_fifo_start[0]) & 255) >= adgold->adgold_mma_intpos[0]) {
                                     adgold->adgold_mma_status &= ~0x01;
@@ -503,6 +517,8 @@ adgold_write(uint16_t addr, uint8_t val, void *priv)
                         if (adgold->adgold_mma_regs[1][0xc] & 1) {
                             while (((adgold->adgold_mma_fifo_end[1] - adgold->adgold_mma_fifo_start[1]) & 255) < 128) {
                                 adgold_getsamp_dma(adgold, 1);
+                                if (adgold->finish_dma)
+                                    break;
                             }
                         }
                     }
@@ -580,7 +596,6 @@ adgold_read(uint16_t addr, void *priv)
             temp = adgold->adgold_mma_status;
             adgold->adgold_mma_status &= ~0xf3; /*JUKEGOLD expects timer status flags to auto-clear*/
             adgold_update_irq_status(adgold);
-            picintc(1 << adgold->irq);
             break;
         case 5:
             if (adgold->adgold_mma_addr >= 0xf)
@@ -676,9 +691,11 @@ adgold_mma_poll(adgold_t *adgold, int channel)
 
         if (adgold->adgold_mma_regs[channel][0xc] & 1) {
             adgold_getsamp_dma(adgold, channel);
+            if (adgold->finish_dma)
+                return;
         }
         if (((adgold->adgold_mma_fifo_end[channel] - adgold->adgold_mma_fifo_start[channel]) & 255) < adgold->adgold_mma_intpos[channel] && !(adgold->adgold_mma_status & 0x01)) {
-            adgold->adgold_mma_status |= 1 << channel;
+            adgold->adgold_mma_status |= (1 << channel);
             adgold_update_irq_status(adgold);
         }
     }
@@ -692,8 +709,8 @@ adgold_timer_poll(void *priv)
 {
     adgold_t *adgold = (adgold_t *) priv;
 
-	/*A small timer period will result in hangs.*/
-    timer_on_auto(&adgold->adgold_mma_timer_count, 4.88964);
+    /*A small timer period will result in hangs.*/
+    timer_advance_u64(&adgold->adgold_mma_timer_count, (uint64_t) ((double) TIMER_USEC * 1.88964));
 
     if (adgold->adgold_midi_ctrl & 0x3f) {
         if ((adgold->adgold_midi_ctrl & 0x3f) != 0x3f) {
@@ -766,7 +783,7 @@ adgold_get_buffer(int32_t *buffer, int len, void *priv)
 
     int c;
 
-    const int32_t *opl_buf = adgold->opl.update(adgold->opl.priv);
+    int32_t *opl_buf = adgold->opl.update(adgold->opl.priv);
     adgold_update(adgold);
 
     for (c = 0; c < len * 2; c += 2) {
@@ -888,9 +905,9 @@ adgold_filter_cd_audio(int channel, double *buffer, void *priv)
 }
 
 static void
-adgold_input_msg(void *p, uint8_t *msg, uint32_t len)
+adgold_input_msg(void *priv, uint8_t *msg, uint32_t len)
 {
-    adgold_t *adgold = (adgold_t *) p;
+    adgold_t *adgold = (adgold_t *) priv;
 
     if (adgold->sysex)
         return;
@@ -908,9 +925,9 @@ adgold_input_msg(void *p, uint8_t *msg, uint32_t len)
 }
 
 static int
-adgold_input_sysex(void *p, uint8_t *buffer, uint32_t len, int abort)
+adgold_input_sysex(void *priv, uint8_t *buffer, uint32_t len, int abort)
 {
-    adgold_t *adgold = (adgold_t *) p;
+    adgold_t *adgold = (adgold_t *) priv;
 
     if (abort) {
         adgold->sysex = 0;
@@ -930,18 +947,17 @@ adgold_input_sysex(void *p, uint8_t *buffer, uint32_t len, int abort)
 void *
 adgold_init(UNUSED(const device_t *info))
 {
-    FILE     *f;
+    FILE     *fp;
     int       c;
     double    out;
-    adgold_t *adgold = malloc(sizeof(adgold_t));
-    memset(adgold, 0, sizeof(adgold_t));
+    adgold_t *adgold = calloc(1, sizeof(adgold_t));
 
     adgold->dma              = device_get_config_int("dma");
     adgold->irq              = device_get_config_int("irq");
     adgold->surround_enabled = device_get_config_int("surround");
     adgold->gameport_enabled = device_get_config_int("gameport");
 
-    fm_driver_get(FM_YMF262, &adgold->opl);
+    fm_driver_get_ex(FM_YMF262, &adgold->opl, 1);
     if (adgold->surround_enabled)
         ym7128_init(&adgold->ym7128);
 
@@ -980,11 +996,11 @@ adgold_init(UNUSED(const device_t *info))
     adgold->adgold_eeprom[0x18] = 0x00; /* Surround */
     adgold->adgold_eeprom[0x19] = 0x00;
 
-    f = nvr_fopen("adgold.bin", "rb");
-    if (f) {
-        if (fread(adgold->adgold_eeprom, 1, 0x1a, f) != 0x1a)
+    fp = nvr_fopen("adgold.bin", "rb");
+    if (fp) {
+        if (fread(adgold->adgold_eeprom, 1, 0x1a, fp) != 0x1a)
             fatal("adgold_init(): Error reading data\n");
-        fclose(f);
+        fclose(fp);
     }
 
     adgold->adgold_status   = 0xf;
@@ -1032,6 +1048,7 @@ adgold_init(UNUSED(const device_t *info))
     timer_add(&adgold->adgold_mma_timer_count, adgold_timer_poll, adgold, 1);
 
     sound_add_handler(adgold_get_buffer, adgold);
+
     sound_set_cd_audio_filter(adgold_filter_cd_audio, adgold);
 
     if (device_get_config_int("receive_input"))
@@ -1058,73 +1075,69 @@ adgold_close(void *priv)
 static const device_config_t adgold_config[] = {
   // clang-format off
     {
-        .name = "irq",
-        .description = "IRQ",
-        .type = CONFIG_SELECTION,
-        .default_string = "",
-        .default_int = 7,
-        .file_filter = "",
-        .spinner = { 0 },
-        .selection = {
-            {
-                .description = "IRQ 3",
-                .value = 3
-            },
-            {
-                .description = "IRQ 4",
-                .value = 4
-            },
-            {
-                .description = "IRQ 5",
-                .value = 5
-            },
-            {
-                .description = "IRQ 7",
-                .value = 7
-            },
-            { .description = "" }
-        }
+        .name           = "irq",
+        .description    = "IRQ",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 7,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "IRQ 3", .value = 3 },
+            { .description = "IRQ 4", .value = 4 },
+            { .description = "IRQ 5", .value = 5 },
+            { .description = "IRQ 7", .value = 7 },
+            { .description = ""                  }
+        },
+        .bios           = { { 0 } }
     },
     {
-        .name = "dma",
-        .description = "Low DMA channel",
-        .type = CONFIG_SELECTION,
-        .default_string = "",
-        .default_int = 1,
-        .file_filter = "",
-        .spinner = { 0 },
-        .selection = {
-            {
-                .description = "DMA 1",
-                .value = 1
-            },
-            {
-                .description = "DMA 3",
-                .value = 3
-            },
-            { .description = "" }
-        }
+        .name           = "dma",
+        .description    = "Low DMA",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "DMA 1", .value = 1 },
+            { .description = "DMA 3", .value = 3 },
+            { .description = ""                  }
+        },
+        .bios           = { { 0 } }
     },
     {
-        .name = "gameport",
-        .description = "Enable Game port",
-        .type = CONFIG_BINARY,
-        .default_string = "",
-        .default_int = 1
+        .name           = "gameport",
+        .description    = "Enable Game port",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
     },
     {
-        .name = "surround",
-        .description = "Surround module",
-        .type = CONFIG_BINARY,
-        .default_string = "",
-        .default_int = 1
+        .name           = "surround",
+        .description    = "Surround module",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
     },
     {
-        .name = "receive_input",
-        .description = "Receive input (MIDI)",
-        .type = CONFIG_BINARY,
-        .default_string = "",
-        .default_int = 1
+        .name           = "receive_input",
+        .description    = "Receive MIDI input",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
     },
     { .name = "", .description = "", .type = CONFIG_END }
   // clang-format on
@@ -1138,7 +1151,7 @@ const device_t adgold_device = {
     .init          = adgold_init,
     .close         = adgold_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = adgold_config

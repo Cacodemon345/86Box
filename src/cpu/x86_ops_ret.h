@@ -6,16 +6,16 @@
 
 #define RETF_a16(stack_offset)                        \
     if ((msw & 1) && !(cpu_state.eflags & VM_FLAG)) { \
-        pmoderetf(0, stack_offset);                   \
+        op_pmoderetf(0, stack_offset);                \
         return 1;                                     \
     }                                                 \
     CPU_SET_OXPC                                      \
     if (stack32) {                                    \
         cpu_state.pc = readmemw(ss, ESP);             \
-        loadcs(readmemw(ss, ESP + 2));                \
+        op_loadcs(readmemw(ss, ESP + 2));             \
     } else {                                          \
         cpu_state.pc = readmemw(ss, SP);              \
-        loadcs(readmemw(ss, SP + 2));                 \
+        op_loadcs(readmemw(ss, (SP + 2) & 0xffff));   \
     }                                                 \
     if (cpu_state.abrt)                               \
         return 1;                                     \
@@ -27,16 +27,16 @@
 
 #define RETF_a32(stack_offset)                        \
     if ((msw & 1) && !(cpu_state.eflags & VM_FLAG)) { \
-        pmoderetf(1, stack_offset);                   \
+        op_pmoderetf(1, stack_offset);                \
         return 1;                                     \
     }                                                 \
     CPU_SET_OXPC                                      \
     if (stack32) {                                    \
         cpu_state.pc = readmeml(ss, ESP);             \
-        loadcs(readmeml(ss, ESP + 4) & 0xffff);       \
+        op_loadcs(readmeml(ss, ESP + 4) & 0xffff);    \
     } else {                                          \
         cpu_state.pc = readmeml(ss, SP);              \
-        loadcs(readmeml(ss, SP + 4) & 0xffff);        \
+        op_loadcs(readmeml(ss, SP + 4) & 0xffff);     \
     }                                                 \
     if (cpu_state.abrt)                               \
         return 1;                                     \
@@ -47,7 +47,7 @@
     cycles -= timing_retf_rm;
 
 static int
-opRETF_a16(uint32_t fetchdat)
+opRETF_a16(UNUSED(uint32_t fetchdat))
 {
     int cycles_old = cycles;
     UN_USED(cycles_old);
@@ -60,7 +60,7 @@ opRETF_a16(uint32_t fetchdat)
     return 0;
 }
 static int
-opRETF_a32(uint32_t fetchdat)
+opRETF_a32(UNUSED(uint32_t fetchdat))
 {
     int cycles_old = cycles;
     UN_USED(cycles_old);
@@ -103,7 +103,7 @@ opRETF_a32_imm(uint32_t fetchdat)
 }
 
 static int
-opIRET_186(uint32_t fetchdat)
+opIRET_186(UNUSED(uint32_t fetchdat))
 {
     int cycles_old = cycles;
     UN_USED(cycles_old);
@@ -114,7 +114,7 @@ opIRET_186(uint32_t fetchdat)
     }
     if (msw & 1) {
         optype = IRET;
-        pmodeiret(0);
+        op_pmodeiret(0);
         optype = 0;
     } else {
         uint16_t new_cs;
@@ -130,11 +130,14 @@ opIRET_186(uint32_t fetchdat)
             cpu_state.flags = (cpu_state.flags & 0x7000) | (readmemw(ss, ((SP + 4) & 0xffff)) & 0x0fd5) | 2;
             SP += 6;
         }
-        loadcs(new_cs);
+        op_loadcs(new_cs);
         cycles -= timing_iret_rm;
     }
     flags_extract();
     nmi_enable = 1;
+#ifdef USE_DEBUG_REGS_486
+    rf_flag_no_clear = 1;
+#endif
     CPU_BLOCK_END();
 
     PREFETCH_RUN(cycles_old - cycles, 1, -1, 2, 0, 0, 0, 0);
@@ -143,7 +146,7 @@ opIRET_186(uint32_t fetchdat)
 }
 
 static int
-opIRET_286(uint32_t fetchdat)
+opIRET_286(UNUSED(uint32_t fetchdat))
 {
     int cycles_old = cycles;
     UN_USED(cycles_old);
@@ -154,7 +157,7 @@ opIRET_286(uint32_t fetchdat)
     }
     if (msw & 1) {
         optype = IRET;
-        pmodeiret(0);
+        op_pmodeiret(0);
         optype = 0;
     } else {
         uint16_t new_cs;
@@ -170,11 +173,14 @@ opIRET_286(uint32_t fetchdat)
             cpu_state.flags = (cpu_state.flags & 0x7000) | (readmemw(ss, ((SP + 4) & 0xffff)) & 0x0fd5) | 2;
             SP += 6;
         }
-        loadcs(new_cs);
+        op_loadcs(new_cs);
         cycles -= timing_iret_rm;
     }
     flags_extract();
     nmi_enable = 1;
+#ifdef USE_DEBUG_REGS_486
+    rf_flag_no_clear = 1;
+#endif
     CPU_BLOCK_END();
 
     PREFETCH_RUN(cycles_old - cycles, 1, -1, 2, 0, 0, 0, 0);
@@ -183,14 +189,16 @@ opIRET_286(uint32_t fetchdat)
 }
 
 static int
-opIRET(uint32_t fetchdat)
+opIRET(UNUSED(uint32_t fetchdat))
 {
     int cycles_old = cycles;
     UN_USED(cycles_old);
 
     if ((cr0 & 1) && (cpu_state.eflags & VM_FLAG) && (IOPL != 3)) {
         if (cr4 & CR4_VME) {
-            uint16_t new_pc, new_cs, new_flags;
+            uint16_t new_pc;
+            uint16_t new_cs;
+            uint16_t new_flags;
 
             new_pc    = readmemw(ss, SP);
             new_cs    = readmemw(ss, ((SP + 2) & 0xffff));
@@ -208,7 +216,7 @@ opIRET(uint32_t fetchdat)
             else
                 cpu_state.eflags &= ~VIF_FLAG;
             cpu_state.flags = (cpu_state.flags & 0x3300) | (new_flags & 0x4cd5) | 2;
-            loadcs(new_cs);
+            op_loadcs(new_cs);
             cpu_state.pc = new_pc;
 
             cycles -= timing_iret_rm;
@@ -219,7 +227,7 @@ opIRET(uint32_t fetchdat)
     } else {
         if (msw & 1) {
             optype = IRET;
-            pmodeiret(0);
+            op_pmodeiret(0);
             optype = 0;
         } else {
             uint16_t new_cs;
@@ -235,12 +243,15 @@ opIRET(uint32_t fetchdat)
                 cpu_state.flags = (readmemw(ss, ((SP + 4) & 0xffff)) & 0xffd5) | 2;
                 SP += 6;
             }
-            loadcs(new_cs);
+            op_loadcs(new_cs);
             cycles -= timing_iret_rm;
         }
     }
     flags_extract();
     nmi_enable = 1;
+#ifdef USE_DEBUG_REGS_486
+    rf_flag_no_clear = 1;
+#endif
     CPU_BLOCK_END();
 
     PREFETCH_RUN(cycles_old - cycles, 1, -1, 2, 0, 0, 0, 0);
@@ -249,7 +260,7 @@ opIRET(uint32_t fetchdat)
 }
 
 static int
-opIRETD(uint32_t fetchdat)
+opIRETD(UNUSED(uint32_t fetchdat))
 {
     int cycles_old = cycles;
     UN_USED(cycles_old);
@@ -260,7 +271,7 @@ opIRETD(uint32_t fetchdat)
     }
     if (msw & 1) {
         optype = IRET;
-        pmodeiret(1);
+        op_pmodeiret(1);
         optype = 0;
     } else {
         uint16_t new_cs;
@@ -278,11 +289,14 @@ opIRETD(uint32_t fetchdat)
             cpu_state.eflags = readmemw(ss, (SP + 10) & 0xffff);
             SP += 12;
         }
-        loadcs(new_cs);
+        op_loadcs(new_cs);
         cycles -= timing_iret_rm;
     }
     flags_extract();
     nmi_enable = 1;
+#ifdef USE_DEBUG_REGS_486
+    rf_flag_no_clear = 1;
+#endif
     CPU_BLOCK_END();
 
     PREFETCH_RUN(cycles_old - cycles, 1, -1, 0, 2, 0, 0, 1);

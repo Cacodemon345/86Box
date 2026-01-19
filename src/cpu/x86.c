@@ -25,6 +25,8 @@
 #include <86box/86box.h>
 #include "cpu.h"
 #include "x86.h"
+#include "x86seg_common.h"
+#include "x86seg.h"
 #include <86box/machine.h>
 #include <86box/device.h>
 #include <86box/dma.h>
@@ -59,10 +61,12 @@ uint32_t  rmdat;
 uint64_t xt_cpu_multi;
 
 /* Variables for handling the non-maskable interrupts. */
-int nmi = 0, nmi_auto_clear = 0;
+int nmi            = 0;
+int nmi_auto_clear = 0;
 
 /* Was the CPU ever reset? */
-int x86_was_reset = 0, soft_reset_pci = 0;
+int x86_was_reset  = 0;
+int soft_reset_pci = 0;
 
 /* Is the TRAP flag on? */
 int trap = 0;
@@ -71,26 +75,34 @@ int trap = 0;
 uint32_t easeg;
 
 /* This is for the OPTI 283 special reset handling mode. */
-int reset_on_hlt, hlt_reset_pending;
+int reset_on_hlt;
+int hlt_reset_pending;
+
+int fpu_cycles = 0;
+
+int in_lock = 0;
 
 #ifdef ENABLE_X86_LOG
+#if 0
 void dumpregs(int);
+#endif
 
 int x86_do_log = ENABLE_X86_LOG;
 int indump     = 0;
 
 static void
-x808x_log(const char *fmt, ...)
+x86_log(const char *fmt, ...)
 {
     va_list ap;
 
-    if (x808x_do_log) {
+    if (x86_do_log) {
         va_start(ap, fmt);
         pclog_ex(fmt, ap);
         va_end(ap);
     }
 }
 
+#if 0
 void
 dumpregs(int force)
 {
@@ -101,40 +113,43 @@ dumpregs(int force)
     if (indump || (!force && !dump_on_exit))
         return;
 
-    x808x_log("EIP=%08X CS=%04X DS=%04X ES=%04X SS=%04X FLAGS=%04X\n",
-              cpu_state.pc, CS, DS, ES, SS, cpu_state.flags);
-    x808x_log("Old CS:EIP: %04X:%08X; %i ins\n", oldcs, cpu_state.oldpc, ins);
+    x86_log("EIP=%08X CS=%04X DS=%04X ES=%04X SS=%04X FLAGS=%04X\n",
+            cpu_state.pc, CS, DS, ES, SS, cpu_state.flags);
+    x85_log("Old CS:EIP: %04X:%08X; %i ins\n", oldcs, cpu_state.oldpc, ins);
     for (c = 0; c < 4; c++) {
-        x808x_log("%s : base=%06X limit=%08X access=%02X  limit_low=%08X limit_high=%08X\n",
-                  seg_names[c], _opseg[c]->base, _opseg[c]->limit,
-                  _opseg[c]->access, _opseg[c]->limit_low, _opseg[c]->limit_high);
+        x86_log("%s : base=%06X limit=%08X access=%02X  limit_low=%08X limit_high=%08X\n",
+                seg_names[c], _opseg[c]->base, _opseg[c]->limit,
+                _opseg[c]->access, _opseg[c]->limit_low, _opseg[c]->limit_high);
     }
     if (is386) {
-        x808x_log("FS : base=%06X limit=%08X access=%02X  limit_low=%08X limit_high=%08X\n",
-                  seg_fs, cpu_state.seg_fs.limit, cpu_state.seg_fs.access, cpu_state.seg_fs.limit_low, cpu_state.seg_fs.limit_high);
-        x808x_log("GS : base=%06X limit=%08X access=%02X  limit_low=%08X limit_high=%08X\n",
-                  gs, cpu_state.seg_gs.limit, cpu_state.seg_gs.access, cpu_state.seg_gs.limit_low, cpu_state.seg_gs.limit_high);
-        x808x_log("GDT : base=%06X limit=%04X\n", gdt.base, gdt.limit);
-        x808x_log("LDT : base=%06X limit=%04X\n", ldt.base, ldt.limit);
-        x808x_log("IDT : base=%06X limit=%04X\n", idt.base, idt.limit);
-        x808x_log("TR  : base=%06X limit=%04X\n", tr.base, tr.limit);
-        x808x_log("386 in %s mode: %i-bit data, %-i-bit stack\n",
-                  (msw & 1) ? ((cpu_state.eflags & VM_FLAG) ? "V86" : "protected") : "real",
-                  (use32) ? 32 : 16, (stack32) ? 32 : 16);
-        x808x_log("CR0=%08X CR2=%08X CR3=%08X CR4=%08x\n", cr0, cr2, cr3, cr4);
-        x808x_log("EAX=%08X EBX=%08X ECX=%08X EDX=%08X\nEDI=%08X ESI=%08X EBP=%08X ESP=%08X\n",
-                  EAX, EBX, ECX, EDX, EDI, ESI, EBP, ESP);
+        x86_log("FS : base=%06X limit=%08X access=%02X  limit_low=%08X limit_high=%08X\n",
+                seg_fs, cpu_state.seg_fs.limit, cpu_state.seg_fs.access, cpu_state.seg_fs.limit_low,
+                cpu_state.seg_fs.limit_high);
+        x86_log("GS : base=%06X limit=%08X access=%02X  limit_low=%08X limit_high=%08X\n",
+                gs, cpu_state.seg_gs.limit, cpu_state.seg_gs.access, cpu_state.seg_gs.limit_low,
+                cpu_state.seg_gs.limit_high);
+        x86_log("GDT : base=%06X limit=%04X\n", gdt.base, gdt.limit);
+        x86_log("LDT : base=%06X limit=%04X\n", ldt.base, ldt.limit);
+        x86_log("IDT : base=%06X limit=%04X\n", idt.base, idt.limit);
+        x86_log("TR  : base=%06X limit=%04X\n", tr.base, tr.limit);
+        x86_log("386 in %s mode: %i-bit data, %-i-bit stack\n",
+                (msw & 1) ? ((cpu_state.eflags & VM_FLAG) ? "V86" : "protected") : "real",
+                (use32) ? 32 : 16, (stack32) ? 32 : 16);
+        x86_log("CR0=%08X CR2=%08X CR3=%08X CR4=%08x\n", cr0, cr2, cr3, cr4);
+        x86_log("EAX=%08X EBX=%08X ECX=%08X EDX=%08X\nEDI=%08X ESI=%08X EBP=%08X ESP=%08X\n",
+                EAX, EBX, ECX, EDX, EDI, ESI, EBP, ESP);
     } else {
-        x808x_log("808x/286 in %s mode\n", (msw & 1) ? "protected" : "real");
-        x808x_log("AX=%04X BX=%04X CX=%04X DX=%04X DI=%04X SI=%04X BP=%04X SP=%04X\n",
-                  AX, BX, CX, DX, DI, SI, BP, SP);
+        x86_log("808x/286 in %s mode\n", (msw & 1) ? "protected" : "real");
+        x86_log("AX=%04X BX=%04X CX=%04X DX=%04X DI=%04X SI=%04X BP=%04X SP=%04X\n",
+                AX, BX, CX, DX, DI, SI, BP, SP);
     }
-    x808x_log("Entries in readlookup : %i    writelookup : %i\n", readlnum, writelnum);
+    x86_log("Entries in readlookup : %i    writelookup : %i\n", readlnum, writelnum);
     x87_dumpregs();
     indump = 0;
 }
+#endif
 #else
-#    define x808x_log(fmt, ...)
+#    define x86_log(fmt, ...)
 #endif
 
 /* Preparation of the various arrays needed to speed up the MOD and R/M work. */
@@ -171,7 +186,10 @@ makemod1table(void)
 static void
 makeznptable(void)
 {
-    int c, d, e;
+    int c;
+    int d;
+    int e;
+
     for (c = 0; c < 256; c++) {
         d = 0;
         for (e = 0; e < 8; e++) {
@@ -182,9 +200,9 @@ makeznptable(void)
             znptable8[c] = 0;
         else
             znptable8[c] = P_FLAG;
-#ifdef ENABLE_808X_LOG
+#ifdef ENABLE_X86_LOG
         if (c == 0xb1)
-            x808x_log("znp8 b1 = %i %02X\n", d, znptable8[c]);
+            x86_log("znp8 b1 = %i %02X\n", d, znptable8[c]);
 #endif
         if (!c)
             znptable8[c] |= Z_FLAG;
@@ -202,11 +220,11 @@ makeznptable(void)
             znptable16[c] = 0;
         else
             znptable16[c] = P_FLAG;
-#ifdef ENABLE_808X_LOG
+#ifdef ENABLE_X86_LOG
         if (c == 0xb1)
-            x808x_log("znp16 b1 = %i %02X\n", d, znptable16[c]);
+            x86_log("znp16 b1 = %i %02X\n", d, znptable16[c]);
         if (c == 0x65b1)
-            x808x_log("znp16 65b1 = %i %02X\n", d, znptable16[c]);
+            x86_log("znp16 65b1 = %i %02X\n", d, znptable16[c]);
 #endif
         if (!c)
             znptable16[c] |= Z_FLAG;
@@ -219,14 +237,13 @@ makeznptable(void)
 static void
 reset_common(int hard)
 {
-#ifdef ENABLE_808X_LOG
+#ifdef ENABLE_X86_LOG
     if (hard)
-        x808x_log("x86 reset\n");
+        x86_log("x86 reset\n");
 #endif
 
     if (!hard && reset_on_hlt) {
         hlt_reset_pending++;
-        pclog("hlt_reset_pending = %i\n", hlt_reset_pending);
         if (hlt_reset_pending == 2)
             hlt_reset_pending = 0;
         else
@@ -254,20 +271,43 @@ reset_common(int hard)
     stack32        = 0;
     msr.fcr        = (1 << 8) | (1 << 9) | (1 << 12) | (1 << 16) | (1 << 19) | (1 << 21);
     msw            = 0;
+    new_ne         = 0;
+    x87_op         = 0;
+
+    ccr0 = ccr1 = ccr2 = ccr3 = ccr4 = ccr5 = ccr6 = ccr7 = 0;
+    ccr4 = 0x85;
+    cyrix.arr[3].base = 0x30000;
+    cyrix.arr[3].size = 65536;
+
     if (hascache)
         cr0 = 1 << 30;
     else
         cr0 = 0;
-    cpu_cache_int_enabled = 0;
+    if (is386 && !is486 && ((fpu_type == FPU_387) || (fpu_type == FPU_NONE)))
+        cr0 |= 0x10;
+    cpu_cache_int_enabled = 0;  
     cpu_update_waitstates();
     cr4              = 0;
     cpu_state.eflags = 0;
     cgate32          = 0;
+#ifdef USE_DEBUG_REGS_486
+    if (is386) {
+#else
+    if (is386 && !is486) {
+#endif
+        for (uint8_t i = 0; i < 4; i++)
+            dr[i] = 0x00000000;
+        dr[6] = 0xffff1ff0;
+        dr[7] = 0x00000400;
+    }
     if (is286) {
-        loadcs(0xF000);
+        if (is486)
+            loadcs(0xF000);
+        else
+            loadcs_2386(0xF000);
         cpu_state.pc = 0xFFF0;
         if (hard) {
-            rammask      = cpu_16bitbus ? 0xFFFFFF : 0xFFFFFFFF;
+            rammask = cpu_16bitbus ? 0xFFFFFF : 0xFFFFFFFF;
             if (is6117)
                 rammask |= 0x03000000;
             mem_a20_key = mem_a20_alt = mem_a20_state = 0;
@@ -286,13 +326,14 @@ reset_common(int hard)
         resetreadlookup();
         makemod1table();
         cpu_set_edx();
-        mmu_perm = 4;
     }
     x86seg_reset();
 #ifdef USE_DYNAREC
     if (hard)
         codegen_reset();
 #endif
+    cpu_flush_pending = 0;
+    cpu_old_paging = 0;
     if (!hard)
         flushmmucache();
     x86_was_reset = 1;
@@ -323,10 +364,17 @@ reset_common(int hard)
         /* If we have an AT or PS/2 keyboard controller, make sure the A20 state
            is correct. */
         device_reset_all(DEVICE_KBC);
-    }
+    } else
+        device_reset_all(DEVICE_SOFTRESET);
 
     if (!is286)
         reset_808x(hard);
+
+    in_lock    = 0;
+
+    cpu_cpurst_on_sr = 0;
+
+    cpu_force_interpreter = 0;
 }
 
 /* Hard reset. */
@@ -344,9 +392,6 @@ softresetx86(void)
 {
     if (soft_reset_mask)
         return;
-
-    if (ibm8514_enabled || xga_enabled)
-        vga_on = 1;
 
     reset_common(0);
 }

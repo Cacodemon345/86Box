@@ -8,8 +8,6 @@
  *
  *          Definitions for the memory interface.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          Fred N. van Kempen, <decwiz@yahoo.com>
  *          Miran Grca, <mgrca8@gmail.com>
@@ -18,7 +16,6 @@
  *          Copyright 2017-2020 Fred N. van Kempen.
  *          Copyright 2016-2020 Miran Grca.
  */
-
 #ifndef EMU_MEM_H
 #define EMU_MEM_H
 
@@ -179,6 +176,7 @@ typedef struct _mem_mapping_ {
     uint32_t base;
     uint32_t size;
 
+    uint32_t base_ignore;
     uint32_t mask;
 
     uint8_t (*read_b)(uint32_t addr, void *priv);
@@ -264,20 +262,17 @@ extern uint32_t biosmask;
 extern uint32_t biosaddr;
 
 extern int        readlookup[256];
-extern uintptr_t *readlookup2;
 extern uintptr_t  old_rl2;
 extern uint8_t    uncached;
 extern int        readlnext;
 extern int        writelookup[256];
-extern uintptr_t *writelookup2;
+
 extern int        writelnext;
 extern uint32_t   ram_mapped_addr[64];
 extern uint8_t    page_ff[4096];
 
 extern mem_mapping_t ram_low_mapping;
-#if 1
 extern mem_mapping_t ram_mid_mapping;
-#endif
 extern mem_mapping_t ram_remapped_mapping;
 extern mem_mapping_t ram_high_mapping;
 extern mem_mapping_t ram_2gb_mapping;
@@ -287,7 +282,11 @@ extern mem_mapping_t bios_high_mapping;
 extern uint32_t mem_logical_addr;
 
 extern page_t  *pages;
-extern page_t **page_lookup;
+
+/* The lookup tables. */
+extern page_t *page_lookup[1048576];
+extern uintptr_t readlookup2[1048576];
+extern uintptr_t writelookup2[1048576];
 
 extern uint32_t get_phys_virt;
 extern uint32_t get_phys_phys;
@@ -299,10 +298,12 @@ extern int writelnum;
 
 extern int memspeed[11];
 
-extern int     mmu_perm;
 extern uint8_t high_page; /* if a high (> 4 gb) page was detected */
 
+extern uint8_t *_mem_exec[MEM_MAPPINGS_NO];
+
 extern uint32_t pages_sz; /* #pages in table */
+extern int      read_type;
 
 extern int mem_a20_state;
 extern int mem_a20_alt;
@@ -330,6 +331,24 @@ extern uint32_t readmemll_no_mmut(uint32_t addr, uint32_t *a64);
 extern void     writememll_no_mmut(uint32_t addr, uint32_t *a64, uint32_t val);
 
 extern void do_mmutranslate(uint32_t addr, uint32_t *a64, int num, int write);
+
+extern uint8_t  readmembl_2386(uint32_t addr);
+extern void     writemembl_2386(uint32_t addr, uint8_t val);
+extern uint16_t readmemwl_2386(uint32_t addr);
+extern void     writememwl_2386(uint32_t addr, uint16_t val);
+extern uint32_t readmemll_2386(uint32_t addr);
+extern void     writememll_2386(uint32_t addr, uint32_t val);
+extern uint64_t readmemql_2386(uint32_t addr);
+extern void     writememql_2386(uint32_t addr, uint64_t val);
+
+extern uint8_t  readmembl_no_mmut_2386(uint32_t addr, uint32_t a64);
+extern void     writemembl_no_mmut_2386(uint32_t addr, uint32_t a64, uint8_t val);
+extern uint16_t readmemwl_no_mmut_2386(uint32_t addr, uint32_t *a64);
+extern void     writememwl_no_mmut_2386(uint32_t addr, uint32_t *a64, uint16_t val);
+extern uint32_t readmemll_no_mmut_2386(uint32_t addr, uint32_t *a64);
+extern void     writememll_no_mmut_2386(uint32_t addr, uint32_t *a64, uint32_t val);
+
+extern void     do_mmutranslate_2386(uint32_t addr, uint32_t *a64, int num, int write);
 
 extern uint8_t *getpccache(uint32_t a);
 extern uint64_t mmutranslatereal(uint32_t addr, int rw);
@@ -370,16 +389,23 @@ extern void mem_mapping_set_handler(mem_mapping_t *,
                                     void (*write_w)(uint32_t addr, uint16_t val, void *priv),
                                     void (*write_l)(uint32_t addr, uint32_t val, void *priv));
 
+extern void mem_mapping_set_write_handler(mem_mapping_t *,
+                                          void (*write_b)(uint32_t addr, uint8_t val, void *priv),
+                                          void (*write_w)(uint32_t addr, uint16_t val, void *priv),
+                                          void (*write_l)(uint32_t addr, uint32_t val, void *priv));
+
 extern void mem_mapping_set_p(mem_mapping_t *, void *priv);
 
 extern void mem_mapping_set_addr(mem_mapping_t *,
                                  uint32_t base, uint32_t size);
+extern void mem_mapping_set_base_ignore(mem_mapping_t *, uint32_t base_ignore);
 extern void mem_mapping_set_exec(mem_mapping_t *, uint8_t *exec);
 extern void mem_mapping_set_mask(mem_mapping_t *, uint32_t mask);
 extern void mem_mapping_disable(mem_mapping_t *);
 extern void mem_mapping_enable(mem_mapping_t *);
 extern void mem_mapping_recalc(uint64_t base, uint64_t size);
 
+extern void mem_set_wp(uint64_t base, uint64_t size, uint8_t flags, uint8_t wp);
 extern void mem_set_access(uint8_t bitmap, int mode, uint32_t base, uint32_t size, uint16_t access);
 
 extern uint8_t  mem_readb_phys(uint32_t addr);
@@ -419,15 +445,30 @@ extern void mem_flush_write_page(uint32_t addr, uint32_t virt);
 extern void mem_reset_page_blocks(void);
 
 extern void flushmmucache(void);
+extern void flushmmucache_write(void);
+extern void flushmmucache_pc(void);
 extern void flushmmucache_nopc(void);
+
+extern void mem_debug_check_addr(uint32_t addr, int write);
 
 extern void mem_a20_init(void);
 extern void mem_a20_recalc(void);
 
 extern void mem_init(void);
 extern void mem_close(void);
+extern void mem_zero(void);
 extern void mem_reset(void);
+extern void mem_remap_top_ex(int kb, uint32_t start);
+extern void mem_remap_top_ex_nomid(int kb, uint32_t start);
 extern void mem_remap_top(int kb);
+extern void mem_remap_top_nomid(int kb);
+
+extern void umc_smram_recalc(uint32_t start, int set);
+
+extern void pcjr_waitstates(void *);
+
+extern mem_mapping_t *read_mapping[MEM_MAPPINGS_NO];
+extern mem_mapping_t *write_mapping[MEM_MAPPINGS_NO];
 
 #ifdef EMU_CPU_H
 static __inline uint32_t

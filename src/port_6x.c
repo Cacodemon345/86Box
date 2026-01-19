@@ -9,8 +9,6 @@
  *          Implementation of Ports 61, 62, and 63 used by various
  *          machines.
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *
  *          Copyright 2021 Miran Grca.
@@ -37,6 +35,7 @@
 #include <86box/video.h>
 #include <86box/port_6x.h>
 #include <86box/plat_unused.h>
+#include <86box/random.h>
 
 #define PS2_REFRESH_TIME (16 * TIMER_USEC)
 
@@ -45,12 +44,16 @@
 #define PORT_6X_MIRROR   4
 #define PORT_6X_SWA      8
 
+static int cycles_sub = 0;
+
 static void
 port_6x_write(uint16_t port, uint8_t val, void *priv)
 {
     const port_6x_t *dev = (port_6x_t *) priv;
 
     port &= 3;
+
+    cycles -= cycles_sub;
 
     if ((port == 3) && (dev->flags & PORT_6X_MIRROR))
         port = 1;
@@ -80,6 +83,8 @@ port_61_read_simple(UNUSED(uint16_t port), UNUSED(void *priv))
 {
     uint8_t ret = ppi.pb & 0x1f;
 
+    cycles -= cycles_sub;
+
     if (ppispeakon)
         ret |= 0x20;
 
@@ -91,6 +96,8 @@ port_61_read(UNUSED(uint16_t port), void *priv)
 {
     const port_6x_t *dev = (port_6x_t *) priv;
     uint8_t          ret = 0xff;
+
+    cycles -= cycles_sub;
 
     if (dev->flags & PORT_6X_EXT_REF) {
         ret = ppi.pb & 0x0f;
@@ -190,6 +197,8 @@ port_6x_init(const device_t *info)
     if (dev->flags & PORT_6X_SWA)
         io_sethandler(0x0062, 1, port_62_read, NULL, NULL, NULL, NULL, NULL, dev);
 
+    cycles_sub = is486 ? ISA_CYCLES(8) : 0;
+
     return dev;
 }
 
@@ -201,7 +210,7 @@ const device_t port_6x_device = {
     .init          = port_6x_init,
     .close         = port_6x_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -215,7 +224,7 @@ const device_t port_6x_xi8088_device = {
     .init          = port_6x_init,
     .close         = port_6x_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -229,7 +238,7 @@ const device_t port_6x_ps2_device = {
     .init          = port_6x_init,
     .close         = port_6x_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -243,7 +252,7 @@ const device_t port_6x_olivetti_device = {
     .init          = port_6x_init,
     .close         = port_6x_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL

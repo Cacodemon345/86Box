@@ -42,8 +42,6 @@
  *          which are the same as the XGA. It supports up to 1MB of VRAM,
  *          but we lock it down to 512K. The PS/1 2122 had 256K.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          Miran Grca, <mgrca8@gmail.com>
  *          Fred N. van Kempen, <decwiz@yahoo.com>
@@ -91,7 +89,7 @@ vid_out(uint16_t addr, uint8_t val, void *priv)
 
 #if 0
     if (((addr & 0xfff0) == 0x03d0 || (addr & 0xfff0) == 0x03b0) &&
-	!(svga->miscout & 1)) addr ^= 0x60;
+        !(svga->miscout & 1)) addr ^= 0x60;
 #endif
 
     switch (addr) {
@@ -137,6 +135,9 @@ vid_out(uint16_t addr, uint8_t val, void *priv)
         case 0x210a:
             ti->reg_210a = val;
             break;
+
+        default:
+            break;
     }
 
     svga_out(addr, val, svga);
@@ -151,7 +152,7 @@ vid_in(uint16_t addr, void *priv)
 
 #if 0
     if (((addr & 0xfff0) == 0x03d0 || (addr & 0xfff0) == 0x03b0) &&
-	!(svga->miscout & 1)) addr ^= 0x60;
+        !(svga->miscout & 1)) addr ^= 0x60;
 #endif
 
     switch (addr) {
@@ -263,7 +264,7 @@ const device_t ibm_ps1_2121_device = {
     .init          = vid_init,
     .close         = vid_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = vid_speed_changed,
     .force_redraw  = vid_force_redraw,
     .config        = NULL

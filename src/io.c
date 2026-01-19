@@ -8,14 +8,12 @@
  *
  *          Implement I/O ports and their operations.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          Miran Grca, <mgrca8@gmail.com>
  *          Fred N. van Kempen, <decwiz@yahoo.com>
  *
  *          Copyright 2008-2019 Sarah Walker.
- *          Copyright 2016-2019 Miran Grca.
+ *          Copyright 2016-2025 Miran Grca.
  */
 #include <stdarg.h>
 #include <stdio.h>
@@ -28,6 +26,7 @@
 #include <86box/io.h>
 #include <86box/timer.h>
 #include "cpu.h"
+#include "x86.h"
 #include <86box/m_amstrad.h>
 #include <86box/pci.h>
 
@@ -145,6 +144,8 @@ io_sethandler_common(uint16_t base, int size,
         q->next = NULL;
 
         io_last[base + c] = q;
+
+        q = NULL;
     }
 }
 
@@ -279,6 +280,58 @@ io_handler_interleaved(int set, uint16_t base, int size,
     io_handler_common(set, base, size, inb, inw, inl, outb, outw, outl, priv, 2);
 }
 
+#ifdef USE_DEBUG_REGS_486
+extern int trap;
+/* Set trap for I/O address breakpoints. */
+void
+io_debug_check_addr(uint16_t addr)
+{
+    int i = 0;
+    int set_trap = 0;
+
+    if (!(dr[7] & 0xFF))
+        return;
+    
+    if (!(cr4 & 0x8))
+        return; /* No I/O debug trap. */
+
+    for (i = 0; i < 4; i++) {
+        uint16_t dr_addr = dr[i] & 0xFFFF;
+        int breakpoint_enabled = !!(dr[7] & (0x3 << (2 * i)));
+        int len_type_pair = ((dr[7] >> 16) & (0xF << (4 * i))) >> (4 * i);
+        if (!breakpoint_enabled)
+            continue;
+        if ((len_type_pair & 3) != 2)
+            continue;
+        
+        switch ((len_type_pair >> 2) & 3)
+        {
+            case 0x00:
+                if (dr_addr == addr) {
+                    set_trap = 1;
+                    dr[6] |= (1 << i);
+                }
+                break;
+            case 0x01:
+                if ((dr_addr & ~1) == addr || ((dr_addr & ~1) + 1) == (addr + 1)) {
+                    set_trap = 1;
+                    dr[6] |= (1 << i);
+                }
+                break;
+            case 0x03:
+                dr_addr &= ~3;
+                if (addr >= dr_addr && addr < (dr_addr + 4)) {
+                    set_trap = 1;
+                    dr[6] |= (1 << i);
+                }
+                break;
+        }
+    }
+    if (set_trap)
+        trap |= 4;
+}
+#endif
+
 uint8_t
 inb(uint16_t port)
 {
@@ -286,16 +339,28 @@ inb(uint16_t port)
     io_t   *p;
     io_t   *q;
     int     found  = 0;
+#ifdef ENABLE_IO_LOG
     int     qfound = 0;
+#endif
 
-    if ((pci_take_over_io & PCI_IO_ON) && (port >= pci_base) && (port < (pci_base + pci_size))) {
-        ret = pci_type2_read(port, NULL);
+    io_port = port;
+
+#ifdef USE_DEBUG_REGS_486
+    io_debug_check_addr(port);
+#endif
+
+    if ((pci_flags & FLAG_CONFIG_IO_ON) && (port >= pci_base) && (port < (pci_base + pci_size))) {
+        ret = pci_read(port, NULL);
         found = 1;
+#ifdef ENABLE_IO_LOG
         qfound = 1;
-    } else if ((pci_take_over_io & PCI_IO_DEV0) && (port >= 0xc000) && (port < 0xc100)) {
-        ret = pci_type2_read(port, NULL);
+#endif
+    } else if ((pci_flags & FLAG_CONFIG_DEV0_IO_ON) && (port >= 0xc000) && (port < 0xc100)) {
+        ret = pci_read(port, NULL);
         found = 1;
+#ifdef ENABLE_IO_LOG
         qfound = 1;
+#endif
     } else {
         p = io[port];
         while (p) {
@@ -303,7 +368,9 @@ inb(uint16_t port)
             if (p->inb) {
                 ret &= p->inb(port, p->priv);
                 found |= 1;
+#ifdef ENABLE_IO_LOG
                 qfound++;
+#endif
             }
             p = q;
         }
@@ -338,16 +405,29 @@ outb(uint16_t port, uint8_t val)
     io_t *p;
     io_t *q;
     int   found  = 0;
+#ifdef ENABLE_IO_LOG
     int   qfound = 0;
+#endif
 
-    if ((pci_take_over_io & PCI_IO_ON) && (port >= pci_base) && (port < (pci_base + pci_size))) {
-        pci_type2_write(port, val, NULL);
+    io_port = port;
+    io_val  = val;
+
+#ifdef USE_DEBUG_REGS_486
+    io_debug_check_addr(port);
+#endif
+
+    if ((pci_flags & FLAG_CONFIG_IO_ON) && (port >= pci_base) && (port < (pci_base + pci_size))) {
+        pci_write(port, val, NULL);
         found = 1;
+#ifdef ENABLE_IO_LOG
         qfound = 1;
-    } else if ((pci_take_over_io & PCI_IO_DEV0) && (port >= 0xc000) && (port < 0xc100)) {
-        pci_type2_write(port, val, NULL);
+#endif
+    } else if ((pci_flags & FLAG_CONFIG_DEV0_IO_ON) && (port >= 0xc000) && (port < 0xc100)) {
+        pci_write(port, val, NULL);
         found = 1;
+#ifdef ENABLE_IO_LOG
         qfound = 1;
+#endif
     } else {
         p = io[port];
         while (p) {
@@ -355,16 +435,18 @@ outb(uint16_t port, uint8_t val)
             if (p->outb) {
                 p->outb(port, val, p->priv);
                 found |= 1;
+#ifdef ENABLE_IO_LOG
                 qfound++;
+#endif
             }
             p = q;
         }
     }
 
-    if (!found) {
+    if (!found || (port == 0x84)) {
         cycles -= io_delay;
 #ifdef USE_DYNAREC
-        if (cpu_use_dynarec && ((port == 0xeb) || (port == 0xed)))
+        if (cpu_use_dynarec && ((port == 0x84) || (port == 0xeb) || (port == 0xed)))
             update_tsc();
 #endif
     }
@@ -381,17 +463,29 @@ inw(uint16_t port)
     io_t    *q;
     uint16_t ret    = 0xffff;
     int      found  = 0;
+#ifdef ENABLE_IO_LOG
     int      qfound = 0;
+#endif
     uint8_t  ret8[2];
 
-    if ((pci_take_over_io & PCI_IO_ON) && (port >= pci_base) && (port < (pci_base + pci_size))) {
-        ret = pci_type2_readw(port, NULL);
+    io_port = port;
+
+#ifdef USE_DEBUG_REGS_486
+    io_debug_check_addr(port);
+#endif
+
+    if ((pci_flags & FLAG_CONFIG_IO_ON) && (port >= pci_base) && (port < (pci_base + pci_size))) {
+        ret = pci_readw(port, NULL);
         found = 2;
+#ifdef ENABLE_IO_LOG
         qfound = 1;
-    } else if ((pci_take_over_io & PCI_IO_DEV0) && (port >= 0xc000) && (port < 0xc100)) {
-        ret = pci_type2_readw(port, NULL);
+#endif
+    } else if ((pci_flags & FLAG_CONFIG_DEV0_IO_ON) && (port >= 0xc000) && (port < 0xc100)) {
+        ret = pci_readw(port, NULL);
         found = 2;
+#ifdef ENABLE_IO_LOG
         qfound = 1;
+#endif
     } else {
         p = io[port];
         while (p) {
@@ -399,7 +493,9 @@ inw(uint16_t port)
             if (p->inw) {
                 ret &= p->inw(port, p->priv);
                 found |= 2;
+#ifdef ENABLE_IO_LOG
                 qfound++;
+#endif
             }
             p = q;
         }
@@ -413,7 +509,9 @@ inw(uint16_t port)
                 if (p->inb && !p->inw) {
                     ret8[i] &= p->inb(port + i, p->priv);
                     found |= 1;
+#ifdef ENABLE_IO_LOG
                     qfound++;
+#endif
                 }
                 p = q;
             }
@@ -444,16 +542,29 @@ outw(uint16_t port, uint16_t val)
     io_t *p;
     io_t *q;
     int   found  = 0;
+#ifdef ENABLE_IO_LOG
     int   qfound = 0;
+#endif
 
-    if ((pci_take_over_io & PCI_IO_ON) && (port >= pci_base) && (port < (pci_base + pci_size))) {
-        pci_type2_writew(port, val, NULL);
+    io_port = port;
+    io_val  = val;
+
+#ifdef USE_DEBUG_REGS_486
+    io_debug_check_addr(port);
+#endif
+
+    if ((pci_flags & FLAG_CONFIG_IO_ON) && (port >= pci_base) && (port < (pci_base + pci_size))) {
+        pci_writew(port, val, NULL);
         found = 2;
+#ifdef ENABLE_IO_LOG
         qfound = 1;
-    } else if ((pci_take_over_io & PCI_IO_DEV0) && (port >= 0xc000) && (port < 0xc100)) {
-        pci_type2_writew(port, val, NULL);
+#endif
+    } else if ((pci_flags & FLAG_CONFIG_DEV0_IO_ON) && (port >= 0xc000) && (port < 0xc100)) {
+        pci_writew(port, val, NULL);
         found = 2;
+#ifdef ENABLE_IO_LOG
         qfound = 1;
+#endif
     } else {
         p = io[port];
         while (p) {
@@ -461,7 +572,9 @@ outw(uint16_t port, uint16_t val)
             if (p->outw) {
                 p->outw(port, val, p->priv);
                 found |= 2;
+#ifdef ENABLE_IO_LOG
                 qfound++;
+#endif
             }
             p = q;
         }
@@ -473,7 +586,9 @@ outw(uint16_t port, uint16_t val)
                 if (p->outb && !p->outw) {
                     p->outb(port + i, val >> (i << 3), p->priv);
                     found |= 1;
+#ifdef ENABLE_IO_LOG
                     qfound++;
+#endif
                 }
                 p = q;
             }
@@ -502,16 +617,28 @@ inl(uint16_t port)
     uint16_t ret16[2];
     uint8_t  ret8[4];
     int      found  = 0;
+#ifdef ENABLE_IO_LOG
     int      qfound = 0;
+#endif
 
-    if ((pci_take_over_io & PCI_IO_ON) && (port >= pci_base) && (port < (pci_base + pci_size))) {
-        ret = pci_type2_readl(port, NULL);
+    io_port = port;
+
+#ifdef USE_DEBUG_REGS_486
+    io_debug_check_addr(port);
+#endif
+
+    if ((pci_flags & FLAG_CONFIG_IO_ON) && (port >= pci_base) && (port < (pci_base + pci_size))) {
+        ret = pci_readl(port, NULL);
         found = 4;
+#ifdef ENABLE_IO_LOG
         qfound = 1;
-    } else if ((pci_take_over_io & PCI_IO_DEV0) && (port >= 0xc000) && (port < 0xc100)) {
-        ret = pci_type2_readl(port, NULL);
+#endif
+    } else if ((pci_flags & FLAG_CONFIG_DEV0_IO_ON) && (port >= 0xc000) && (port < 0xc100)) {
+        ret = pci_readl(port, NULL);
         found = 4;
+#ifdef ENABLE_IO_LOG
         qfound = 1;
+#endif
     } else {
         p = io[port];
         while (p) {
@@ -519,7 +646,9 @@ inl(uint16_t port)
             if (p->inl) {
                 ret &= p->inl(port, p->priv);
                 found |= 4;
+#ifdef ENABLE_IO_LOG
                 qfound++;
+#endif
             }
             p = q;
         }
@@ -532,7 +661,9 @@ inl(uint16_t port)
             if (p->inw && !p->inl) {
                 ret16[0] &= p->inw(port, p->priv);
                 found |= 2;
+#ifdef ENABLE_IO_LOG
                 qfound++;
+#endif
             }
             p = q;
         }
@@ -543,7 +674,9 @@ inl(uint16_t port)
             if (p->inw && !p->inl) {
                 ret16[1] &= p->inw(port + 2, p->priv);
                 found |= 2;
+#ifdef ENABLE_IO_LOG
                 qfound++;
+#endif
             }
             p = q;
         }
@@ -560,7 +693,9 @@ inl(uint16_t port)
                 if (p->inb && !p->inw && !p->inl) {
                     ret8[i] &= p->inb(port + i, p->priv);
                     found |= 1;
+#ifdef ENABLE_IO_LOG
                     qfound++;
+#endif
                 }
                 p = q;
             }
@@ -591,17 +726,30 @@ outl(uint16_t port, uint32_t val)
     io_t *p;
     io_t *q;
     int   found  = 0;
+#ifdef ENABLE_IO_LOG
     int   qfound = 0;
+#endif
     int   i      = 0;
 
-    if ((pci_take_over_io & PCI_IO_ON) && (port >= pci_base) && (port < (pci_base + pci_size))) {
-        pci_type2_writel(port, val, NULL);
+    io_port = port;
+    io_val  = val;
+
+#ifdef USE_DEBUG_REGS_486
+    io_debug_check_addr(port);
+#endif
+
+    if ((pci_flags & FLAG_CONFIG_IO_ON) && (port >= pci_base) && (port < (pci_base + pci_size))) {
+        pci_writel(port, val, NULL);
         found = 4;
+#ifdef ENABLE_IO_LOG
         qfound = 1;
-    } else if ((pci_take_over_io & PCI_IO_DEV0) && (port >= 0xc000) && (port < 0xc100)) {
-        pci_type2_writel(port, val, NULL);
+#endif
+    } else if ((pci_flags & FLAG_CONFIG_DEV0_IO_ON) && (port >= 0xc000) && (port < 0xc100)) {
+        pci_writel(port, val, NULL);
         found = 4;
+#ifdef ENABLE_IO_LOG
         qfound = 1;
+#endif
     } else {
         p = io[port];
         if (p) {
@@ -610,7 +758,9 @@ outl(uint16_t port, uint32_t val)
                 if (p->outl) {
                     p->outl(port, val, p->priv);
                     found |= 4;
+#ifdef ENABLE_IO_LOG
                     qfound++;
+#endif
                 }
                 p = q;
             }
@@ -623,7 +773,9 @@ outl(uint16_t port, uint32_t val)
                 if (p->outw && !p->outl) {
                     p->outw(port + i, val >> (i << 3), p->priv);
                     found |= 2;
+#ifdef ENABLE_IO_LOG
                     qfound++;
+#endif
                 }
                 p = q;
             }
@@ -636,7 +788,9 @@ outl(uint16_t port, uint32_t val)
                 if (p->outb && !p->outw && !p->outl) {
                     p->outb(port + i, val >> (i << 3), p->priv);
                     found |= 1;
+#ifdef ENABLE_IO_LOG
                     qfound++;
+#endif
                 }
                 p = q;
             }

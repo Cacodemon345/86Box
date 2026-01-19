@@ -8,15 +8,12 @@
  *
  *          X11 Xinput2 mouse input module.
  *
- *
- *
  * Authors: Cacodemon345
  *          RichardG <richardg867@gmail.com>
  *
  *          Copyright 2022 Cacodemon345.
  *          Copyright 2023 RichardG.
  */
-
 #include <QDebug>
 #include <QThread>
 #include <QProcess>
@@ -47,8 +44,8 @@ extern "C" {
 static Display            *disp       = nullptr;
 static QThread            *procThread = nullptr;
 static XIEventMask         ximask;
-static std::atomic<bool>   exitfromthread = false;
-static std::atomic<double> xi2_mouse_x = 0, xi2_mouse_y = 0, xi2_mouse_abs_x = 0, xi2_mouse_abs_y = 0;
+static std::atomic<bool>   exitfromthread  = false;
+static std::atomic<double> xi2_mouse_abs_x = 0, xi2_mouse_abs_y = 0;
 static int                 xi2opcode      = 0;
 static double              prev_coords[2] = { 0.0 };
 static Time                prev_time      = 0;
@@ -59,8 +56,8 @@ parse_valuators(const double        *input_values,
                 const unsigned char *mask, int mask_len,
                 double *output_values, int output_values_len)
 {
-    int i = 0;
-    int z = 0;
+    int i   = 0;
+    int z   = 0;
     int top = mask_len * 8;
     if (top > 16)
         top = 16;
@@ -132,7 +129,7 @@ xinput2_proc()
         XGenericEventCookie *cookie = (XGenericEventCookie *) &ev.xcookie;
         XNextEvent(disp, (XEvent *) &ev);
 
-        if (XGetEventData(disp, cookie) && (cookie->type == GenericEvent) && (cookie->extension == xi2opcode)) {
+        if (XGetEventData(disp, cookie) && (cookie->type == GenericEvent) && (cookie->extension == xi2opcode) && mouse_capture) {
             const XIRawEvent *rawev     = (const XIRawEvent *) cookie->data;
             double            coords[2] = { 0.0 };
 
@@ -168,9 +165,9 @@ common_motion:
                                     if ((v->mode == XIModeRelative) && (rawev->sourceid != xtest_pointer)) {
                                         /* Set relative coordinates. */
                                         if (axis == 0)
-                                            xi2_mouse_x = xi2_mouse_x + coords[axis];
+                                            mouse_scale_x(coords[axis]);
                                         else
-                                            xi2_mouse_y = xi2_mouse_y + coords[axis];
+                                            mouse_scale_y(coords[axis]);
                                     } else {
                                         /* Convert absolute value range to pixel granularity, then to relative coordinates. */
                                         int    disp_screen = XDefaultScreen(disp);
@@ -188,7 +185,7 @@ common_motion:
                                             }
 
                                             if (xi2_mouse_abs_x != 0)
-                                                xi2_mouse_x = xi2_mouse_x + (abs_div - xi2_mouse_abs_x);
+                                                mouse_scale_x(abs_div - xi2_mouse_abs_x);
                                             xi2_mouse_abs_x = abs_div;
                                         } else {
                                             if (v->mode == XIModeRelative) {
@@ -202,7 +199,7 @@ common_motion:
                                             }
 
                                             if (xi2_mouse_abs_y != 0)
-                                                xi2_mouse_y = xi2_mouse_y + (abs_div - xi2_mouse_abs_y);
+                                                mouse_scale_y(abs_div - xi2_mouse_abs_y);
                                             xi2_mouse_abs_y = abs_div;
                                         }
                                     }
@@ -214,8 +211,6 @@ common_motion:
                         }
 
                         prev_time = rawev->time;
-                        if (!mouse_capture)
-                            break;
                         XWindowAttributes winattrib {};
                         if (XGetWindowAttributes(disp, main_window->winId(), &winattrib)) {
                             auto globalPoint = main_window->mapToGlobal(QPoint(main_window->width() / 2, main_window->height() / 2));
@@ -272,15 +267,4 @@ xinput2_init()
             atexit(xinput2_exit);
         }
     }
-}
-
-void
-xinput2_poll()
-{
-    if (procThread && mouse_capture) {
-        mouse_x = xi2_mouse_x;
-        mouse_y = xi2_mouse_y;
-    }
-    xi2_mouse_x = 0;
-    xi2_mouse_y = 0;
 }

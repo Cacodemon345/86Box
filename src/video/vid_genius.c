@@ -8,12 +8,10 @@
  *
  *          MDSI Genius VHR emulation.
  *
- *
- *
- * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
+ * Authors: John Elliott, <jce@seasip.info>
  *          Miran Grca, <mgrca8@gmail.com>
  *
- *          Copyright 2008-2019 Sarah Walker.
+ *          Copyright 2008-2019 John Elliott.
  *          Copyright 2016-2019 Miran Grca.
  */
 #include <stdio.h>
@@ -74,7 +72,7 @@ static video_timings_t timing_genius = { .type = VIDEO_ISA, .write_b = 8, .write
  * Two card-specific registers control text and graphics display:
  *
  *  03B0: Control register.
- * 	   Bit 0: Map all graphics framebuffer into memory.
+ *         Bit 0: Map all graphics framebuffer into memory.
  *         Bit 2: Unknown. Set by GMC /M; cleared by mode set or GMC /T.
  *         Bit 4: Set for CGA-compatible graphics, clear for native graphics.
  *         Bit 5: Set for black on white, clear for white on black.
@@ -204,14 +202,17 @@ genius_out(uint16_t addr, uint8_t val, void *priv)
         case 0x3d9:
             genius->cga_colour = val;
             return;
+
+        default:
+            break;
     }
 }
 
 uint8_t
 genius_in(uint16_t addr, void *priv)
 {
-    genius_t *genius = (genius_t *) priv;
-    uint8_t   ret    = 0xff;
+    const genius_t *genius = (genius_t *) priv;
+    uint8_t         ret    = 0xff;
 
     switch (addr) {
         case 0x3b0:
@@ -252,6 +253,9 @@ genius_in(uint16_t addr, void *priv)
             break;
         case 0x3da:
             ret = genius->cga_stat;
+            break;
+
+        default:
             break;
     }
 
@@ -295,8 +299,9 @@ genius_write(uint32_t addr, uint8_t val, void *priv)
 uint8_t
 genius_read(uint32_t addr, void *priv)
 {
-    genius_t *genius = (genius_t *) priv;
-    uint8_t   ret;
+    const genius_t *genius = (genius_t *) priv;
+    uint8_t         ret;
+
     genius_waitstates();
 
     if (genius->genius_control & 1) {
@@ -324,12 +329,13 @@ genius_recalctimings(genius_t *genius)
     double disptime;
     double _dispontime;
     double _dispofftime;
+    double crtcconst = (cpuclock / 53216000.0 * (double) (1ULL << 32)) * 9.0;
 
-    disptime     = 0x31;
-    _dispontime  = 0x28;
+    disptime     = 0x62;
+    _dispontime  = 0x50;
     _dispofftime = disptime - _dispontime;
-    _dispontime *= MDACONST;
-    _dispofftime *= MDACONST;
+    _dispontime *= crtcconst;
+    _dispofftime *= crtcconst;
     genius->dispontime  = (uint64_t) (_dispontime);
     genius->dispofftime = (uint64_t) (_dispofftime);
 }
@@ -364,6 +370,9 @@ genius_lines(genius_t *genius)
         case 0x13:
             ret = 492; /* 80x41 */
             break;
+
+        default:
+            break;
     }
 
     return ret;
@@ -377,9 +386,9 @@ genius_textline(genius_t *genius, uint8_t background, int mda, int cols80)
     int            cw = 9;  /* Each character is 9 pixels wide */
     uint8_t        chr;
     uint8_t        attr;
-    uint8_t        sc;
+    uint8_t        scanline;
     uint8_t        ctrl;
-    uint8_t       *crtc;
+    const uint8_t *crtc;
     uint8_t        bitmap[2];
     int            blink;
     int            c;
@@ -388,9 +397,9 @@ genius_textline(genius_t *genius, uint8_t background, int mda, int cols80)
     int            drawcursor;
     int            cursorline;
     uint16_t       addr;
-    uint16_t       ma       = (genius->mda_crtc[13] | (genius->mda_crtc[12] << 8)) & 0x3fff;
-    uint16_t       ca       = (genius->mda_crtc[15] | (genius->mda_crtc[14] << 8)) & 0x3fff;
-    unsigned char *framebuf = genius->vram + 0x10000;
+    uint16_t       memaddr       = (genius->mda_crtc[13] | (genius->mda_crtc[12] << 8)) & 0x3fff;
+    uint16_t       cursoraddr       = (genius->mda_crtc[15] | (genius->mda_crtc[14] << 8)) & 0x3fff;
+    const uint8_t *framebuf = genius->vram + 0x10000;
     uint32_t       col;
     uint32_t       dl = genius->displine;
 
@@ -404,16 +413,16 @@ genius_textline(genius_t *genius, uint8_t background, int mda, int cols80)
         charh = 15 - (genius->genius_charh & 3);
 
 #if 0
-	if (genius->genius_charh & 0x10) {
-		row = ((dl >> 1) / charh);
-		sc  = ((dl >> 1) % charh);
-	} else {
-		row = (dl / charh);
-		sc  = (dl % charh);
-	}
+    if (genius->genius_charh & 0x10) {
+        row = ((dl >> 1) / charh);
+        scanline  = ((dl >> 1) % charh);
+    } else {
+        row = (dl / charh);
+        scanline  = (dl % charh);
+    }
 #else
         row = (dl / charh);
-        sc  = (dl % charh);
+        scanline  = (dl % charh);
 #endif
     } else {
         if ((genius->displine < 512) || (genius->displine >= 912))
@@ -429,35 +438,35 @@ genius_textline(genius_t *genius, uint8_t background, int mda, int cols80)
         charh = crtc[9] + 1;
 
         row = ((dl >> 1) / charh);
-        sc  = ((dl >> 1) % charh);
+        scanline  = ((dl >> 1) % charh);
     }
 
-    ma = (crtc[13] | (crtc[12] << 8)) & 0x3fff;
-    ca = (crtc[15] | (crtc[14] << 8)) & 0x3fff;
+    memaddr = (crtc[13] | (crtc[12] << 8)) & 0x3fff;
+    cursoraddr = (crtc[15] | (crtc[14] << 8)) & 0x3fff;
 
-    addr = ((ma & ~1) + row * w) * 2;
+    addr = ((memaddr & ~1) + row * w) * 2;
 
     if (!mda)
         dl += 512;
 
-    ma += (row * w);
+    memaddr += (row * w);
 
     if ((crtc[10] & 0x60) == 0x20)
         cursorline = 0;
     else
-        cursorline = ((crtc[10] & 0x1F) <= sc) && ((crtc[11] & 0x1F) >= sc);
+        cursorline = ((crtc[10] & 0x1F) <= scanline) && ((crtc[11] & 0x1F) >= scanline);
 
     for (int x = 0; x < w; x++) {
 #if 0
-	if ((genius->genius_charh & 0x10) && ((addr + 2 * x) > 0x0FFF))
-		chr = 0x00;
-	if ((genius->genius_charh & 0x10) && ((addr + 2 * x + 1) > 0x0FFF))
-		attr = 0x00;
+    if ((genius->genius_charh & 0x10) && ((addr + 2 * x) > 0x0FFF))
+        chr = 0x00;
+    if ((genius->genius_charh & 0x10) && ((addr + 2 * x + 1) > 0x0FFF))
+        attr = 0x00;
 #endif
         chr  = framebuf[(addr + 2 * x) & 0x3FFF];
         attr = framebuf[(addr + 2 * x + 1) & 0x3FFF];
 
-        drawcursor = ((ma == ca) && cursorline && genius->enabled && (ctrl & 8));
+        drawcursor = ((memaddr == cursoraddr) && cursorline && genius->enabled && (ctrl & 8));
 
         switch (crtc[10] & 0x60) {
             case 0x00:
@@ -465,6 +474,9 @@ genius_textline(genius_t *genius, uint8_t background, int mda, int cols80)
                 break;
             case 0x60:
                 drawcursor = drawcursor && (genius->blink & 32);
+                break;
+
+            default:
                 break;
         }
 
@@ -474,7 +486,7 @@ genius_textline(genius_t *genius, uint8_t background, int mda, int cols80)
             attr &= 0x7F;
 
         /* MDA underline */
-        if (mda && (sc == charh) && ((attr & 7) == 1)) {
+        if (mda && (scanline == charh) && ((attr & 7) == 1)) {
             col = mdaattr[attr][blink][1];
 
             if (genius->genius_control & 0x20)
@@ -491,9 +503,9 @@ genius_textline(genius_t *genius, uint8_t background, int mda, int cols80)
             }
         } else { /* Draw 8 pixels of character */
             if (mda)
-                bitmap[0] = fontdat8x12[chr][sc];
+                bitmap[0] = fontdat8x12[chr][scanline];
             else
-                bitmap[0] = fontdat[chr][sc];
+                bitmap[0] = fontdat[chr][scanline];
 
             for (c = 0; c < 8; c++) {
                 col = mdaattr[attr][blink][(bitmap[0] & (1 << (c ^ 7))) ? 1 : 0];
@@ -550,7 +562,7 @@ genius_textline(genius_t *genius, uint8_t background, int mda, int cols80)
                     }
                 }
             }
-            ++ma;
+            ++memaddr;
         }
     }
 }
@@ -721,9 +733,8 @@ genius_poll(void *priv)
     }
 }
 
-void
-    *
-    genius_init(const device_t *info)
+void *
+genius_init(UNUSED(const device_t *info))
 {
     genius_t *genius = malloc(sizeof(genius_t));
 
@@ -734,7 +745,7 @@ void
     /* 160k video RAM */
     genius->vram = malloc(0x28000);
 
-    loadfont(BIOS_ROM_PATH, 4);
+    video_load_font(BIOS_ROM_PATH, FONT_FORMAT_MDSI_GENIUS, LOAD_FONT_NO_OFFSET);
 
     timer_add(&genius->timer, genius_poll, genius, 1);
 
@@ -814,7 +825,7 @@ const device_t genius_device = {
     .init          = genius_init,
     .close         = genius_close,
     .reset         = NULL,
-    { .available = genius_available },
+    .available     = genius_available,
     .speed_changed = genius_speed_changed,
     .force_redraw  = NULL,
     .config        = NULL

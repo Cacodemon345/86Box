@@ -9,18 +9,16 @@
  *          Implementation of the IBM PS/2 SCSI controller with
  *          cache for MCA only.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          TheCollector1995, <mariogplayer@gmail.com>
  *
  *          Copyright 2020 Sarah Walker.
  *          Copyright 2020 TheCollector1995.
  */
-
 #ifndef SCSI_SPOCK_H
 #define SCSI_SPOCK_H
 
 extern const device_t spock_device;
+extern const device_t tribble_device;
 
 #endif /*SCSI_SPOCK_H*/

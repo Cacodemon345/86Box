@@ -3,8 +3,10 @@
 #define X87_TAG_INVALID 2
 #define X87_TAG_EMPTY   3
 
-extern uint32_t x87_pc_off, x87_op_off;
-extern uint16_t x87_pc_seg, x87_op_seg;
+extern uint32_t x87_pc_off;
+extern uint32_t x87_op_off;
+extern uint16_t x87_pc_seg;
+extern uint16_t x87_op_seg;
 
 static __inline void
 x87_set_mmx(void)
@@ -14,9 +16,9 @@ x87_set_mmx(void)
         fpu_state.tag = 0;
         fpu_state.tos = 0; /* reset FPU Top-Of-Stack */
     } else {
-        cpu_state.TOP   = 0;
-        p               = (uint64_t *) cpu_state.tag;
-        *p              = 0x0101010101010101ull;
+        cpu_state.TOP = 0;
+        p             = (uint64_t *) cpu_state.tag;
+        *p            = 0x0101010101010101ULL;
     }
     cpu_state.ismmx = 1;
 }
@@ -29,8 +31,8 @@ x87_emms(void)
         fpu_state.tag = 0xffff;
         fpu_state.tos = 0; /* reset FPU Top-Of-Stack */
     } else {
-        p               = (uint64_t *) cpu_state.tag;
-        *p              = 0;
+        p  = (uint64_t *) cpu_state.tag;
+        *p = 0;
     }
     cpu_state.ismmx = 0;
 }
@@ -73,12 +75,7 @@ void codegen_set_rounding_mode(int mode);
 #define FPU_SW_Denormal_Op     (0x0002)  /* denormalized operand */
 #define FPU_SW_Invalid         (0x0001)  /* invalid operation */
 
-#define C0                (1 << 8)
-#define C1                (1 << 9)
-#define C2                (1 << 10)
-#define C3                (1 << 14)
-
-#define FPU_SW_CC (C0 | C1 | C2 | C3)
+#define FPU_SW_CC (FPU_SW_C0|FPU_SW_C1|FPU_SW_C2|FPU_SW_C3)
 
 #define FPU_SW_Exceptions_Mask (0x027f)  /* status word exceptions bit mask */
 
@@ -91,22 +88,24 @@ void codegen_set_rounding_mode(int mode);
 #define FPU_EX_Invalid      (0x0001)  /* invalid operation */
 
 /* Special exceptions: */
-#define FPU_EX_Stack_Overflow    (0x0041| C1)     /* stack overflow */
+#define FPU_EX_Stack_Overflow    (0x0041|FPU_SW_C1)     /* stack overflow */
 #define FPU_EX_Stack_Underflow   (0x0041)        /* stack underflow */
 
 /* precision control */
-#define FPU_EX_Precision_Lost_Up    (EX_Precision | C1)
+#define FPU_EX_Precision_Lost_Up    (EX_Precision | SW_C1)
 #define FPU_EX_Precision_Lost_Dn    (EX_Precision)
 
 #define setcc(cc)  \
   fpu_state.swd = (fpu_state.swd & ~(FPU_SW_CC)) | ((cc) & FPU_SW_CC)
 
-#define clear_C1() { fpu_state.swd &= ~C1; }
-#define clear_C2() { fpu_state.swd &= ~C2; }
+#define clear_C1() { fpu_state.swd &= ~FPU_SW_C1; }
+#define clear_C2() { fpu_state.swd &= ~FPU_SW_C2; }
 
 /* ************ */
 /* Control Word */
 /* ************ */
+
+#define FPU_CW_Reserved_Bits    (0xe0c0)  /* reserved bits */
 
 #define FPU_CW_Inf		(0x1000)  /* infinity control, legacy */
 
@@ -134,25 +133,25 @@ void codegen_set_rounding_mode(int mode);
 #define FPU_PR_64_BITS          (0x200)
 #define FPU_PR_80_BITS          (0x300)
 
-#include "softfloat/softfloatx80.h"
+#include "softfloat3e/softfloat.h"
 
-static __inline const int
+static __inline int
 is_IA_masked(void)
 {
     return (fpu_state.cwd & FPU_CW_Invalid);
 }
 
-struct float_status_t i387cw_to_softfloat_status_word(uint16_t control_word);
-uint16_t FPU_exception(uint32_t fetchdat, uint16_t exceptions, int store);
-int FPU_status_word_flags_fpu_compare(int float_relation);
-void FPU_write_eflags_fpu_compare(int float_relation);
-void FPU_stack_overflow(uint32_t fetchdat);
-void FPU_stack_underflow(uint32_t fetchdat, int stnr, int pop_stack);
-int FPU_handle_NaN32(floatx80 a, float32 b, floatx80 *r, struct float_status_t *status);
-int FPU_handle_NaN64(floatx80 a, float64 b, floatx80 *r, struct float_status_t *status);
-int FPU_tagof(const floatx80 reg);
-uint8_t pack_FPU_TW(uint16_t twd);
-uint16_t unpack_FPU_TW(uint16_t tag_byte);
+struct softfloat_status_t i387cw_to_softfloat_status_word(uint16_t control_word);
+uint16_t              FPU_exception(uint32_t fetchdat, uint16_t exceptions, int store);
+int                   FPU_status_word_flags_fpu_compare(int float_relation);
+void                  FPU_write_eflags_fpu_compare(int float_relation);
+void                  FPU_stack_overflow(uint32_t fetchdat);
+void                  FPU_stack_underflow(uint32_t fetchdat, int stnr, int pop_stack);
+int                   FPU_handle_NaN32(extFloat80_t a, float32 b, extFloat80_t *r, struct softfloat_status_t *status);
+int                   FPU_handle_NaN64(extFloat80_t a, float64 b, extFloat80_t *r, struct softfloat_status_t *status);
+int                   FPU_tagof(const extFloat80_t reg);
+uint8_t               pack_FPU_TW(uint16_t twd);
+uint16_t              unpack_FPU_TW(uint16_t tag_byte);
 
 static __inline uint16_t
 i387_get_control_word(void)
@@ -179,7 +178,7 @@ static __inline void
 FPU_settagi_valid(int stnr)
 {
     int regnr = (stnr + fpu_state.tos) & 7;
-    fpu_state.tag &= ~(3 << (regnr * 2));     // FPU_Tag_Valid == '00
+    fpu_state.tag &= ~(3 << (regnr * 2)); // FPU_Tag_Valid == '00
 }
 
 static __inline void
@@ -199,11 +198,11 @@ FPU_push(void)
 static __inline void
 FPU_pop(void)
 {
-    fpu_state.tag |= 3 << (fpu_state.tos * 2);
+    fpu_state.tag |= (3 << (fpu_state.tos * 2));
     fpu_state.tos = (fpu_state.tos + 1) & 7;
 }
 
-static __inline floatx80
+static __inline extFloat80_t
 FPU_read_regi(int stnr)
 {
     return fpu_state.st_space[(stnr + fpu_state.tos) & 7];
@@ -213,29 +212,26 @@ FPU_read_regi(int stnr)
 // instructions like FNSAVE, and they update tag word to its
 // real value anyway
 static __inline void
-FPU_save_regi(floatx80 reg, int stnr)
+FPU_save_regi(extFloat80_t reg, int stnr)
 {
     fpu_state.st_space[(stnr + fpu_state.tos) & 7] = reg;
     FPU_settagi_valid(stnr);
 }
 
 static __inline void
-FPU_save_regi_tag(floatx80 reg, int tag, int stnr)
+FPU_save_regi_tag(extFloat80_t reg, int tag, int stnr)
 {
     fpu_state.st_space[(stnr + fpu_state.tos) & 7] = reg;
     FPU_settagi(tag, stnr);
 }
 
-
-#define FPU_check_pending_exceptions() \
-do { \
-    if (fpu_state.swd & FPU_SW_Summary) { \
-        if (cr0 & 0x20) { \
-            x86_int(16); \
-            return 1; \
-        } else { \
-            picint(1 << 13); \
-            return 1; \
-        } \
-    } \
-} while (0)
+#define FPU_check_pending_exceptions()        \
+    do {                                      \
+        if (fpu_state.swd & FPU_SW_Summary) { \
+            if (cr0 & 0x20)                   \
+                new_ne = 1;                   \
+            else                              \
+                picint(1 << 13);              \
+            return 1;                         \
+        }                                     \
+    } while (0)

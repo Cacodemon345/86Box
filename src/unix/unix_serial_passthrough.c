@@ -1,28 +1,30 @@
 /*
- * 86Box        A hypervisor and IBM PC system emulator that specializes in
- *              running old operating systems and software designed for IBM
- *              PC systems and compatibles from 1981 through fairly recent
- *              system designs based on the PCI bus.
+ * 86Box    A hypervisor and IBM PC system emulator that specializes in
+ *          running old operating systems and software designed for IBM
+ *          PC systems and compatibles from 1981 through fairly recent
+ *          system designs based on the PCI bus.
  *
- *              This file is part of the 86Box distribution.
+ *          This file is part of the 86Box distribution.
  *
- *              Definitions for platform specific serial to host passthrough
+ *          Definitions for platform specific serial to host passthrough
  *
+ * Authors: Andreas J. Reichel <webmaster@6th-dimension.com>,
+ *          Jasmine Iwanek <jasmine@iwanek.co.uk>
  *
- * Authors:     Andreas J. Reichel <webmaster@6th-dimension.com>,
- *              Jasmine Iwanek <jasmine@iwanek.co.uk>
- *
- *              Copyright 2021      Andreas J. Reichel.
- *              Copyright 2021-2022 Jasmine Iwanek.
+ *          Copyright 2021      Andreas J. Reichel.
+ *          Copyright 2021-2025 Jasmine Iwanek.
  */
-
 #ifndef __APPLE__
 #    define _XOPEN_SOURCE   500
 #    define _DEFAULT_SOURCE 1
 #    define _BSD_SOURCE     1
 #endif
 #if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__)
-#    define __BSD_VISIBLE   1
+#    define __BSD_VISIBLE 1
+#endif
+#ifdef __NetBSD__
+#    define _NETBSD_VISIBLE 1
+#    define _NETBSD_SOURCE 1
 #endif
 #include <stdio.h>
 #include <fcntl.h>
@@ -32,6 +34,7 @@
 #include <sys/select.h>
 #include <stdint.h>
 #include <sys/select.h>
+#include <sys/ioctl.h>
 
 #include <86box/86box.h>
 #include <86box/log.h>
@@ -44,17 +47,51 @@
 
 #define LOG_PREFIX "serial_passthrough: "
 
-int
-plat_serpt_read(void *p, uint8_t *data)
+void
+plat_serpt_set_line_state(void *priv)
 {
-    serial_passthrough_t *dev = (serial_passthrough_t *) p;
+    serial_passthrough_t *dev = (serial_passthrough_t *) priv;
+    int setstate = 0, clrstate = 0, curstate = 0;
+    if (dev->mode != SERPT_MODE_HOSTSER)
+        return;
+    
+    if (dev->serial->lcr & (1 << 6)) {
+        tcsendbreak(dev->master_fd, 0);
+    }
+
+    ioctl(dev->master_fd, TIOCMGET, &curstate);
+
+    clrstate |= !(dev->serial->mctrl & 1) ? TIOCM_DTR : 0;
+    clrstate |= !(dev->serial->mctrl & 2) ? TIOCM_RTS : 0;
+
+    setstate |= (dev->serial->mctrl & 1) ? TIOCM_DTR : 0;
+    setstate |= (dev->serial->mctrl & 2) ? TIOCM_RTS : 0;
+
+    ioctl(dev->master_fd, TIOCMBIS, &setstate);
+    ioctl(dev->master_fd, TIOCMBIC, &clrstate);
+
+    serial_set_cts(dev->serial, !!(curstate & TIOCM_CTS));
+    serial_set_dcd(dev->serial, !!(curstate & TIOCM_CAR));
+    serial_set_dsr(dev->serial, !!(curstate & TIOCM_DSR));
+    serial_set_ri(dev->serial, !!(curstate & TIOCM_RI));
+}
+
+int
+plat_serpt_read(void *priv, uint8_t *data)
+{
+    serial_passthrough_t *dev = (serial_passthrough_t *) priv;
     int                   res;
     struct timeval        tv;
     fd_set                rdfds;
 
     switch (dev->mode) {
+        case SERPT_MODE_HOSTSER: {
+            if (read(dev->master_fd, data, 1) > 0) {
+                return 1;
+            }
+            return 0;
+        }
         case SERPT_MODE_VCON:
-        case SERPT_MODE_HOSTSER:
             FD_ZERO(&rdfds);
             FD_SET(dev->master_fd, &rdfds);
             tv.tv_sec  = 0;
@@ -76,9 +113,9 @@ plat_serpt_read(void *p, uint8_t *data)
 }
 
 void
-plat_serpt_close(void *p)
+plat_serpt_close(void *priv)
 {
-    serial_passthrough_t *dev = (serial_passthrough_t *) p;
+    serial_passthrough_t *dev = (serial_passthrough_t *) priv;
 
     if (dev->mode == SERPT_MODE_HOSTSER) {
         tcsetattr(dev->master_fd, TCSANOW, (struct termios *) dev->backend_priv);
@@ -94,6 +131,7 @@ plat_serpt_write_vcon(serial_passthrough_t *dev, uint8_t data)
     fd_set wrfds;
     int    res;
 #endif
+    size_t res;
 
     /* We cannot use select here, this would block the hypervisor! */
 #if 0
@@ -109,18 +147,17 @@ plat_serpt_write_vcon(serial_passthrough_t *dev, uint8_t data)
 
     /* just write it out */
     if (dev->mode == SERPT_MODE_HOSTSER) {
-        int res = 0;
         do {
             res = write(dev->master_fd, &data, 1);
-        } while (res == 0 || (res == -1 && (errno == EAGAIN || res == EWOULDBLOCK)));
+        } while (res == 0 || (res == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)));
     } else
-        write(dev->master_fd, &data, 1);
+        res = write(dev->master_fd, &data, 1);
 }
 
 void
-plat_serpt_set_params(void *p)
+plat_serpt_set_params(void *priv)
 {
-    serial_passthrough_t *dev = (serial_passthrough_t *) p;
+    serial_passthrough_t *dev = (serial_passthrough_t *) priv;
 
     if (dev->mode == SERPT_MODE_HOSTSER) {
         struct termios term_attr;
@@ -146,10 +183,13 @@ plat_serpt_set_params(void *p)
         BAUDRATE_RANGE(dev->baudrate, 9600, 19200, B9600);
         BAUDRATE_RANGE(dev->baudrate, 19200, 38400, B19200);
         BAUDRATE_RANGE(dev->baudrate, 38400, 57600, B38400);
+#ifndef __NetBSD__
+	/* nonexistent on NetBSD */
         BAUDRATE_RANGE(dev->baudrate, 57600, 115200, B57600);
         BAUDRATE_RANGE(dev->baudrate, 115200, 0xFFFFFFFF, B115200);
+#endif
 
-        term_attr.c_cflag &= CSIZE;
+        term_attr.c_cflag &= ~CSIZE;
         switch (dev->data_bits) {
             case 8:
             default:
@@ -165,13 +205,13 @@ plat_serpt_set_params(void *p)
                 term_attr.c_cflag |= CS5;
                 break;
         }
-        term_attr.c_cflag &= CSTOPB;
+        term_attr.c_cflag &= ~CSTOPB;
         if (dev->serial->lcr & 0x04)
             term_attr.c_cflag |= CSTOPB;
 #if !defined(__linux__)
-        term_attr.c_cflag &= PARENB | PARODD;
+        term_attr.c_cflag &= ~(PARENB | PARODD);
 #else
-        term_attr.c_cflag &= PARENB | PARODD | CMSPAR;
+        term_attr.c_cflag &= ~(PARENB | PARODD | CMSPAR);
 #endif
         if (dev->serial->lcr & 0x08) {
             term_attr.c_cflag |= PARENB;
@@ -182,15 +222,16 @@ plat_serpt_set_params(void *p)
                 term_attr.c_cflag |= CMSPAR;
 #endif
         }
+        term_attr.c_iflag &= ~(IXON | IXOFF);
         tcsetattr(dev->master_fd, TCSANOW, &term_attr);
 #undef BAUDRATE_RANGE
     }
 }
 
 void
-plat_serpt_write(void *p, uint8_t data)
+plat_serpt_write(void *priv, uint8_t data)
 {
-    serial_passthrough_t *dev = (serial_passthrough_t *) p;
+    serial_passthrough_t *dev = (serial_passthrough_t *) priv;
 
     switch (dev->mode) {
         case SERPT_MODE_VCON:
@@ -297,20 +338,18 @@ open_host_serial_port(serial_passthrough_t *dev)
 }
 
 int
-plat_serpt_open_device(void *p)
+plat_serpt_open_device(void *priv)
 {
-    serial_passthrough_t *dev = (serial_passthrough_t *) p;
+    serial_passthrough_t *dev = (serial_passthrough_t *) priv;
 
     switch (dev->mode) {
         case SERPT_MODE_VCON:
-            if (!open_pseudo_terminal(dev)) {
+            if (!open_pseudo_terminal(dev))
                 return 1;
-            }
             break;
         case SERPT_MODE_HOSTSER:
-            if (!open_host_serial_port(dev)) {
+            if (!open_host_serial_port(dev))
                 return 1;
-            }
             break;
         default:
             break;

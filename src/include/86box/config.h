@@ -8,16 +8,16 @@
  *
  *          Configuration file handler header.
  *
- *
- *
  * Authors: Sarah Walker,
  *          Miran Grca, <mgrca8@gmail.com>
  *          Fred N. van Kempen, <decwiz@yahoo.com>
  *          Overdoze,
+ *          Jasmine Iwanek, <jriwanek@gmail.com>
  *
  *          Copyright 2008-2017 Sarah Walker.
  *          Copyright 2016-2017 Miran Grca.
  *          Copyright 2017 Fred N. van Kempen.
+ *          Copyright 2021-2025 Jasmine Iwanek.
  */
 #ifndef EMU_CONFIG_H
 #define EMU_CONFIG_H
@@ -28,21 +28,21 @@ extern "C" {
 
 #if 0
 typedef struct storage_cfg_t {
-    uint8_t     id;
-    uint8_t bus_type;    /* Bus type: IDE, SCSI, etc. */
-    uint8_t bus, : 4;    /* ID of the bus (for example, for IDE,
+    uint8_t id;
+    uint8_t bus_type;   /* Bus type: IDE, SCSI, etc. */
+    uint8_t bus    : 4; /* ID of the bus (for example, for IDE,
                             0 = primary, 1 = secondary, etc. */
-    uint8_t bus_id, : 4; /* ID of the device on the bus */
-    uint8_t type;        /* Type flags, interpretation depends
-                            on the device */
-    uint8_t is_image;    /* This is only used for CD-ROM:
+    uint8_t bus_id : 4; /* ID of the device on the bus */
+    uint8_t type;       /* Type flags, interpretation depends
+                           on the device */
+    uint8_t is_image;   /* This is only used for CD-ROM:
                             0 = Image;
                             1 = Host drive */
 
-    wchar_t path[1024];  /* Name of current image file or
+    wchar_t path[1024]; /* Name of current image file or
                             host drive */
 
-    uint32_t spt;        /* Physical geometry parameters */
+    uint32_t spt;       /* Physical geometry parameters */
     uint32_t hpc;
     uint32_t tracks;
 } storage_cfg_t;
@@ -111,15 +111,18 @@ typedef struct config_t {
 #    ifdef USE_SERIAL_DEVICES
     char serial_devices[SERIAL_MAX][32];     /* Serial device names */
 #    endif
+    char gameport_devices[GAMEPORT_MAX][32]; /* gameport device names */
 
     /* Other peripherals category */
-    int fdc_type;                 /* Floppy disk controller type */
+    int fdc_current[FDC_MAX];     /* Floppy disk controller type */
+    int hdc_current[HDC_MAX];     /* Hard disk controller type */
     int hdc;                      /* Hard disk controller */
     int scsi_card;                /* SCSI controller */
     int ide_ter_enabled;          /* Tertiary IDE controller enabled */
     int ide_qua_enabled;          /* Quaternary IDE controller enabled */
     int bugger_enabled;           /* ISA bugger device enabled */
     int isa_rtc_type;             /* ISA RTC card */
+    int isa_rom_type[ISAROM_MAX]; /* ISA ROM boards */
     int isa_mem_type[ISAMEM_MAX]; /* ISA memory boards */
 
     /* Hard disks category */
@@ -130,11 +133,13 @@ typedef struct config_t {
 
     /* Other removable devices category */
     storage_cfg_t cdrom[CDROM_NUM]; /* CD-ROM drives */
-    storage_cfg_t rdisk[ZIP_NUM];   /* Removable disk drives */
+    storage_cfg_t rdisk[RDISK_NUM]; /* Removable disk drives */
 } config_t;
 #endif
 
+extern void config_load_global(void);
 extern void config_load(void);
+extern void config_save_global(void);
 extern void config_save(void);
 
 #ifdef EMU_INI_H

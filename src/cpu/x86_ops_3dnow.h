@@ -20,7 +20,7 @@ opPREFETCH_a32(uint32_t fetchdat)
 }
 
 static int
-opFEMMS(uint32_t fetchdat)
+opFEMMS(UNUSED(uint32_t fetchdat))
 {
     ILLEGAL_ON(!cpu_has_feature(CPU_FEATURE_MMX));
     if (cr0 & 0xc) {
@@ -33,9 +33,9 @@ opFEMMS(uint32_t fetchdat)
 }
 
 static int
-opPAVGUSB(uint32_t fetchdat)
+opPAVGUSB(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -54,9 +54,9 @@ opPAVGUSB(uint32_t fetchdat)
     return 0;
 }
 static int
-opPF2ID(uint32_t fetchdat)
+opPF2ID(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -69,9 +69,9 @@ opPF2ID(uint32_t fetchdat)
     return 0;
 }
 static int
-opPF2IW(uint32_t fetchdat)
+opPF2IW(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -84,11 +84,11 @@ opPF2IW(uint32_t fetchdat)
     return 0;
 }
 static int
-opPFACC(uint32_t fetchdat)
+opPFACC(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
-    float   tempf;
+    float    tempf;
 
     MMX_GETSRC();
 
@@ -101,11 +101,11 @@ opPFACC(uint32_t fetchdat)
     return 0;
 }
 static int
-opPFNACC(uint32_t fetchdat)
+opPFNACC(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
-    float   tempf;
+    float    tempf;
 
     MMX_GETSRC();
 
@@ -118,11 +118,11 @@ opPFNACC(uint32_t fetchdat)
     return 0;
 }
 static int
-opPFPNACC(uint32_t fetchdat)
+opPFPNACC(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
-    float   tempf;
+    float    tempf;
 
     MMX_GETSRC();
 
@@ -135,11 +135,12 @@ opPFPNACC(uint32_t fetchdat)
     return 0;
 }
 static int
-opPSWAPD(uint32_t fetchdat)
+opPSWAPD(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
-    float   tempf, tempf2;
+    float    tempf;
+    float    tempf2;
 
     MMX_GETSRC();
 
@@ -154,9 +155,9 @@ opPSWAPD(uint32_t fetchdat)
     return 0;
 }
 static int
-opPFADD(uint32_t fetchdat)
+opPFADD(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -169,9 +170,9 @@ opPFADD(uint32_t fetchdat)
     return 0;
 }
 static int
-opPFCMPEQ(uint32_t fetchdat)
+opPFCMPEQ(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -184,9 +185,9 @@ opPFCMPEQ(uint32_t fetchdat)
     return 0;
 }
 static int
-opPFCMPGE(uint32_t fetchdat)
+opPFCMPGE(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -199,9 +200,9 @@ opPFCMPGE(uint32_t fetchdat)
     return 0;
 }
 static int
-opPFCMPGT(uint32_t fetchdat)
+opPFCMPGT(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -214,9 +215,9 @@ opPFCMPGT(uint32_t fetchdat)
     return 0;
 }
 static int
-opPFMAX(uint32_t fetchdat)
+opPFMAX(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -231,9 +232,9 @@ opPFMAX(uint32_t fetchdat)
     return 0;
 }
 static int
-opPFMIN(uint32_t fetchdat)
+opPFMIN(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -248,9 +249,9 @@ opPFMIN(uint32_t fetchdat)
     return 0;
 }
 static int
-opPFMUL(uint32_t fetchdat)
+opPFMUL(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -263,7 +264,7 @@ opPFMUL(uint32_t fetchdat)
     return 0;
 }
 static int
-opPFRCP(uint32_t fetchdat)
+opPFRCP(UNUSED(uint32_t fetchdat))
 {
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
@@ -292,9 +293,9 @@ opPFRCP(uint32_t fetchdat)
 }
 /*Since opPFRCP() calculates a full precision reciprocal, treat the followup iterations as MOVs*/
 static int
-opPFRCPIT1(uint32_t fetchdat)
+opPFRCPIT1(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -307,9 +308,9 @@ opPFRCPIT1(uint32_t fetchdat)
     return 0;
 }
 static int
-opPFRCPIT2(uint32_t fetchdat)
+opPFRCPIT2(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -322,7 +323,7 @@ opPFRCPIT2(uint32_t fetchdat)
     return 0;
 }
 static int
-opPFRSQRT(uint32_t fetchdat)
+opPFRSQRT(UNUSED(uint32_t fetchdat))
 {
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
@@ -351,7 +352,7 @@ opPFRSQRT(uint32_t fetchdat)
 }
 /*Since opPFRSQRT() calculates a full precision inverse square root, treat the followup iteration as a NOP*/
 static int
-opPFRSQIT1(uint32_t fetchdat)
+opPFRSQIT1(UNUSED(uint32_t fetchdat))
 {
     MMX_REG src;
 
@@ -361,9 +362,9 @@ opPFRSQIT1(uint32_t fetchdat)
     return 0;
 }
 static int
-opPFSUB(uint32_t fetchdat)
+opPFSUB(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -376,9 +377,9 @@ opPFSUB(uint32_t fetchdat)
     return 0;
 }
 static int
-opPFSUBR(uint32_t fetchdat)
+opPFSUBR(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -391,9 +392,9 @@ opPFSUBR(uint32_t fetchdat)
     return 0;
 }
 static int
-opPI2FD(uint32_t fetchdat)
+opPI2FD(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -406,9 +407,9 @@ opPI2FD(uint32_t fetchdat)
     return 0;
 }
 static int
-opPI2FW(uint32_t fetchdat)
+opPI2FW(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     MMX_GETSRC();
@@ -421,9 +422,9 @@ opPI2FW(uint32_t fetchdat)
     return 0;
 }
 static int
-opPMULHRW(uint32_t fetchdat)
+opPMULHRW(UNUSED(uint32_t fetchdat))
 {
-    MMX_REG src;
+    MMX_REG  src;
     MMX_REG *dst = MMX_GETREGP(cpu_reg);
 
     if (cpu_mod == 3) {

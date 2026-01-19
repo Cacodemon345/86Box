@@ -8,8 +8,6 @@
  *
  *          GDB stub server for remote debugging.
  *
- *
- *
  * Authors: RichardG, <richardg867@gmail.com>
  *
  *          Copyright 2022 RichardG.
@@ -40,6 +38,7 @@
 #include <86box/86box.h>
 #include "cpu.h"
 #include "x86seg.h"
+#include "x87_sf.h"
 #include "x87.h"
 #include "x87_ops_conv.h"
 #include <86box/io.h>
@@ -75,8 +74,10 @@ enum {
     GDB_REG_ES,
     GDB_REG_FS,
     GDB_REG_GS,
+#if 0
     GDB_REG_FS_BASE,
     GDB_REG_GS_BASE,
+#endif
     GDB_REG_CR0,
     GDB_REG_CR2,
     GDB_REG_CR3,
@@ -220,8 +221,10 @@ static char      target_xml[]   = /* QEMU gdb-xml/i386-32bit.xml with modificati
             "<reg name=\"fs\" bitsize=\"16\" type=\"int32\"/>"
             "<reg name=\"gs\" bitsize=\"16\" type=\"int32\"/>"
             ""
+#if 0
             "<reg name=\"fs_base\" bitsize=\"32\" type=\"int32\"/>"
             "<reg name=\"gs_base\" bitsize=\"32\" type=\"int32\"/>"
+#endif
             ""
             "<flags id=\"i386_cr0\" size=\"4\">"
                 "<field name=\"PG\" start=\"31\" end=\"31\"/>"
@@ -339,7 +342,7 @@ static gdbstub_client_t *first_client = NULL;
 static gdbstub_client_t *last_client = NULL;
 static mutex_t          *client_list_mutex;
 
-static void (*cpu_exec_shadow)(int cycs);
+static void (*cpu_exec_shadow)(int32_t cycs);
 static gdbstub_breakpoint_t *first_swbreak = NULL;
 static gdbstub_breakpoint_t *first_hwbreak = NULL;
 static gdbstub_breakpoint_t *first_rwatch = NULL;
@@ -361,13 +364,7 @@ gdbstub_break(void)
 static void
 gdbstub_jump(uint32_t new_pc)
 {
-    /* Nasty hack; qemu always uses the full 32-bit EIP internally... */
-    if (cpu_state.op32 || ((new_pc >= cs) && (new_pc < (cs + 65536)))) {
-        cpu_state.pc = new_pc - cs;
-    } else {
-        loadseg((new_pc >> 4) & 0xf000, &cpu_state.seg_cs);
-        cpu_state.pc = new_pc & 0xffff;
-    }
+    cpu_state.pc = new_pc - cs;
     flushmmucache();
 }
 
@@ -536,8 +533,8 @@ gdbstub_client_write_reg(int index, uint8_t *buf)
             break;
 
         case GDB_REG_EFLAGS:
-            cpu_state.flags  = *((uint16_t *) &buf[0]);
-            cpu_state.eflags = *((uint16_t *) &buf[2]);
+            cpu_state.flags  = AS_U16(buf[0]);
+            cpu_state.eflags = AS_U16(buf[2]);
             break;
 
         case GDB_REG_CS ... GDB_REG_GS:
@@ -546,10 +543,12 @@ gdbstub_client_write_reg(int index, uint8_t *buf)
             flushmmucache();
             break;
 
+#if 0
         case GDB_REG_FS_BASE ... GDB_REG_GS_BASE:
             /* Do what qemu does and just load the base. */
             segment_regs[(index - 16) + (GDB_REG_FS - GDB_REG_CS)]->base = *((uint32_t *) buf);
             break;
+#endif
 
         case GDB_REG_CR0 ... GDB_REG_CR4:
             *cr_regs[index - GDB_REG_CR0] = *((uint32_t *) buf);
@@ -563,8 +562,8 @@ gdbstub_client_write_reg(int index, uint8_t *buf)
         case GDB_REG_ST0 ... GDB_REG_ST7:
             width           = 10;
             x87_conv_t conv = {
-                .eind  = { .ll = *((uint64_t *) &buf[0]) },
-                .begin = *((uint16_t *) &buf[8])
+                .eind  = { .ll = AS_U64(buf[0]) },
+                .begin = AS_U16(buf[8])
             };
             cpu_state.ST[(cpu_state.TOP + (index - GDB_REG_ST0)) & 7] = x87_from80(&conv);
             break;
@@ -625,10 +624,10 @@ gdbstub_client_respond(gdbstub_client_t *client)
     /* Send response packet. */
     client->response[client->response_pos] = '\0';
 #ifdef ENABLE_GDBSTUB_LOG
-    i                     = client->response[995]; /* pclog_ex buffer too small */
-    client->response[995] = '\0';
+    i                     = client->response[994]; /* pclog_ex buffer too small */
+    client->response[994] = '\0';
     gdbstub_log("GDB Stub: Sending response: %s\n", client->response);
-    client->response[995] = i;
+    client->response[994] = i;
 #endif
     send(client->socket, "$", 1, 0);
     send(client->socket, client->response, client->response_pos, 0);
@@ -670,17 +669,19 @@ gdbstub_client_read_reg(int index, uint8_t *buf)
             break;
 
         case GDB_REG_EFLAGS:
-            *((uint16_t *) &buf[0]) = cpu_state.flags;
-            *((uint16_t *) &buf[2]) = cpu_state.eflags;
+            AS_U16(buf[0]) = cpu_state.flags;
+            AS_U16(buf[2]) = cpu_state.eflags;
             break;
 
         case GDB_REG_CS ... GDB_REG_GS:
             *((uint16_t *) buf) = segment_regs[index - GDB_REG_CS]->seg;
             break;
 
+#if 0
         case GDB_REG_FS_BASE ... GDB_REG_GS_BASE:
             *((uint32_t *) buf) = segment_regs[(index - 16) + (GDB_REG_FS - GDB_REG_CS)]->base;
             break;
+#endif
 
         case GDB_REG_CR0 ... GDB_REG_CR4:
             *((uint32_t *) buf) = *cr_regs[index - GDB_REG_CR0];
@@ -694,8 +695,8 @@ gdbstub_client_read_reg(int index, uint8_t *buf)
             width = 10;
             x87_conv_t conv;
             x87_to80(cpu_state.ST[(cpu_state.TOP + (index - GDB_REG_ST0)) & 7], &conv);
-            *((uint64_t *) &buf[0]) = conv.eind.ll;
-            *((uint16_t *) &buf[8]) = conv.begin;
+            AS_U64(buf[0]) = conv.eind.ll;
+            AS_U16(buf[8]) = conv.begin;
             break;
 
         case GDB_REG_FCTRL ... GDB_REG_FSTAT:
@@ -754,7 +755,7 @@ gdbstub_client_packet(gdbstub_client_t *client)
 #ifdef GDBSTUB_CHECK_CHECKSUM
     gdbstub_client_read_hex(client, &rcv_checksum, 1);
 #endif
-    *((uint16_t *) &client->packet[--client->packet_pos]) = 0;
+    AS_U16(client->packet[--client->packet_pos]) = 0;
 #ifdef GDBSTUB_CHECK_CHECKSUM
     for (i = 0; i < client->packet_pos; i++)
         checksum += client->packet[i];
@@ -878,6 +879,7 @@ e22:
 
             /* Read by qwords, then by dwords, then by words, then by bytes. */
             i = 0;
+            cpl_override = 1;
             if (is386) {
                 for (; i < (k & ~7); i += 8) {
                     *((uint64_t *) buf) = readmemql(j);
@@ -899,6 +901,7 @@ e22:
                 buf[0] = readmembl(j++);
                 gdbstub_client_respond_hex(client, buf, 1);
             }
+            cpl_override = 0;
             break;
 
         case 'M': /* write memory */
@@ -933,6 +936,7 @@ e22:
             /* Write by qwords, then by dwords, then by words, then by bytes. */
             p = client->packet;
             i = 0;
+            cpl_override = 1;
             if (is386) {
                 for (; i < (k & ~7); i += 8) {
                     writememql(j, *((uint64_t *) p));
@@ -954,6 +958,7 @@ e22:
                 writemembl(j++, p[0]);
                 p++;
             }
+            cpl_override = 0;
 
             /* Respond positively. */
             goto ok;
@@ -1015,13 +1020,8 @@ e14:
 
                 /* Add our supported features to the end. */
                 if (client->response_pos < (sizeof(client->response) - 1))
-#if (defined __amd64__ || defined _M_X64 || defined __aarch64__ || defined _M_ARM64)
                     client->response_pos += snprintf(&client->response[client->response_pos], sizeof(client->response) - client->response_pos,
-                                                     "PacketSize=%lX;swbreak+;hwbreak+;qXfer:features:read+", sizeof(client->packet) - 1);
-#else
-                    client->response_pos += snprintf(&client->response[client->response_pos], sizeof(client->response) - client->response_pos,
-                                                     "PacketSize=%X;swbreak+;hwbreak+;qXfer:features:read+", sizeof(client->packet) - 1);
-#endif
+                                                     "PacketSize=%X;swbreak+;hwbreak+;qXfer:features:read+", (int) (sizeof(client->packet) - 1));
                 break;
             } else if (!strcmp(client->response, "Xfer")) {
                 /* Read the transfer object. */
@@ -1097,7 +1097,7 @@ e00:
             } else if (!strcmp(client->response, "C")) {
                 FAST_RESPONSE("QC1");
             } else if (!strcmp(client->response, "fThreadInfo")) {
-                FAST_RESPONSE("m 1");
+                FAST_RESPONSE("m1");
             } else if (!strcmp(client->response, "sThreadInfo")) {
                 FAST_RESPONSE("l");
             } else if (!strcmp(client->response, "Rcmd")) {
@@ -1345,7 +1345,7 @@ unknown:
                         /* Flag this watchpoint's corresponding pages as having a watchpoint. */
                         k = (breakpoint->end - 1) >> MEM_GRANULARITY_BITS;
                         for (i = breakpoint->addr >> MEM_GRANULARITY_BITS; i <= k; i++)
-                            gdbstub_watch_pages[i >> 6] |= (1 << (i & 63));
+                            gdbstub_watch_pages[i >> 6] |= (1ULL << (i & 63));
 
                         breakpoint = breakpoint->next;
                     } else {
@@ -1370,7 +1370,7 @@ end:
 }
 
 static void
-gdbstub_cpu_exec(int cycs)
+gdbstub_cpu_exec(int32_t cycs)
 {
     /* Flag that we're now in the debugger context to avoid triggering watchpoints. */
     in_gdbstub = 1;
@@ -1515,6 +1515,7 @@ gdbstub_client_thread(void *priv)
                 case '$': /* packet start */
                     /* Wait for any existing packets to be processed. */
                     thread_wait_event(client->processed_event, -1);
+                    thread_set_event(client->processed_event);
 
                     client->packet_pos = 0;
                     break;
@@ -1532,6 +1533,7 @@ gdbstub_client_thread(void *priv)
                 case 0x03: /* break */
                     /* Wait for any existing packets to be processed. */
                     thread_wait_event(client->processed_event, -1);
+                    thread_set_event(client->processed_event);
 
                     /* Break immediately. */
                     gdbstub_log("GDB Stub: Break requested\n");
@@ -1541,6 +1543,7 @@ gdbstub_client_thread(void *priv)
                 default:
                     /* Wait for any existing packets to be processed, just in case. */
                     thread_wait_event(client->processed_event, -1);
+                    thread_set_event(client->processed_event);
 
                     if (client->packet_pos < (sizeof(client->packet) - 1)) {
                         /* Append byte to the packet. */
@@ -1749,8 +1752,10 @@ gdbstub_mem_access(uint32_t *addrs, int access)
         if (watchpoint) {
             /* Check if any component of this address is within the breakpoint's range. */
             for (i = 0; i < width; i++) {
-                if ((addrs[i] >= watchpoint->addr) && (addrs[i] < watchpoint->end))
+                if ((addrs[i] >= watchpoint->addr) && (addrs[i] < watchpoint->end)) {
+                    watch_addr = addrs[i];
                     break;
+                }
             }
             if (i < width) {
                 gdbstub_log("GDB Stub: %s watchpoint at %08X\n", (access & GDBSTUB_MEM_AWATCH) ? "Access" : ((access & GDBSTUB_MEM_WRITE) ? "Write" : "Read"), watch_addr);
@@ -1787,6 +1792,24 @@ gdbstub_init(void)
         pclog("GDB Stub: Failed to create socket\n");
         return;
     }
+
+    int yes = 1;
+    if (setsockopt(gdbstub_socket, SOL_SOCKET, SO_REUSEADDR,
+#ifdef _WIN32
+                   (const char *) &yes,
+#else
+                   &yes,
+#endif
+                   sizeof(yes)) == -1) {
+        pclog("GDB Stub: setsockopt SO_REUSEADDR failed\n");
+        return;
+    }
+
+#ifdef _WIN32
+    if (setsockopt(gdbstub_socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &yes, sizeof(yes)) == -1) {
+        pclog("GDB Stub: setsockopt SO_EXCLUSIVEADDRUSE failed\n");
+    }
+#endif
 
     /* Bind GDB server socket. */
     int                port      = 12345;

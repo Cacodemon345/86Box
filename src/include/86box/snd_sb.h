@@ -11,11 +11,12 @@
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          Miran Grca, <mgrca8@gmail.com>
  *          TheCollector1995, <mariogplayer@gmail.com>
+ *          Jasmine Iwanek, <jriwanek@gmail.com>
  *
  *          Copyright 2008-2018 Sarah Walker.
  *          Copyright 2016-2018 Miran Grca.
+ *          Copyright 2024-2025 Jasmine Iwanek.
  */
-
 #ifndef SOUND_SND_SB_H
 #define SOUND_SND_SB_H
 
@@ -25,15 +26,22 @@
 #include <86box/snd_opl.h>
 #include <86box/snd_sb_dsp.h>
 
-#define SADLIB  1 /* No DSP */
-#define SB1     2 /* DSP v1.05 */
-#define SB15    3 /* DSP v2.00 */
-#define SB2     4 /* DSP v2.01 - needed for high-speed DMA */
-#define SBPRO   5 /* DSP v3.00 */
-#define SBPRO2  6 /* DSP v3.02 + OPL3 */
-#define SB16    7 /* DSP v4.05 + OPL3 */
-#define SBAWE32 8 /* DSP v4.13 + OPL3 */
-#define SBAWE64 9 /* DSP v4.16 + OPL3 */
+enum {
+    SADLIB  = 1,     /* No DSP */
+    SB_DSP_105,      /* DSP v1.05, Original CT1320 (Also known as CT1310) */
+    SB_DSP_200,      /* DSP v2.00 */
+    SB_DSP_201,      /* DSP v2.01 - needed for high-speed DMA, Seen on CT1350B with CT1336 */
+    SB_DSP_202,      /* DSP v2.02 - Seen on CT1350B with CT1336A */
+    SBPRO_DSP_300,   /* DSP v3.00 */
+    SBPRO2_DSP_302,  /* DSP v3.02 + OPL3 */
+    SB16_DSP_404,    /* DSP v4.05 + OPL3 */
+    SB16_DSP_405,    /* DSP v4.05 + OPL3 */
+    SB16_DSP_406,    /* DSP v4.06 + OPL3 */
+    SB16_DSP_411,    /* DSP v4.11 + OPL3 */
+    SBAWE32_DSP_412, /* DSP v4.12 + OPL3 */
+    SBAWE32_DSP_413, /* DSP v4.13 + OPL3 */
+    SBAWE64_DSP_416  /* DSP v4.16 + OPL3 */
+};
 
 /* SB 2.0 CD version */
 typedef struct sb_ct1335_mixer_t {
@@ -71,7 +79,6 @@ typedef struct sb_ct1345_mixer_t {
 
     uint8_t index;
     uint8_t regs[256];
-
 } sb_ct1345_mixer_t;
 
 /* SB16 and AWE32 */
@@ -124,6 +131,43 @@ typedef struct sb_ct1745_mixer_t {
     int output_filter; /* for clones */
 } sb_ct1745_mixer_t;
 
+/* ESS AudioDrive */
+typedef struct ess_mixer_t {
+    double master_l;
+    double master_r;
+    double voice_l;
+    double voice_r;
+    double fm_l;
+    double fm_r;
+    double cd_l;
+    double cd_r;
+    double line_l;
+    double line_r;
+    double mic_l;
+    double mic_r;
+    double auxb_l;
+    double auxb_r;
+    double speaker;
+    /*see sb_ct1745_mixer for values for input selector*/
+    int32_t input_selector;
+    /* extra values for input selector */
+    #define INPUT_MIXER_L 128
+    #define INPUT_MIXER_R 256
+
+    int input_filter;
+    int in_filter_freq;
+    int output_filter;
+
+    int stereo;
+    int stereo_isleft;
+
+    uint8_t index;
+    uint8_t regs[256];
+
+    uint8_t ess_id_str[4];
+    uint8_t ess_id_str_pos;
+} ess_mixer_t;
+
 typedef struct sb_t {
     uint8_t  cms_enabled;
     uint8_t  opl_enabled;
@@ -136,34 +180,50 @@ typedef struct sb_t {
         sb_ct1335_mixer_t mixer_sb2;
         sb_ct1345_mixer_t mixer_sbpro;
         sb_ct1745_mixer_t mixer_sb16;
+        ess_mixer_t       mixer_ess;
     };
     mpu_t  *mpu;
     emu8k_t emu8k;
     void   *gameport;
 
-    int pos;
+    int pnp;
+    int has_ide;
 
     uint8_t pos_regs[8];
     uint8_t pnp_rom[512];
 
     uint16_t opl_pnp_addr;
 
+    uint16_t midi_addr;
+    uint16_t gameport_addr;
+
     void   *opl_mixer;
     void  (*opl_mix)(void*, double*, double*);
 } sb_t;
 
-extern void    sb_ct1345_mixer_write(uint16_t addr, uint8_t val, void *p);
-extern uint8_t sb_ct1345_mixer_read(uint16_t addr, void *p);
+typedef struct goldfinch_t {
+    emu8k_t emu8k;
+
+    uint8_t pnp_rom[512];
+} goldfinch_t;
+
+extern void    sb_ct1345_mixer_write(uint16_t addr, uint8_t val, void *priv);
+extern uint8_t sb_ct1345_mixer_read(uint16_t addr, void *priv);
 extern void    sb_ct1345_mixer_reset(sb_t *sb);
 
-extern void    sb_ct1745_mixer_write(uint16_t addr, uint8_t val, void *p);
-extern uint8_t sb_ct1745_mixer_read(uint16_t addr, void *p);
+extern void    sb_ct1745_mixer_write(uint16_t addr, uint8_t val, void *priv);
+extern uint8_t sb_ct1745_mixer_read(uint16_t addr, void *priv);
 extern void    sb_ct1745_mixer_reset(sb_t *sb);
 
-extern void sb_get_buffer_sbpro(int32_t *buffer, int len, void *p);
-extern void sbpro_filter_cd_audio(int channel, double *buffer, void *p);
-extern void sb16_awe32_filter_cd_audio(int channel, double *buffer, void *p);
-extern void sb_close(void *p);
-extern void sb_speed_changed(void *p);
+extern void    sb_ess_mixer_write(uint16_t addr, uint8_t val, void *priv);
+extern uint8_t sb_ess_mixer_read(uint16_t addr, void *priv);
+extern void    sb_ess_mixer_reset(sb_t *sb);
+
+extern void sb_get_buffer_sbpro(int32_t *buffer, int len, void *priv);
+extern void sb_get_music_buffer_sbpro(int32_t *buffer, int len, void *priv);
+extern void sbpro_filter_cd_audio(int channel, double *buffer, void *priv);
+extern void sb16_awe32_filter_cd_audio(int channel, double *buffer, void *priv);
+extern void sb_close(void *priv);
+extern void sb_speed_changed(void *priv);
 
 #endif /*SOUND_SND_SB_H*/

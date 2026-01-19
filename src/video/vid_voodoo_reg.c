@@ -8,8 +8,6 @@
  *
  *          3DFX Voodoo emulation.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *
  *          Copyright 2008-2020 Sarah Walker.
@@ -105,7 +103,7 @@ voodoo_reg_writel(uint32_t addr, uint32_t val, void *priv)
 
                 voodoo_wait_for_render_thread_idle(voodoo);
                 if (!(val & 1)) {
-                    banshee_set_overlay_addr(voodoo->p, voodoo->leftOverlayBuf);
+                    banshee_set_overlay_addr(voodoo->priv, voodoo->leftOverlayBuf);
                     thread_wait_mutex(voodoo->swap_mutex);
                     if (voodoo->swap_count > 0)
                         voodoo->swap_count--;
@@ -965,10 +963,12 @@ voodoo_reg_writel(uint32_t addr, uint32_t val, void *priv)
             if (chip & CHIP_TREX0) {
                 voodoo->params.textureMode[0] = val;
                 voodoo->params.tformat[0]     = (val >> 8) & 0xf;
+                voodoo_recalc_tex(voodoo, 0);
             }
             if (chip & CHIP_TREX1) {
                 voodoo->params.textureMode[1] = val;
                 voodoo->params.tformat[1]     = (val >> 8) & 0xf;
+                voodoo_recalc_tex(voodoo, 1);
             }
             break;
         case SST_tLOD:
@@ -1121,6 +1121,7 @@ voodoo_reg_writel(uint32_t addr, uint32_t val, void *priv)
                 }
                 break;
             }
+            fallthrough;
         case SST_nccTable0_I2:
             if (!(val & (1 << 31))) {
                 if (chip & CHIP_TREX0) {
@@ -1358,6 +1359,9 @@ voodoo_reg_writel(uint32_t addr, uint32_t val, void *priv)
 
         case SST_leftOverlayBuf:
             voodoo->leftOverlayBuf = val;
+            break;
+
+        default:
             break;
     }
 }

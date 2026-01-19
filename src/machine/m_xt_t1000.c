@@ -51,15 +51,13 @@
  * NOTE:    Still need to figure out a way to load/save ConfigSys and
  *          HardRAM stuff. Needs to be linked in to the NVR code.
  *
- *
- *
  * Authors: Fred N. van Kempen, <decwiz@yahoo.com>
  *          Miran Grca, <mgrca8@gmail.com>
- *          Sarah Walker, <https://pcem-emulator.co.uk/>
+ *          John Elliott, <jce@seasip.info>
  *
  *          Copyright 2018-2019 Fred N. van Kempen.
  *          Copyright 2018-2019 Miran Grca.
- *          Copyright 2018-2019 Sarah Walker.
+ *          Copyright 2018-2019 John Elliott.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -288,8 +286,8 @@ tc8521_write(uint16_t addr, uint8_t val, void *priv)
 static uint8_t
 tc8521_read(uint16_t addr, void *priv)
 {
-    const nvr_t  *nvr = (nvr_t *) priv;
-    uint8_t       page;
+    const nvr_t *nvr = (nvr_t *) priv;
+    uint8_t      page;
 
     /* Get to the correct register page. */
     addr &= 0x0f;
@@ -342,7 +340,7 @@ ems_execaddr(t1000_t *sys, UNUSED(int pg), uint16_t val)
         return 0; /* Bit 7 reset => not mapped */
     if (!sys->ems_pages)
         return 0; /* No EMS available: all used by
-                     * HardRAM or conventional RAM */
+                   * HardRAM or conventional RAM */
     val &= 0x7f;
 
 #if 0
@@ -468,7 +466,7 @@ static uint8_t
 ems_read_ram(uint32_t addr, void *priv)
 {
     const t1000_t *sys = (t1000_t *) priv;
-    int      pg  = addr_to_page(addr);
+    int            pg  = addr_to_page(addr);
 
     if (pg < 0)
         return 0xff;
@@ -833,8 +831,8 @@ t1000_read_roml(uint32_t addr, void *priv)
 int
 machine_xt_t1000_init(const machine_t *model)
 {
-    FILE *f;
-    int ret;
+    FILE *fp;
+    int   ret;
 
     ret = bios_load_linear("roms/machines/t1000/t1000.rom",
                            0x000f8000, 32768, 0);
@@ -848,7 +846,7 @@ machine_xt_t1000_init(const machine_t *model)
     t1000.ems_port_index = 7; /* EMS disabled */
 
     /* Load the T1000 CGA Font ROM. */
-    loadfont("roms/machines/t1000/t1000font.bin", 2);
+    video_load_font("roms/machines/t1000/t1000font.bin", FONT_FORMAT_CGA, LOAD_FONT_NO_OFFSET);
 
     /*
      * The ROM drive is optional.
@@ -856,15 +854,15 @@ machine_xt_t1000_init(const machine_t *model)
      * If the file is missing, continue to boot; the BIOS will
      * complain 'No ROM drive' but boot normally from floppy.
      */
-    f = rom_fopen("roms/machines/t1000/t1000dos.rom", "rb");
-    if (f != NULL) {
+    fp = rom_fopen("roms/machines/t1000/t1000dos.rom", "rb");
+    if (fp != NULL) {
         t1000.romdrive = malloc(T1000_ROMSIZE);
         if (t1000.romdrive) {
             memset(t1000.romdrive, 0xff, T1000_ROMSIZE);
-            if (fread(t1000.romdrive, 1, T1000_ROMSIZE, f) != T1000_ROMSIZE)
+            if (fread(t1000.romdrive, 1, T1000_ROMSIZE, fp) != T1000_ROMSIZE)
                 fatal("machine_xt_t1000_init(): Error reading DOS ROM data\n");
         }
-        fclose(f);
+        fclose(fp);
     }
     mem_mapping_add(&t1000.rom_mapping, 0xa0000, 0x10000,
                     t1000_read_rom, t1000_read_romw, t1000_read_roml,
@@ -899,7 +897,7 @@ machine_xt_t1000_init(const machine_t *model)
     machine_common_init(model);
 
     pit_devs[0].set_out_func(pit_devs[0].data, 1, pit_refresh_timer_xt);
-    device_add(&keyboard_xt_t1x00_device);
+    device_add(&kbc_xt_t1x00_device);
     t1000.fdc = device_add(&fdc_xt_device);
     nmi_init();
 
@@ -930,7 +928,7 @@ machine_xt_t1200_init(const machine_t *model)
     t1000.ems_port_index = 7; /* EMS disabled */
 
     /* Load the T1000 CGA Font ROM. */
-    loadfont("roms/machines/t1000/t1000font.bin", 2);
+    video_load_font("roms/machines/t1000/t1000font.bin", FONT_FORMAT_CGA, LOAD_FONT_NO_OFFSET);
 
     /* Map the EMS page frame */
     for (uint8_t pg = 0; pg < 4; pg++) {
@@ -957,7 +955,7 @@ machine_xt_t1200_init(const machine_t *model)
                     NULL, MEM_MAPPING_EXTERNAL, &t1000);
 
     pit_devs[0].set_out_func(pit_devs[0].data, 1, pit_refresh_timer_xt);
-    device_add(&keyboard_xt_t1x00_device);
+    device_add(&kbc_xt_t1x00_device);
     t1000.fdc = device_add(&fdc_xt_t1x00_device);
     nmi_init();
 
@@ -969,7 +967,7 @@ machine_xt_t1200_init(const machine_t *model)
     if (gfxcard[0] == VID_INTERNAL)
         device_add(&t1200_video_device);
 
-    if (hdc_current <= 1)
+    if (hdc_current[0] <= HDC_INTERNAL)
         device_add(&st506_xt_toshiba_t1200_device);
 
     return ret;
@@ -986,62 +984,62 @@ t1000_syskey(uint8_t andmask, uint8_t ormask, uint8_t xormask)
 static void
 t1000_configsys_load(void)
 {
-    FILE *f;
+    FILE *fp;
     int   size;
 
     memset(t1000.t1000_nvram, 0x1a, sizeof(t1000.t1000_nvram));
-    f = plat_fopen(nvr_path("t1000_config.nvr"), "rb");
-    if (f != NULL) {
+    fp = plat_fopen(nvr_path("t1000_config.nvr"), "rb");
+    if (fp != NULL) {
         size = sizeof(t1000.t1000_nvram);
-        if (fread(t1000.t1000_nvram, 1, size, f) != size)
+        if (fread(t1000.t1000_nvram, 1, size, fp) != size)
             fatal("t1000_configsys_load(): Error reading data\n");
-        fclose(f);
+        fclose(fp);
     }
 }
 
 static void
 t1000_configsys_save(void)
 {
-    FILE *f;
+    FILE *fp;
     int   size;
 
-    f = plat_fopen(nvr_path("t1000_config.nvr"), "wb");
-    if (f != NULL) {
+    fp = plat_fopen(nvr_path("t1000_config.nvr"), "wb");
+    if (fp != NULL) {
         size = sizeof(t1000.t1000_nvram);
-        if (fwrite(t1000.t1000_nvram, 1, size, f) != size)
+        if (fwrite(t1000.t1000_nvram, 1, size, fp) != size)
             fatal("t1000_configsys_save(): Error writing data\n");
-        fclose(f);
+        fclose(fp);
     }
 }
 
 static void
 t1200_state_load(void)
 {
-    FILE *f;
+    FILE *fp;
     int   size;
 
     memset(t1000.t1200_nvram, 0, sizeof(t1000.t1200_nvram));
-    f = plat_fopen(nvr_path("t1200_state.nvr"), "rb");
-    if (f != NULL) {
+    fp = plat_fopen(nvr_path("t1200_state.nvr"), "rb");
+    if (fp != NULL) {
         size = sizeof(t1000.t1200_nvram);
-        if (fread(t1000.t1200_nvram, 1, size, f) != size)
+        if (fread(t1000.t1200_nvram, 1, size, fp) != size)
             fatal("t1200_state_load(): Error reading data\n");
-        fclose(f);
+        fclose(fp);
     }
 }
 
 static void
 t1200_state_save(void)
 {
-    FILE *f;
+    FILE *fp;
     int   size;
 
-    f = plat_fopen(nvr_path("t1200_state.nvr"), "wb");
-    if (f != NULL) {
+    fp = plat_fopen(nvr_path("t1200_state.nvr"), "wb");
+    if (fp != NULL) {
         size = sizeof(t1000.t1200_nvram);
-        if (fwrite(t1000.t1200_nvram, 1, size, f) != size)
+        if (fwrite(t1000.t1200_nvram, 1, size, fp) != size)
             fatal("t1200_state_save(): Error writing data\n");
-        fclose(f);
+        fclose(fp);
     }
 }
 
@@ -1049,13 +1047,13 @@ t1200_state_save(void)
 static void
 t1000_emsboard_load(void)
 {
-    FILE *f;
+    FILE *fp;
 
     if (mem_size > 512) {
-        f = plat_fopen(nvr_path("t1000_ems.nvr"), "rb");
-        if (f != NULL) {
-            (void) !fread(&ram[512 * 1024], 1024, (mem_size - 512), f);
-            fclose(f);
+        fp = plat_fopen(nvr_path("t1000_ems.nvr"), "rb");
+        if (fp != NULL) {
+            (void) !fread(&ram[512 * 1024], 1024, (mem_size - 512), fp);
+            fclose(fp);
         }
     }
 }
@@ -1063,13 +1061,13 @@ t1000_emsboard_load(void)
 static void
 t1000_emsboard_save(void)
 {
-    FILE *f;
+    FILE *fp;
 
     if (mem_size > 512) {
-        f = plat_fopen(nvr_path("t1000_ems.nvr"), "wb");
-        if (f != NULL) {
-            fwrite(&ram[512 * 1024], 1024, (mem_size - 512), f);
-            fclose(f);
+        fp = plat_fopen(nvr_path("t1000_ems.nvr"), "wb");
+        if (fp != NULL) {
+            fwrite(&ram[512 * 1024], 1024, (mem_size - 512), fp);
+            fclose(fp);
         }
     }
 }

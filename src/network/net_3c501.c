@@ -9,8 +9,6 @@
  *          Implementation of the following network controller:
  *            - 3Com Etherlink 3c500/3c501 (ISA 8-bit).
  *
- *
- *
  * Based on @(#)Dev3C501.cpp Oracle (VirtualBox)
  *
  * Authors: TheCollector1995, <mariogplayer@gmail.com>
@@ -56,8 +54,6 @@
 #include <86box/thread.h>
 #include <86box/timer.h>
 #include <86box/network.h>
-#include <86box/net_3c501.h>
-#include <86box/bswap.h>
 #include <86box/plat_unused.h>
 
 /* Maximum number of times we report a link down to the guest (failure to send frame) */
@@ -373,7 +369,7 @@ elnkR3HardReset(threec501_t *dev)
 static __inline int
 padr_match(threec501_t *dev, const uint8_t *buf)
 {
-    const struct ether_header *hdr = (struct ether_header *) buf;
+    const struct ether_header *hdr = (const struct ether_header *) buf;
     int                        result;
 
     /* Checks own + broadcast as well as own + multicast. */
@@ -389,7 +385,7 @@ static __inline int
 padr_bcast(threec501_t *dev, const uint8_t *buf)
 {
     static uint8_t             aBCAST[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-    const struct ether_header *hdr       = (struct ether_header *) buf;
+    const struct ether_header *hdr       = (const struct ether_header *) buf;
     int                        result    = (dev->RcvCmd.adr_match == EL_ADRM_BCAST) && !memcmp(hdr->ether_dhost, aBCAST, 6);
 
     return result;
@@ -401,8 +397,8 @@ padr_bcast(threec501_t *dev, const uint8_t *buf)
 static __inline int
 padr_mcast(threec501_t *dev, const uint8_t *buf)
 {
-    struct ether_header *hdr    = (struct ether_header *) buf;
-    int                  result = (dev->RcvCmd.adr_match == EL_ADRM_MCAST) && ETHER_IS_MULTICAST(hdr->ether_dhost);
+    const struct ether_header *hdr    = (const struct ether_header *) buf;
+    int                        result = (dev->RcvCmd.adr_match == EL_ADRM_MCAST) && ETHER_IS_MULTICAST(hdr->ether_dhost);
 
     return result;
 }
@@ -1081,8 +1077,7 @@ threec501_nic_init(UNUSED(const device_t *info))
     uint32_t     mac;
     threec501_t *dev;
 
-    dev = malloc(sizeof(threec501_t));
-    memset(dev, 0x00, sizeof(threec501_t));
+    dev = calloc(1, sizeof(threec501_t));
     dev->maclocal[0] = 0x02; /* 02:60:8C (3Com OID) */
     dev->maclocal[1] = 0x60;
     dev->maclocal[2] = 0x8C;
@@ -1157,30 +1152,31 @@ threec501_nic_close(void *priv)
 
 static const device_config_t threec501_config[] = {
     {
-        .name = "base",
-        .description = "Address",
-        .type = CONFIG_HEX16,
-        .default_string = "",
-        .default_int = 0x300,
-        .file_filter = "",
-        .spinner = { 0 },
-        .selection = {
+        .name           = "base",
+        .description    = "Address",
+        .type           = CONFIG_HEX16,
+        .default_string = NULL,
+        .default_int    = 0x300,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
             { .description = "0x280", .value = 0x280 },
             { .description = "0x300", .value = 0x300 },
             { .description = "0x310", .value = 0x310 },
             { .description = "0x320", .value = 0x320 },
             { .description = ""                      }
         },
+        .bios           = { { 0 } }
     },
     {
-        .name = "irq",
-        .description = "IRQ",
-        .type = CONFIG_SELECTION,
-        .default_string = "",
-        .default_int = 3,
-        .file_filter = "",
-        .spinner = { 0 },
-        .selection = {
+        .name           = "irq",
+        .description    = "IRQ",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 3,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
             { .description = "IRQ 2/9", .value = 9 },
             { .description = "IRQ 3", .value = 3 },
             { .description = "IRQ 4", .value = 4 },
@@ -1189,28 +1185,34 @@ static const device_config_t threec501_config[] = {
             { .description = "IRQ 7", .value = 7 },
             { .description = ""                  }
         },
+        .bios           = { { 0 } }
     },
     {
         .name = "dma",
-        .description = "DMA channel",
-        .type = CONFIG_SELECTION,
-        .default_string = "",
-        .default_int = 3,
-        .file_filter = "",
-        .spinner = { 0 },
-        .selection = {
+        .description = "DMA",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 3,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
             { .description = "DMA 1", .value = 1 },
             { .description = "DMA 2", .value = 2 },
             { .description = "DMA 3", .value = 3 },
             { .description = ""                  }
         },
+        .bios           = { { 0 } }
     },
     {
-        .name = "mac",
-        .description = "MAC Address",
-        .type = CONFIG_MAC,
-        .default_string = "",
-        .default_int = -1
+        .name           = "mac",
+        .description    = "MAC Address",
+        .type           = CONFIG_MAC,
+        .default_string = NULL,
+        .default_int    = -1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
     },
     { .name = "", .description = "", .type = CONFIG_END }
 };
@@ -1223,7 +1225,7 @@ const device_t threec501_device = {
     .init          = threec501_nic_init,
     .close         = threec501_nic_close,
     .reset         = elnkR3Reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = threec501_config

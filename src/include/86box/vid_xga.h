@@ -8,17 +8,17 @@
  *
  *          IBM XGA emulation.
  *
- *
- *
  * Authors: TheCollector1995.
  *
  *          Copyright 2022 TheCollector1995.
  */
-
 #ifndef VIDEO_XGA_H
 #define VIDEO_XGA_H
 
 #include <86box/rom.h>
+
+#define XGA_INT_START_BLKNK_ENAB         (1 << 0)
+#define XGA_INT_MASK                     0xf
 
 typedef struct xga_hwcursor_t {
     int      ena;
@@ -36,17 +36,20 @@ typedef struct xga_t {
     mem_mapping_t  linear_mapping;
     mem_mapping_t  video_mapping;
     rom_t          bios_rom;
-    rom_t          vga_bios_rom;
+    rom_t          bios_rom2;
     xga_hwcursor_t hwcursor;
     xga_hwcursor_t hwcursor_latch;
     PALETTE        extpal;
 
     uint8_t test;
+    uint8_t test2;
     uint8_t atest[2];
     uint8_t testpixel;
 
     uint8_t  pos_regs[8];
     uint8_t  disp_addr;
+    uint8_t  dac_mask;
+    uint8_t  dac_status;
     uint8_t  cfg_reg;
     uint8_t  instance;
     uint8_t  op_mode;
@@ -82,11 +85,13 @@ typedef struct xga_t {
     uint8_t  border_color;
     uint8_t  direct_color;
     uint8_t  dma_channel;
-    uint8_t  instance_isa;
     uint8_t  instance_num;
-    uint8_t  ext_mem_addr;
+    uint8_t  vga_post;
+    uint8_t  addr_test;
     uint8_t *vram;
     uint8_t *changedvram;
+    uint8_t int_ena;
+    uint8_t int_stat;
 
     int16_t hwc_pos_x;
     int16_t hwc_pos_y;
@@ -106,6 +111,10 @@ typedef struct xga_t {
     uint16_t old_pal_addr_idx;
     uint16_t sprite_pal_addr_idx_prefetch;
 
+    int dac_addr;
+    int dac_pos;
+    int dac_r;
+    int dac_g;
     int v_total;
     int dispend;
     int v_syncstart;
@@ -119,7 +128,7 @@ typedef struct xga_t {
     int dispon;
     int h_disp_on;
     int vc;
-    int sc;
+    int scanline;
     int linepos;
     int oddeven;
     int firstline;
@@ -141,6 +150,7 @@ typedef struct xga_t {
     int cursor_data_on;
     int pal_test;
     int a5_test;
+    int test_stage;
     int type;
     int bus;
 
@@ -151,16 +161,20 @@ typedef struct xga_t {
     uint32_t hwc_color0;
     uint32_t hwc_color1;
     uint32_t disp_start_addr;
-    uint32_t ma_latch;
+    uint32_t memaddr_latch;
     uint32_t vram_size;
     uint32_t vram_mask;
     uint32_t rom_addr;
-    uint32_t ma;
-    uint32_t maback;
-    uint32_t extpallook[256];
+    uint32_t memaddr;
+    uint32_t memaddr_backup;
     uint32_t read_bank;
     uint32_t write_bank;
     uint32_t px_map_base;
+    uint32_t pallook[512];
+    uint32_t bios_diag;
+    uint32_t mapping_base;
+
+    PALETTE xgapal;
 
     uint64_t dispontime;
     uint64_t dispofftime;
@@ -193,6 +207,10 @@ typedef struct xga_t {
         uint16_t dst_map_y;
         uint16_t pat_map_x;
         uint16_t pat_map_y;
+        uint16_t clip_l;
+        uint16_t clip_r;
+        uint16_t clip_t;
+        uint16_t clip_b;
 
         int ssv_state;
         int pat_src;
@@ -200,16 +218,19 @@ typedef struct xga_t {
         int dst_map;
         int bkgd_src;
         int fore_src;
+        int oldx;
+        int oldy;
         int x;
         int y;
         int sx;
         int sy;
-        int dx;
-        int dy;
         int px;
         int py;
         int pattern;
         int command_len;
+        int filling;
+        int y_len;
+        int x_len;
 
         uint32_t short_stroke;
         uint32_t color_cmp;
@@ -219,13 +240,13 @@ typedef struct xga_t {
         uint32_t bkgd_color;
         uint32_t command;
         uint32_t dir_cmd;
+        uint32_t pattern_data;
 
         uint8_t  px_map_format[4];
         uint16_t px_map_width[4];
         uint16_t px_map_height[4];
         uint32_t px_map_base[4];
     } accel;
-
-    int big_endian_linear;
 } xga_t;
+
 #endif /*VIDEO_XGA_H*/

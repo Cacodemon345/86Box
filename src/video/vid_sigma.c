@@ -8,8 +8,6 @@
  *
  *          Sigma Color 400 emulation.
  *
- *
- *
  * Authors: John Elliott,
  *
  *          Copyright 2018 John Elliott.
@@ -29,6 +27,7 @@
 #include <86box/rom.h>
 #include <86box/device.h>
 #include <86box/video.h>
+#include <86box/plat_unused.h>
 
 #define ROM_SIGMA_FONT "roms/video/sigma/sigma400_font.rom"
 #define ROM_SIGMA_BIOS "roms/video/sigma/sigma400_bios.rom"
@@ -109,8 +108,8 @@
  * 0x2DC: On write: Resets the NMI.
  * 0x2DD: Memory paging. The memory from 0xC1800 to 0xC1FFF can be either:
  *
- *	> ROM: A 128 character 8x16 font for use in graphics modes
- *	> RAM: Use by the video BIOS to hold its settings.
+ *  > ROM: A 128 character 8x16 font for use in graphics modes
+ *  > RAM: Use by the video BIOS to hold its settings.
  *
  * Reading port 2DD switches to ROM. Bit 7 of the value read gives the
  * previous paging state: bit 7 set if ROM was paged, clear if RAM was
@@ -150,14 +149,14 @@ typedef struct sigma_t {
 
     uint8_t sigmamode; /* Mode control register [0x2D8] */
 
-    uint16_t ma, maback;
+    uint16_t memaddr, memaddr_backup;
 
     int crtcreg; /* CRTC: Real selected register */
 
     int linepos, displine;
-    int sc, vc;
+    int scanline, vc;
     int cgadispon;
-    int con, coff, cursoron, cgablink;
+    int cursorvisible, cursoron, cgablink;
     int vsynctime, vadj;
     int oddeven;
 
@@ -233,6 +232,8 @@ sigma_out(uint16_t addr, uint8_t val, void *priv)
 
             case 0x2D8:
                 sigma->sigmamode = val;
+                sigma->fullchange = changeframecount;
+                sigma_recalctimings(sigma);
                 return;
             case 0x2D9:
                 sigma->sigma_ctl = val;
@@ -256,6 +257,9 @@ sigma_out(uint16_t addr, uint8_t val, void *priv)
                 else
                     sigma->plane = val & 3;
                 return;
+
+            default:
+                break;
         }
 }
 
@@ -326,6 +330,9 @@ sigma_in(uint16_t addr, void *priv)
                 result = sigma->fake_stat;
             }
             break;
+
+        default:
+            break;
     }
 
     return result;
@@ -343,9 +350,10 @@ sigma_write(uint32_t addr, uint8_t val, void *priv)
 static uint8_t
 sigma_read(uint32_t addr, void *priv)
 {
-    sigma_t *sigma = (sigma_t *) priv;
+    const sigma_t *sigma = (sigma_t *) priv;
 
     cycles -= 4;
+
     return sigma->vram[sigma->plane * 0x8000 + (addr & 0x7fff)];
 }
 
@@ -364,8 +372,8 @@ sigma_bwrite(uint32_t addr, uint8_t val, void *priv)
 static uint8_t
 sigma_bread(uint32_t addr, void *priv)
 {
-    sigma_t *sigma = (sigma_t *) priv;
-    uint8_t  result;
+    const sigma_t *sigma = (sigma_t *) priv;
+    uint8_t        result;
 
     addr &= 0x3FFF;
     if (addr >= 0x2000)
@@ -384,6 +392,7 @@ sigma_recalctimings(sigma_t *sigma)
     double disptime;
     double _dispontime;
     double _dispofftime;
+    double crtcconst = (cpuclock / 22440000.0 * (double) (1ULL << 32)) * 8.0;
 
     if (sigma->sigmamode & MODE_80COLS) {
         disptime    = (sigma->crtc[0] + 1) << 1;
@@ -394,8 +403,8 @@ sigma_recalctimings(sigma_t *sigma)
     }
 
     _dispofftime = disptime - _dispontime;
-    _dispontime *= CGACONST;
-    _dispofftime *= CGACONST;
+    _dispontime *= crtcconst;
+    _dispofftime *= crtcconst;
     sigma->dispontime  = (uint64_t) (_dispontime);
     sigma->dispofftime = (uint64_t) (_dispofftime);
 }
@@ -404,25 +413,25 @@ sigma_recalctimings(sigma_t *sigma)
 static void
 sigma_text80(sigma_t *sigma)
 {
-    uint8_t  chr;
-    uint8_t  attr;
-    uint16_t ca = (sigma->crtc[15] | (sigma->crtc[14] << 8));
-    uint16_t ma = ((sigma->ma & 0x3FFF) << 1);
-    int      drawcursor;
-    uint32_t cols[4];
-    uint8_t *vram = sigma->vram + (ma << 1);
+    uint8_t        chr;
+    uint8_t        attr;
+    uint16_t       cursoraddr = (sigma->crtc[15] | (sigma->crtc[14] << 8));
+    uint16_t       memaddr = ((sigma->memaddr & 0x3FFF) << 1);
+    int            drawcursor;
+    uint32_t       cols[4];
+    const uint8_t *vram = sigma->vram + (memaddr << 1);
 
-    ca = ca << 1;
+    cursoraddr = cursoraddr << 1;
     if (sigma->sigma_ctl & CTL_CURSOR)
-        ++ca;
-    ca &= 0x3fff;
+        ++cursoraddr;
+    cursoraddr &= 0x3fff;
 
     /* The Sigma 400 seems to use screen widths stated in words
        (40 for 80-column, 20 for 40-column) */
     for (uint32_t x = 0; x < (sigma->crtc[1] << 1); x++) {
         chr        = vram[x << 1];
         attr       = vram[(x << 1) + 1];
-        drawcursor = ((ma == ca) && sigma->con && sigma->cursoron);
+        drawcursor = ((memaddr == cursoraddr) && sigma->cursorvisible && sigma->cursoron);
 
         if (!(sigma->sigmamode & MODE_NOBLINK)) {
             cols[1] = (attr & 15) | 16;
@@ -437,47 +446,47 @@ sigma_text80(sigma_t *sigma)
         if (drawcursor) {
             for (uint8_t c = 0; c < 8; c++) {
                 if (sigma->sigmamode & MODE_FONT16)
-                    buffer32->line[sigma->displine][(x << 3) + c + 8] = cols[(fontdatm[chr][sigma->sc & 15] & (1 << (c ^ 7))) ? 1 : 0] ^ 0xf;
+                    buffer32->line[sigma->displine][(x << 3) + c + 8] = cols[(fontdatm[chr][sigma->scanline & 15] & (1 << (c ^ 7))) ? 1 : 0] ^ 0xf;
                 else
-                    buffer32->line[sigma->displine][(x << 3) + c + 8] = cols[(fontdat[chr][sigma->sc & 7] & (1 << (c ^ 7))) ? 1 : 0] ^ 0xf;
+                    buffer32->line[sigma->displine][(x << 3) + c + 8] = cols[(fontdat[chr][sigma->scanline & 7] & (1 << (c ^ 7))) ? 1 : 0] ^ 0xf;
             }
         } else {
             for (uint8_t c = 0; c < 8; c++) {
                 if (sigma->sigmamode & MODE_FONT16)
-                    buffer32->line[sigma->displine][(x << 3) + c + 8] = cols[(fontdatm[chr][sigma->sc & 15] & (1 << (c ^ 7))) ? 1 : 0];
+                    buffer32->line[sigma->displine][(x << 3) + c + 8] = cols[(fontdatm[chr][sigma->scanline & 15] & (1 << (c ^ 7))) ? 1 : 0];
                 else
-                    buffer32->line[sigma->displine][(x << 3) + c + 8] = cols[(fontdat[chr][sigma->sc & 7] & (1 << (c ^ 7))) ? 1 : 0];
+                    buffer32->line[sigma->displine][(x << 3) + c + 8] = cols[(fontdat[chr][sigma->scanline & 7] & (1 << (c ^ 7))) ? 1 : 0];
             }
         }
-        ++ma;
+        ++memaddr;
     }
 
-    sigma->ma += sigma->crtc[1];
+    sigma->memaddr += sigma->crtc[1];
 }
 
 /* Render a line in 40-column text mode */
 static void
 sigma_text40(sigma_t *sigma)
 {
-    uint8_t  chr;
-    uint8_t  attr;
-    uint16_t ca = (sigma->crtc[15] | (sigma->crtc[14] << 8));
-    uint16_t ma = ((sigma->ma & 0x3FFF) << 1);
-    int      drawcursor;
-    uint32_t cols[4];
-    uint8_t *vram = sigma->vram + ((ma << 1) & 0x3FFF);
+    uint8_t        chr;
+    uint8_t        attr;
+    uint16_t       cursoraddr = (sigma->crtc[15] | (sigma->crtc[14] << 8));
+    uint16_t       memaddr = ((sigma->memaddr & 0x3FFF) << 1);
+    int            drawcursor;
+    uint32_t       cols[4];
+    const uint8_t *vram = sigma->vram + ((memaddr << 1) & 0x3FFF);
 
-    ca = ca << 1;
+    cursoraddr = cursoraddr << 1;
     if (sigma->sigma_ctl & CTL_CURSOR)
-        ++ca;
-    ca &= 0x3fff;
+        ++cursoraddr;
+    cursoraddr &= 0x3fff;
 
     /* The Sigma 400 seems to use screen widths stated in words
        (40 for 80-column, 20 for 40-column) */
     for (uint32_t x = 0; x < (sigma->crtc[1] << 1); x++) {
         chr        = vram[x << 1];
         attr       = vram[(x << 1) + 1];
-        drawcursor = ((ma == ca) && sigma->con && sigma->cursoron);
+        drawcursor = ((memaddr == cursoraddr) && sigma->cursorvisible && sigma->cursoron);
 
         if (!(sigma->sigmamode & MODE_NOBLINK)) {
             cols[1] = (attr & 15) | 16;
@@ -491,24 +500,24 @@ sigma_text40(sigma_t *sigma)
 
         if (drawcursor) {
             for (uint8_t c = 0; c < 8; c++) {
-                buffer32->line[sigma->displine][(x << 4) + 2 * c + 8] = buffer32->line[sigma->displine][(x << 4) + 2 * c + 9] = cols[(fontdatm[chr][sigma->sc & 15] & (1 << (c ^ 7))) ? 1 : 0] ^ 0xf;
+                buffer32->line[sigma->displine][(x << 4) + 2 * c + 8] = buffer32->line[sigma->displine][(x << 4) + 2 * c + 9] = cols[(fontdatm[chr][sigma->scanline & 15] & (1 << (c ^ 7))) ? 1 : 0] ^ 0xf;
             }
         } else {
             for (uint8_t c = 0; c < 8; c++) {
-                buffer32->line[sigma->displine][(x << 4) + 2 * c + 8] = buffer32->line[sigma->displine][(x << 4) + 2 * c + 9] = cols[(fontdatm[chr][sigma->sc & 15] & (1 << (c ^ 7))) ? 1 : 0];
+                buffer32->line[sigma->displine][(x << 4) + 2 * c + 8] = buffer32->line[sigma->displine][(x << 4) + 2 * c + 9] = cols[(fontdatm[chr][sigma->scanline & 15] & (1 << (c ^ 7))) ? 1 : 0];
             }
         }
-        ma++;
+        memaddr++;
     }
 
-    sigma->ma += sigma->crtc[1];
+    sigma->memaddr += sigma->crtc[1];
 }
 
 /* Draw a line in the 640x400 graphics mode */
 static void
 sigma_gfx400(sigma_t *sigma)
 {
-    unsigned char *vram = &sigma->vram[((sigma->ma << 1) & 0x1FFF) + (sigma->sc & 3) * 0x2000];
+    const uint8_t *vram = &sigma->vram[((sigma->memaddr << 1) & 0x1FFF) + (sigma->scanline & 3) * 0x2000];
     uint8_t        plane[4];
     uint8_t        col;
 
@@ -524,7 +533,7 @@ sigma_gfx400(sigma_t *sigma)
             buffer32->line[sigma->displine][(x << 3) + c + 8] = col;
         }
         if (x & 1)
-            ++sigma->ma;
+            ++sigma->memaddr;
     }
 }
 
@@ -536,7 +545,7 @@ sigma_gfx400(sigma_t *sigma)
 static void
 sigma_gfx200(sigma_t *sigma)
 {
-    unsigned char *vram = &sigma->vram[((sigma->ma << 1) & 0x1FFF) + (sigma->sc & 2) * 0x1000];
+    const uint8_t *vram = &sigma->vram[((sigma->memaddr << 1) & 0x1FFF) + (sigma->scanline & 2) * 0x1000];
     uint8_t        plane[4];
     uint8_t        col;
 
@@ -553,7 +562,7 @@ sigma_gfx200(sigma_t *sigma)
         }
 
         if (x & 1)
-            ++sigma->ma;
+            ++sigma->memaddr;
     }
 }
 
@@ -561,7 +570,7 @@ sigma_gfx200(sigma_t *sigma)
 static void
 sigma_gfx4col(sigma_t *sigma)
 {
-    unsigned char *vram = &sigma->vram[((sigma->ma << 1) & 0x1FFF) + (sigma->sc & 2) * 0x1000];
+    const uint8_t *vram = &sigma->vram[((sigma->memaddr << 1) & 0x1FFF) + (sigma->scanline & 2) * 0x1000];
     uint8_t        plane[4];
     uint8_t        mask;
     uint8_t        col;
@@ -584,7 +593,7 @@ sigma_gfx4col(sigma_t *sigma)
         }
 
         if (x & 1)
-            ++sigma->ma;
+            ++sigma->memaddr;
     }
 }
 
@@ -596,15 +605,15 @@ sigma_poll(void *priv)
     int      c;
     int      oldvc;
     uint32_t cols[4];
-    int      oldsc;
+    int      scanline_old;
 
     if (!sigma->linepos) {
         timer_advance_u64(&sigma->timer, sigma->dispofftime);
         sigma->sigmastat |= STATUS_RETR_H;
         sigma->linepos = 1;
-        oldsc          = sigma->sc;
+        scanline_old          = sigma->scanline;
         if ((sigma->crtc[8] & 3) == 3)
-            sigma->sc = ((sigma->sc << 1) + sigma->oddeven) & 7;
+            sigma->scanline = ((sigma->scanline << 1) + sigma->oddeven) & 7;
         if (sigma->cgadispon) {
             if (sigma->displine < sigma->firstline) {
                 sigma->firstline = sigma->displine;
@@ -652,8 +661,8 @@ sigma_poll(void *priv)
 
         video_process_8(x, sigma->displine);
 
-        sigma->sc = oldsc;
-        if (sigma->vc == sigma->crtc[7] && !sigma->sc)
+        sigma->scanline = scanline_old;
+        if (sigma->vc == sigma->crtc[7] && !sigma->scanline)
             sigma->sigmastat |= STATUS_RETR_V;
         sigma->displine++;
         if (sigma->displine >= 560)
@@ -666,25 +675,24 @@ sigma_poll(void *priv)
             if (!sigma->vsynctime)
                 sigma->sigmastat &= ~STATUS_RETR_V;
         }
-        if (sigma->sc == (sigma->crtc[11] & 31) || ((sigma->crtc[8] & 3) == 3 && sigma->sc == ((sigma->crtc[11] & 31) >> 1))) {
-            sigma->con  = 0;
-            sigma->coff = 1;
+        if (sigma->scanline == (sigma->crtc[11] & 31) || ((sigma->crtc[8] & 3) == 3 && sigma->scanline == ((sigma->crtc[11] & 31) >> 1))) {
+            sigma->cursorvisible  = 0;
         }
-        if ((sigma->crtc[8] & 3) == 3 && sigma->sc == (sigma->crtc[9] >> 1))
-            sigma->maback = sigma->ma;
+        if ((sigma->crtc[8] & 3) == 3 && sigma->scanline == (sigma->crtc[9] >> 1))
+            sigma->memaddr_backup = sigma->memaddr;
         if (sigma->vadj) {
-            sigma->sc++;
-            sigma->sc &= 31;
-            sigma->ma = sigma->maback;
+            sigma->scanline++;
+            sigma->scanline &= 31;
+            sigma->memaddr = sigma->memaddr_backup;
             sigma->vadj--;
             if (!sigma->vadj) {
                 sigma->cgadispon = 1;
-                sigma->ma = sigma->maback = (sigma->crtc[13] | (sigma->crtc[12] << 8)) & 0x3fff;
-                sigma->sc                 = 0;
+                sigma->memaddr = sigma->memaddr_backup = (sigma->crtc[13] | (sigma->crtc[12] << 8)) & 0x3fff;
+                sigma->scanline                 = 0;
             }
-        } else if (sigma->sc == sigma->crtc[9]) {
-            sigma->maback = sigma->ma;
-            sigma->sc     = 0;
+        } else if (sigma->scanline == sigma->crtc[9]) {
+            sigma->memaddr_backup = sigma->memaddr;
+            sigma->scanline     = 0;
             oldvc         = sigma->vc;
             sigma->vc++;
             sigma->vc &= 127;
@@ -698,7 +706,7 @@ sigma_poll(void *priv)
                 if (!sigma->vadj)
                     sigma->cgadispon = 1;
                 if (!sigma->vadj)
-                    sigma->ma = sigma->maback = (sigma->crtc[13] | (sigma->crtc[12] << 8)) & 0x3fff;
+                    sigma->memaddr = sigma->memaddr_backup = (sigma->crtc[13] | (sigma->crtc[12] << 8)) & 0x3fff;
                 if ((sigma->crtc[10] & 0x60) == 0x20)
                     sigma->cursoron = 0;
                 else
@@ -761,23 +769,23 @@ sigma_poll(void *priv)
                 sigma->oddeven ^= 1;
             }
         } else {
-            sigma->sc++;
-            sigma->sc &= 31;
-            sigma->ma = sigma->maback;
+            sigma->scanline++;
+            sigma->scanline &= 31;
+            sigma->memaddr = sigma->memaddr_backup;
         }
         if (sigma->cgadispon)
             sigma->sigmastat &= ~STATUS_RETR_H;
-        if (sigma->sc == (sigma->crtc[10] & 31) || ((sigma->crtc[8] & 3) == 3 && sigma->sc == ((sigma->crtc[10] & 31) >> 1)))
-            sigma->con = 1;
+        if (sigma->scanline == (sigma->crtc[10] & 31) || ((sigma->crtc[8] & 3) == 3 && sigma->scanline == ((sigma->crtc[10] & 31) >> 1)))
+            sigma->cursorvisible = 1;
     }
 }
 
-static void
-    *
-    sigma_init(const device_t *info)
+static void *
+sigma_init(UNUSED(const device_t *info))
 {
     int      bios_addr;
     sigma_t *sigma = malloc(sizeof(sigma_t));
+
     memset(sigma, 0, sizeof(sigma_t));
 
     bios_addr = device_get_config_hex20("bios_addr");
@@ -786,7 +794,7 @@ static void
 
     sigma->enable_nmi = device_get_config_int("enable_nmi");
 
-    loadfont(ROM_SIGMA_FONT, 7);
+    video_load_font(ROM_SIGMA_FONT, FONT_FORMAT_SIGMA, LOAD_FONT_NO_OFFSET);
     rom_init(&sigma->bios_rom, ROM_SIGMA_BIOS, bios_addr, 0x2000,
              0x1FFF, 0, MEM_MAPPING_EXTERNAL);
     /* The BIOS ROM is overlaid by RAM, so remove its default mapping
@@ -852,100 +860,59 @@ sigma_speed_changed(void *priv)
 device_config_t sigma_config[] = {
   // clang-format off
     {
-        .name = "rgb_type",
-        .description = "RGB type",
-        .type = CONFIG_SELECTION,
-        .default_int = 0,
-        .selection = {
-            {
-                .description = "Color",
-                .value = 0
-            },
-            {
-                .description = "Green Monochrome",
-                .value = 1
-            },
-            {
-                .description = "Amber Monochrome",
-                .value = 2
-            },
-            {
-                .description = "Gray Monochrome",
-                .value = 3
-            },
-            {
-                .description = "Color (no brown)",
-                .value = 4
-            },
-            {
-                .description = ""
-            }
-        }
-    },
-    {
-        .name = "enable_nmi",
-        .description = "Enable NMI for CGA emulation",
-        .type = CONFIG_BINARY,
-        .default_int = 1
-    },
-    {
-        .name = "bios_addr",
-        .description = "BIOS Address",
-        .type = CONFIG_HEX20,
-        .default_int = 0xc0000,
-        .selection = {
-            {
-                .description = "C000H",
-                .value = 0xc0000
-            },
-            {
-                .description = "C800H",
-                .value = 0xc8000
-            },
-            {
-                .description = "CC00H",
-                .value = 0xcc000
-            },
-            {
-                .description = "D000H",
-                .value = 0xd0000
-            },
-            {
-                .description = "D400H",
-                .value = 0xd4000
-            },
-            {
-                .description = "D800H",
-                .value = 0xd8000
-            },
-            {
-                .description = "DC00H",
-                .value = 0xdc000
-            },
-            {
-                .description = "E000H",
-                .value = 0xe0000
-            },
-            {
-                .description = "E400H",
-                .value = 0xe4000
-            },
-            {
-                .description = "E800H",
-                .value = 0xe8000
-            },
-            {
-                .description = "EC00H",
-                .value = 0xec000
-            },
-            {
-                .description = ""
-            }
+        .name           = "rgb_type",
+        .description    = "RGB type",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "Color",            .value = 0 },
+            { .description = "Green Monochrome", .value = 1 },
+            { .description = "Amber Monochrome", .value = 2 },
+            { .description = "Gray Monochrome",  .value = 3 },
+            { .description = "Color (no brown)", .value = 4 },
+            { .description = ""                             }
         },
+        .bios           = { { 0 } }
     },
     {
-        .type = CONFIG_END
-    }
+        .name           = "enable_nmi",
+        .description    = "Enable NMI for CGA emulation",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "bios_addr",
+        .description    = "BIOS address",
+        .type           = CONFIG_HEX20,
+        .default_string = NULL,
+        .default_int    = 0xc0000,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "C000H", .value = 0xc0000 },
+            { .description = "C800H", .value = 0xc8000 },
+            { .description = "CC00H", .value = 0xcc000 },
+            { .description = "D000H", .value = 0xd0000 },
+            { .description = "D400H", .value = 0xd4000 },
+            { .description = "D800H", .value = 0xd8000 },
+            { .description = "DC00H", .value = 0xdc000 },
+            { .description = "E000H", .value = 0xe0000 },
+            { .description = "E400H", .value = 0xe4000 },
+            { .description = "E800H", .value = 0xe8000 },
+            { .description = "EC00H", .value = 0xec000 },
+            { .description = ""                        }
+        },
+        .bios           = { { 0 } }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
   // clang-format on
 };
 
@@ -957,7 +924,7 @@ const device_t sigma_device = {
     .init          = sigma_init,
     .close         = sigma_close,
     .reset         = NULL,
-    { .available = sigma_available },
+    .available     = sigma_available,
     .speed_changed = sigma_speed_changed,
     .force_redraw  = NULL,
     .config        = sigma_config

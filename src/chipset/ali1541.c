@@ -8,8 +8,6 @@
  *
  *          Implementation of the ALi M1541/2 CPU-to-PCI Bridge.
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *
  *          Copyright 2021 Miran Grca.
@@ -22,6 +20,7 @@
 #include <wchar.h>
 #define HAVE_STDARG_H
 #include <86box/86box.h>
+#include "cpu.h"
 #include <86box/timer.h>
 
 #include <86box/device.h>
@@ -35,6 +34,11 @@
 #include <86box/chipset.h>
 
 typedef struct ali1541_t {
+    uint8_t pci_slot;
+    uint8_t pad;
+    uint8_t pad0;
+    uint8_t pad1;
+
     uint8_t pci_conf[256];
 
     smram_t *smram;
@@ -638,10 +642,9 @@ ali1541_close(void *priv)
 static void *
 ali1541_init(UNUSED(const device_t *info))
 {
-    ali1541_t *dev = (ali1541_t *) malloc(sizeof(ali1541_t));
-    memset(dev, 0, sizeof(ali1541_t));
+    ali1541_t *dev = (ali1541_t *) calloc(1, sizeof(ali1541_t));
 
-    pci_add_card(PCI_ADD_NORTHBRIDGE, ali1541_read, ali1541_write, dev);
+    pci_add_card(PCI_ADD_NORTHBRIDGE, ali1541_read, ali1541_write, dev, &dev->pci_slot);
 
     dev->smram = smram_add();
 
@@ -660,7 +663,7 @@ const device_t ali1541_device = {
     .init          = ali1541_init,
     .close         = ali1541_close,
     .reset         = ali1541_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL

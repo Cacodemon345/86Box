@@ -8,8 +8,6 @@
  *
  *          3DFX Voodoo emulation.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *
  *          Copyright 2008-2020 Sarah Walker.
@@ -76,7 +74,7 @@ voodoo_fb_readw(uint32_t addr, void *priv)
     }
 
     if (SLI_ENABLED) {
-        voodoo_set_t *set = voodoo->set;
+        const voodoo_set_t *set = voodoo->set;
 
         if (y & 1)
             voodoo = set->voodoos[1];
@@ -117,7 +115,7 @@ voodoo_fb_readl(uint32_t addr, void *priv)
     }
 
     if (SLI_ENABLED) {
-        voodoo_set_t *set = voodoo->set;
+        const voodoo_set_t *set = voodoo->set;
 
         if (y & 1)
             voodoo = set->voodoos[1];
@@ -170,16 +168,16 @@ do_dither(voodoo_params_t *params, rgba8_t col, int x, int y)
 void
 voodoo_fb_writew(uint32_t addr, uint16_t val, void *priv)
 {
-    voodoo_t        *voodoo = (voodoo_t *) priv;
-    voodoo_params_t *params = &voodoo->params;
-    int              x;
-    int              y;
-    uint32_t         write_addr;
-    uint32_t         write_addr_aux;
-    rgba8_t          colour_data;
-    uint16_t         depth_data;
-    uint8_t          alpha_data;
-    int              write_mask = 0;
+    voodoo_t              *voodoo = (voodoo_t *) priv;
+    const voodoo_params_t *params = &voodoo->params;
+    int                    x;
+    int                    y;
+    uint32_t               write_addr;
+    uint32_t               write_addr_aux;
+    rgba8_t                colour_data;
+    uint16_t               depth_data;
+    uint8_t                alpha_data;
+    int                    write_mask = 0;
 
     colour_data.r = colour_data.g = colour_data.b = colour_data.a = 0;
 
@@ -252,6 +250,22 @@ voodoo_fb_writew(uint32_t addr, uint16_t val, void *priv)
         {
             rgba8_t  write_data = colour_data;
             uint16_t new_depth  = depth_data;
+            int      colbfog_r  = 0;
+            int      colbfog_g  = 0;
+            int      colbfog_b  = 0;
+
+            if (params->fbzMode & FBZ_STIPPLE) {
+                if (params->fbzMode & FBZ_STIPPLE_PATT) {
+                    int index = ((y & 3) << 3) | (~x & 7);
+                    if (!(params->stipple & (1 << index)))
+                        goto skip_pixel;
+                } else {
+                    voodoo->params.stipple = (voodoo->params.stipple << 1) | (voodoo->params.stipple >> 31);
+                    if (!(voodoo->params.stipple & 0x80000000)) {
+                        goto skip_pixel;
+                    }
+                }
+            }
 
             if (params->fbzMode & FBZ_DEPTH_ENABLE) {
                 uint16_t old_depth = *(uint16_t *) (&voodoo->fb_mem[write_addr_aux & voodoo->fb_mask]);
@@ -261,6 +275,10 @@ voodoo_fb_writew(uint32_t addr, uint16_t val, void *priv)
 
             if ((params->fbzMode & FBZ_CHROMAKEY) && write_data.r == params->chromaKey_r && write_data.g == params->chromaKey_g && write_data.b == params->chromaKey_b)
                 goto skip_pixel;
+
+            colbfog_r = write_data.r;
+            colbfog_g = write_data.g;
+            colbfog_b = write_data.b;
 
             if (params->fogMode & FOG_ENABLE) {
                 int32_t z       = new_depth << 12;
@@ -310,17 +328,17 @@ skip_pixel:
 void
 voodoo_fb_writel(uint32_t addr, uint32_t val, void *priv)
 {
-    voodoo_t        *voodoo = (voodoo_t *) priv;
-    voodoo_params_t *params = &voodoo->params;
-    int              x;
-    int              y;
-    uint32_t         write_addr;
-    uint32_t         write_addr_aux;
-    rgba8_t          colour_data[2];
-    uint16_t         depth_data[2];
-    uint8_t          alpha_data[2];
-    int              write_mask = 0;
-    int              count = 1;
+    voodoo_t              *voodoo = (voodoo_t *) priv;
+    const voodoo_params_t *params = &voodoo->params;
+    int                    x;
+    int                    y;
+    uint32_t               write_addr;
+    uint32_t               write_addr_aux;
+    rgba8_t                colour_data[2];
+    uint16_t               depth_data[2];
+    uint8_t                alpha_data[2];
+    int                    write_mask = 0;
+    int                    count = 1;
 
     depth_data[0] = depth_data[1] = voodoo->params.zaColor & 0xffff;
     alpha_data[0] = alpha_data[1] = voodoo->params.zaColor >> 24;
@@ -361,6 +379,37 @@ voodoo_fb_writel(uint32_t addr, uint32_t val, void *priv)
             colour_data[0].r = (val >> 16) & 0xff;
             alpha_data[0]    = (val >> 24) & 0xff;
             write_mask       = LFB_WRITE_COLOUR;
+            addr >>= 1;
+            break;
+
+        case LFB_FORMAT_XRGB8888:
+            colour_data[0].b = val & 0xff;
+            colour_data[0].g = (val >> 8) & 0xff;
+            colour_data[0].r = (val >> 16) & 0xff;
+            write_mask       = LFB_WRITE_COLOUR;
+            addr >>= 1;
+            break;
+
+        case LFB_FORMAT_DEPTH_RGB565:
+            colour_data[0] = rgb565[val & 0xffff];
+            depth_data[0]  = val >> 16;
+            write_mask     = LFB_WRITE_BOTH;
+            count          = 1;
+            addr >>= 1;
+            break;
+        case LFB_FORMAT_DEPTH_RGB555:
+            colour_data[0] = argb1555[val & 0xffff];
+            depth_data[0]  = val >> 16;
+            write_mask     = LFB_WRITE_BOTH;
+            count          = 1;
+            addr >>= 1;
+            break;
+        case LFB_FORMAT_DEPTH_ARGB1555:
+            colour_data[0] = argb1555[val & 0xffff];
+            alpha_data[0]  = colour_data[0].a;
+            depth_data[0]  = val >> 16;
+            write_mask     = LFB_WRITE_BOTH;
+            count          = 1;
             addr >>= 1;
             break;
 
@@ -409,6 +458,22 @@ voodoo_fb_writel(uint32_t addr, uint32_t val, void *priv)
         for (int c = 0; c < count; c++) {
             rgba8_t  write_data = colour_data[c];
             uint16_t new_depth  = depth_data[c];
+            int      colbfog_r  = 0;
+            int      colbfog_g  = 0;
+            int      colbfog_b  = 0;
+
+            if (params->fbzMode & FBZ_STIPPLE) {
+                if (params->fbzMode & FBZ_STIPPLE_PATT) {
+                    int index = ((y & 3) << 3) | (~(x + c) & 7);
+                    if (!(params->stipple & (1 << index)))
+                        goto skip_pixel;
+                } else {
+                    voodoo->params.stipple = (voodoo->params.stipple << 1) | (voodoo->params.stipple >> 31);
+                    if (!(voodoo->params.stipple & 0x80000000)) {
+                        goto skip_pixel;
+                    }
+                }
+            }
 
             if (params->fbzMode & FBZ_DEPTH_ENABLE) {
                 uint16_t old_depth = *(uint16_t *) (&voodoo->fb_mem[write_addr_aux & voodoo->fb_mask]);
@@ -418,6 +483,10 @@ voodoo_fb_writel(uint32_t addr, uint32_t val, void *priv)
 
             if ((params->fbzMode & FBZ_CHROMAKEY) && write_data.r == params->chromaKey_r && write_data.g == params->chromaKey_g && write_data.b == params->chromaKey_b)
                 goto skip_pixel;
+
+            colbfog_r = write_data.r;
+            colbfog_g = write_data.g;
+            colbfog_b = write_data.b;
 
             if (params->fogMode & FOG_ENABLE) {
                 int32_t z       = new_depth << 12;
@@ -460,9 +529,15 @@ skip_pixel:
     } else {
         for (int c = 0; c < count; c++) {
             if (write_mask & LFB_WRITE_COLOUR)
-                *(uint16_t *) (&voodoo->fb_mem[write_addr & voodoo->fb_mask]) = do_dither(&voodoo->params, colour_data[c], (x >> 1) + c, y);
+                *(uint16_t *) (&voodoo->fb_mem[write_addr & voodoo->fb_mask]) =
+                              do_dither(&voodoo->params, colour_data[c], (x >> 1) + c, y);
             if (write_mask & LFB_WRITE_DEPTH)
                 *(uint16_t *) (&voodoo->fb_mem[write_addr_aux & voodoo->fb_mask]) = depth_data[c];
+            if (write_mask & LFB_WRITE_BOTH) {
+                *(uint16_t *) (&voodoo->fb_mem[write_addr & voodoo->fb_mask]) =
+                              do_dither(&voodoo->params, colour_data[c], (x >> 1) + c, y);
+                *(uint16_t *) (&voodoo->fb_mem[write_addr_aux & voodoo->fb_mask]) = depth_data[c];
+            }
 
             write_addr += 2;
             write_addr_aux += 2;

@@ -8,8 +8,6 @@
  *
  *          Definitions for the PGC driver.
  *
- *
- *
  * Authors: Fred N. van Kempen, <decwiz@yahoo.com>
  *          John Elliott, <jce@seasip.info>
  *
@@ -45,9 +43,9 @@ typedef struct pgc_cl {
 typedef struct pgc_cmd {
     char    ascii[6];
     uint8_t hex;
-    void (*handler)(struct pgc *);
-    int (*parser)(struct pgc *, pgc_cl_t *, int);
-    int p;
+    void  (*handler)(struct pgc *);
+    int   (*parser)(struct pgc *, pgc_cl_t *, int);
+    int     p;
 } pgc_cmd_t;
 
 typedef struct pgc {
@@ -71,10 +69,12 @@ typedef struct pgc {
     uint8_t  hex_command;
     uint32_t palette[256];
     uint32_t userpal[256];
-    uint32_t maxw, maxh; /* maximum framebuffer size */
-    uint32_t visw, vish; /* maximum screen size */
+    uint32_t maxw; /* maximum framebuffer size - Width */
+    uint32_t maxh; /* maximum framebuffer size - Height */
+    uint32_t visw; /* maximum screen size - Width */
+    uint32_t vish; /* maximum screen size - Height */
     uint32_t screenw;
-    uint32_t  screenh;
+    uint32_t screenh;
     int16_t  pan_x;
     int16_t  pan_y;
     uint16_t win_x1;
@@ -113,14 +113,13 @@ typedef struct pgc {
     int      displine;
     int      vc;
     int      cgadispon;
-    int      con;
-    int      coff;
+    int      cursorvisible;
     int      cursoron;
     int      cgablink;
     int      vsynctime;
     int      vadj;
-    uint16_t ma;
-    uint16_t maback;
+    uint16_t memaddr;
+    uint16_t memaddr_backup;
     int      oddeven;
 
     uint64_t dispontime;
@@ -156,12 +155,12 @@ extern void pgc_sto_raster(pgc_t *, int16_t *x, int16_t *y);
 extern void pgc_ito_raster(pgc_t *, int32_t *x, int32_t *y);
 extern void pgc_dto_raster(pgc_t *, double *x, double *y);
 #if 0
-extern int	pgc_input_byte(pgc_t *, uint8_t *val);
-extern int	pgc_output_byte(pgc_t *, uint8_t val);
+extern int pgc_input_byte(pgc_t *, uint8_t *val);
+extern int pgc_output_byte(pgc_t *, uint8_t val);
 #endif
 extern int pgc_output_string(pgc_t *, const char *val);
 #if 0
-extern int	pgc_error_byte(pgc_t *, uint8_t val);
+extern int pgc_error_byte(pgc_t *, uint8_t val);
 #endif
 extern int pgc_error_string(pgc_t *, const char *val);
 extern int pgc_error(pgc_t *, int err);

@@ -9,8 +9,8 @@ extern uint8_t MIDI_evt_len[256];
 extern int midi_output_device_current;
 extern int midi_input_device_current;
 
-extern void (*input_msg)(void *p, uint8_t *msg, uint32_t len);
-extern int (*input_sysex)(void *p, uint8_t *buf, uint32_t len, int abort);
+extern void (*input_msg)(void *priv, uint8_t *msg, uint32_t len);
+extern int (*input_sysex)(void *priv, uint8_t *buf, uint32_t len, int abort);
 extern void *midi_in_p;
 
 extern int midi_out_device_available(int card);
@@ -19,19 +19,20 @@ extern int midi_in_device_available(int card);
 const device_t *midi_out_device_getdevice(int card);
 const device_t *midi_in_device_getdevice(int card);
 #endif
-extern int   midi_out_device_has_config(int card);
-extern int   midi_in_device_has_config(int card);
-extern char *midi_out_device_get_internal_name(int card);
-extern char *midi_in_device_get_internal_name(int card);
-extern int   midi_out_device_get_from_internal_name(char *s);
-extern int   midi_in_device_get_from_internal_name(char *s);
-extern void  midi_out_device_init(void);
-extern void  midi_in_device_init(void);
+extern int         midi_out_device_has_config(int card);
+extern int         midi_in_device_has_config(int card);
+extern const char *midi_out_device_get_internal_name(int card);
+extern const char *midi_in_device_get_internal_name(int card);
+extern int         midi_out_device_get_from_internal_name(char *s);
+extern int         midi_in_device_get_from_internal_name(char *s);
+extern void        midi_out_device_init(void);
+extern void        midi_in_device_init(void);
 
 typedef struct midi_device_t {
     void (*play_sysex)(uint8_t *sysex, unsigned int len);
     void (*play_msg)(uint8_t *msg);
     void (*poll)(void);
+    void (*reset)(void);
     int (*write)(uint8_t val);
 } midi_device_t;
 
@@ -77,8 +78,9 @@ extern void midi_raw_out_thru_rt_byte(uint8_t val);
 extern void midi_raw_out_byte(uint8_t val);
 extern void midi_clear_buffer(void);
 extern void midi_poll(void);
+extern void midi_reset(void);
 
-extern void midi_in_handler(int set, void (*msg)(void *p, uint8_t *msg, uint32_t len), int (*sysex)(void *p, uint8_t *buffer, uint32_t len, int abort), void *priv);
+extern void midi_in_handler(int set, void (*msg)(void *priv, uint8_t *msg, uint32_t len), int (*sysex)(void *priv, uint8_t *buffer, uint32_t len, int abort), void *priv);
 extern void midi_in_handlers_clear(void);
 extern void midi_in_msg(uint8_t *msg, uint32_t len);
 extern void midi_in_sysex(uint8_t *buffer, uint32_t len);
@@ -102,15 +104,18 @@ extern void midi_in_sysex(uint8_t *buffer, uint32_t len);
 #ifdef EMU_DEVICE_H
 extern const device_t rtmidi_output_device;
 extern const device_t rtmidi_input_device;
+#    ifdef USE_OPL4ML
+extern const device_t opl4_midi_device;
+#    endif /* USE_OPL4ML */
 #    ifdef USE_FLUIDSYNTH
 extern const device_t fluidsynth_device;
-#    endif
+#    endif /* USE_FLUIDSYNTH */
 #    ifdef USE_MUNT
 extern const device_t mt32_old_device;
 extern const device_t mt32_new_device;
 extern const device_t cm32l_device;
 extern const device_t cm32ln_device;
-#    endif
+#    endif /* USE_MUNT */
 #endif
 
 #endif /*EMU_SOUND_MIDI_H*/

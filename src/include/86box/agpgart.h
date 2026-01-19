@@ -1,5 +1,5 @@
 /*
- * 86Box	A hypervisor and IBM PC system emulator that specializes in
+ * 86Box    A hypervisor and IBM PC system emulator that specializes in
  *          running old operating systems and software designed for IBM
  *          PC systems and compatibles from 1981 through fairly recent
  *          system designs based on the PCI bus.
@@ -8,13 +8,10 @@
  *
  *          AGP Graphics Address Remapping Table remapping emulation.
  *
- *
- *
  * Authors: RichardG, <richardg867@gmail.com>
  *
  *          Copyright 2021 RichardG.
  */
-
 #ifndef EMU_AGPGART_H
 #define EMU_AGPGART_H
 

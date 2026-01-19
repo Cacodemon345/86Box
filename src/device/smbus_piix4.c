@@ -8,8 +8,6 @@
  *
  *          Implementation of a generic PIIX4-compatible SMBus host controller.
  *
- *
- *
  * Authors: RichardG, <richardg867@gmail.com>
  *
  *          Copyright 2020 RichardG.
@@ -195,10 +193,7 @@ smbus_piix4_write(uint16_t addr, uint8_t val, void *priv)
                             i2c_write(i2c_smbus, smbus_addr, dev->cmd);
                             timer_bytes++;
                         }
-
-#ifdef FALLTHROUGH_ANNOTATION
-                        [[fallthrough]];
-#endif
+                        fallthrough;
 
                     case 0xc:        /* I2C process call */
                         if (!read) { /* word write (only when writing) */
@@ -216,10 +211,7 @@ smbus_piix4_write(uint16_t addr, uint8_t val, void *priv)
 
                     case 0x5:          /* block R/W */
                         timer_bytes++; /* count the SMBus length byte now */
-
-#ifdef FALLTHROUGH_ANNOTATION
-                        [[fallthrough]];
-#endif
+                        fallthrough;
 
                     case 0xd: /* I2C block R/W */
                         i2c_write(i2c_smbus, smbus_addr, dev->cmd);
@@ -251,10 +243,7 @@ smbus_piix4_write(uint16_t addr, uint8_t val, void *priv)
                         /* command write */
                         i2c_write(i2c_smbus, smbus_addr, dev->cmd);
                         timer_bytes++;
-
-#ifdef FALLTHROUGH_ANNOTATION
-                        [[fallthrough]];
-#endif
+                        fallthrough;
 
                     case 0xe:        /* I2C with 7-bit address */
                         if (!read) { /* word write (only when writing) */
@@ -366,8 +355,7 @@ smbus_piix4_setclock(smbus_piix4_t *dev, int clock)
 static void *
 smbus_piix4_init(const device_t *info)
 {
-    smbus_piix4_t *dev = (smbus_piix4_t *) malloc(sizeof(smbus_piix4_t));
-    memset(dev, 0, sizeof(smbus_piix4_t));
+    smbus_piix4_t *dev = (smbus_piix4_t *) calloc(1, sizeof(smbus_piix4_t));
 
     dev->local = info->local;
     /* We save the I2C bus handle on dev but use i2c_smbus for all operations because
@@ -396,12 +384,12 @@ smbus_piix4_close(void *priv)
 const device_t piix4_smbus_device = {
     .name          = "PIIX4-compatible SMBus Host Controller",
     .internal_name = "piix4_smbus",
-    .flags         = DEVICE_AT,
+    .flags         = DEVICE_ISA16,
     .local         = SMBUS_PIIX4,
     .init          = smbus_piix4_init,
     .close         = smbus_piix4_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -410,12 +398,12 @@ const device_t piix4_smbus_device = {
 const device_t via_smbus_device = {
     .name          = "VIA VT82C686B SMBus Host Controller",
     .internal_name = "via_smbus",
-    .flags         = DEVICE_AT,
+    .flags         = DEVICE_ISA16,
     .local         = SMBUS_VIA,
     .init          = smbus_piix4_init,
     .close         = smbus_piix4_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL

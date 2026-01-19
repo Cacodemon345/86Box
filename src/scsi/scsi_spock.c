@@ -9,8 +9,6 @@
  *          Implementation of the IBM PS/2 SCSI controller with
  *          cache for MCA only.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          TheCollector1995, <mariogplayer@gmail.com>
  *
@@ -130,12 +128,13 @@ typedef struct {
     int   adapter_id;
     int   assign;
     int   present[8];
+    int   id_connected;
 
     int cmd_status;
     int cir_status;
 
     uint8_t pacing;
-
+    uint8_t irq_state;
     uint8_t buf[0x600];
 
     struct {
@@ -159,6 +158,7 @@ typedef struct {
     int scb_state;
     int in_reset;
     int in_invalid;
+    int spock_16bit;
 
     uint64_t temp_period;
     double   media_period;
@@ -195,6 +195,7 @@ typedef struct {
 #define CMD_UNKNOWN_1C11            0x1c11
 #define CMD_WRITE_DATA              0x1c02
 #define CMD_VERIFY                  0x1c03
+#define CMD_WRITE_VERIFY            0x1c04
 
 #define IRQ_TYPE_NONE               0x0
 #define IRQ_TYPE_SCB_COMPLETE       0x1
@@ -204,7 +205,6 @@ typedef struct {
 #define IRQ_TYPE_COMMAND_FAIL       0xc
 #define IRQ_TYPE_COMMAND_ERROR      0xe
 #define IRQ_TYPE_SW_SEQ_ERROR       0xf
-#define IRQ_TYPE_RESET_COMPLETE     0x10
 
 #ifdef ENABLE_SPOCK_LOG
 int spock_do_log = ENABLE_SPOCK_LOG;
@@ -224,7 +224,9 @@ spock_log(const char *fmt, ...)
 #    define spock_log(fmt, ...)
 #endif
 
-static void
+static void spock_reset(void *priv);
+
+static __inline void
 spock_rethink_irqs(spock_t *scsi)
 {
     int irq_pending = 0;
@@ -234,7 +236,7 @@ spock_rethink_irqs(spock_t *scsi)
             if (scsi->irq_requests[c] != IRQ_TYPE_NONE) {
                 /* Found IRQ */
                 scsi->irq_status = c | (scsi->irq_requests[c] << 4);
-                spock_log("Found IRQ: status = %02x\n", scsi->irq_status);
+                spock_log("Found IRQ: status=%02x.\n", scsi->irq_status);
                 scsi->status |= STATUS_IRQ;
                 irq_pending = 1;
                 break;
@@ -243,38 +245,37 @@ spock_rethink_irqs(spock_t *scsi)
     } else
         irq_pending = 1;
 
+    spock_log("spock_rethink_irqs: irqstat=%02x, ctrl=%02x, irqpend=%d.\n", scsi->irq_status, scsi->basic_ctrl, irq_pending);
     if (scsi->basic_ctrl & CTRL_IRQ_ENA) {
         if (irq_pending) {
             spock_log("IRQ issued\n");
-            scsi->irq_inactive = 0;
+            scsi->status |= STATUS_IRQ;
             picint(1 << scsi->irq);
         } else {
             /* No IRQs pending, clear IRQ state */
             spock_log("IRQ cleared\n");
-            scsi->irq_status   = 0;
-            scsi->irq_inactive = 1;
-            scsi->status &= ~STATUS_IRQ;
             picintc(1 << scsi->irq);
         }
     } else {
-        spock_log("IRQ disabled\n");
-        picintc(1 << scsi->irq);
+        spock_log("IRQ disabled, pending=%d.\n", irq_pending);
+        if (irq_pending)
+            scsi->status |= STATUS_IRQ;
     }
 }
 
-static __inline void
+static void
 spock_set_irq(spock_t *scsi, int id, int type)
 {
-    spock_log("spock_set_irq id=%i type=%x %02x\n", id, type, scsi->irq_status);
+    spock_log("spock_set_irq: id=%i, type=%x, irqstat=%02x\n", id, type, scsi->irq_status);
     scsi->irq_requests[id] = type;
     if (!scsi->irq_status) /* Don't change IRQ status if one is currently being processed */
         spock_rethink_irqs(scsi);
 }
 
-static __inline void
+static void
 spock_clear_irq(spock_t *scsi, int id)
 {
-    spock_log("spock_clear_irq id=%i\n", id);
+    spock_log("spock_clear_irq: id=%i.\n", id);
     scsi->irq_requests[id] = IRQ_TYPE_NONE;
     spock_rethink_irqs(scsi);
 }
@@ -290,7 +291,7 @@ spock_write(uint16_t port, uint8_t val, void *priv)
 {
     spock_t *scsi = (spock_t *) priv;
 
-    spock_log("spock_write: port=%04x val=%02x %04x:%04x\n", port, val, CS, cpu_state.pc);
+    spock_log("%04X:%08X: spock_writeb: port=%04x, val=%02x.\n", CS, cpu_state.pc, port & 7, val);
 
     switch (port & 7) {
         case 0:
@@ -306,16 +307,14 @@ spock_write(uint16_t port, uint8_t val, void *priv)
 
         case 4: /*Attention Register*/
             scsi->attention_pending = val;
-            scsi->attention_wait    = 2;
+            scsi->attention_wait = 2;
             scsi->status |= STATUS_BUSY;
             break;
 
         case 5: /*Basic Control Register*/
-            if ((scsi->basic_ctrl & CTRL_RESET) && !(val & CTRL_RESET)) {
+            if (!(scsi->basic_ctrl & CTRL_RESET) && (val & CTRL_RESET)) {
                 spock_log("Spock: SCSI reset and busy\n");
-                scsi->in_reset  = 1;
-                scsi->cmd_timer = SPOCK_TIME * 2;
-                scsi->status |= STATUS_BUSY;
+                spock_reset(scsi);
             }
             scsi->basic_ctrl = val;
             spock_rethink_irqs(scsi);
@@ -330,6 +329,8 @@ static void
 spock_writew(uint16_t port, uint16_t val, void *priv)
 {
     spock_t *scsi = (spock_t *) priv;
+
+    spock_log("%04X:%08X: spock_writew: port=%04x, val=%04x.\n", CS, cpu_state.pc, port & 7, val);
 
     switch (port & 7) {
         case 0: /*Command Interface Register*/
@@ -346,8 +347,6 @@ spock_writew(uint16_t port, uint16_t val, void *priv)
         default:
             break;
     }
-
-    spock_log("spock_writew: port=%04x val=%04x\n", port, val);
 }
 
 static uint8_t
@@ -389,7 +388,7 @@ spock_read(uint16_t port, void *priv)
             break;
     }
 
-    spock_log("spock_read: port=%04x val=%02x %04x(%05x):%04x.\n", port, temp, CS, cs, cpu_state.pc);
+    spock_log("%04X:%08X: spock_readb: port=%04x, temp=%02x.\n", CS, cpu_state.pc, port & 7, temp);
     return temp;
 }
 
@@ -411,7 +410,7 @@ spock_readw(uint16_t port, void *priv)
             break;
     }
 
-    spock_log("spock_readw: port=%04x val=%04x\n", port, temp);
+    spock_log("spock_readw: port=%04x, val=%04x, %04x:%04x.\n", port & 7, temp, CS, cpu_state.pc);
     return temp;
 }
 
@@ -440,25 +439,20 @@ spock_get_len(spock_t *scsi, scb_t *scb)
             DataToTransfer += scb->sge.sys_buf_byte_count;
         }
         return DataToTransfer;
-    } else {
-        return (scsi->data_len);
     }
+    return (scsi->data_len);
 }
 
 static void
 spock_process_imm_cmd(spock_t *scsi)
 {
     int i;
-    int j = 0;
     int adapter_id;
     int phys_id;
     int lun_id;
 
-    scsi->assign = 0;
-
     switch (scsi->command & CMD_MASK) {
         case CMD_ASSIGN:
-            scsi->assign = 1;
             adapter_id   = (scsi->command >> 16) & 15;
             phys_id      = (scsi->command >> 20) & 7;
             lun_id       = (scsi->command >> 24) & 7;
@@ -471,14 +465,23 @@ spock_process_imm_cmd(spock_t *scsi)
                 if (scsi->command & (1 << 23)) {
                     spock_log("Assign: adapter id=%d\n", adapter_id);
                     scsi->dev_id[adapter_id].phys_id = -1;
+                    scsi->id_connected = 0;
                     spock_set_irq(scsi, scsi->attention & 0x0f, IRQ_TYPE_IMM_CMD_COMPLETE);
                 } else {
                     if (phys_id != scsi->adapter_id) {
                         scsi->dev_id[adapter_id].phys_id = phys_id;
                         scsi->dev_id[adapter_id].lun_id  = lun_id;
-                        spock_log("Assign: adapter dev=%x scsi ID=%i LUN=%i.\n", adapter_id, scsi->dev_id[adapter_id].phys_id, scsi->dev_id[adapter_id].lun_id);
+                        if (scsi_device_present(&scsi_devices[scsi->bus][phys_id])) {
+                            scsi->present[scsi->id_connected] = 1;
+                            if (lun_id == 0)
+                                scsi->id_connected++;
+                        } else
+                            scsi->present[scsi->id_connected] = 0;
+
+                        spock_log("Assign: adapter dev=%d, scsi ID=%i, LUN=%i, attention devsel=%d, present=%d, connected=%d.\n", adapter_id, scsi->dev_id[adapter_id].phys_id, scsi->dev_id[adapter_id].lun_id, scsi->attention & 0x0f, scsi->present[scsi->id_connected], scsi->id_connected);
                         spock_set_irq(scsi, scsi->attention & 0x0f, IRQ_TYPE_IMM_CMD_COMPLETE);
                     } else { /*Can not assign adapter*/
+                        scsi->id_connected = 0;
                         spock_log("Assign: PUN=%d, cannot assign adapter.\n", phys_id);
                         spock_set_irq(scsi, scsi->attention & 0x0f, IRQ_TYPE_COMMAND_FAIL);
                     }
@@ -495,29 +498,20 @@ spock_process_imm_cmd(spock_t *scsi)
             spock_set_irq(scsi, scsi->attention & 0x0f, IRQ_TYPE_IMM_CMD_COMPLETE);
             break;
         case CMD_INVALID_412:
-            spock_log("Invalid 412\n");
+            spock_log("Invalid 412.\n");
             spock_set_irq(scsi, scsi->attention & 0x0f, IRQ_TYPE_IMM_CMD_COMPLETE);
             break;
         case CMD_RESET:
-            spock_log("Reset Command, attention = %d.\n", scsi->attention & 0x0f);
+            scsi->id_connected = 0;
+            spock_log("Reset command, attention=%02x.\n", scsi->attention & 0x0f);
             if ((scsi->attention & 0x0f) == 0x0f) { /*Adapter reset*/
-                for (i = 0; i < 8; i++) {
+                for (i = 0; i < 8; i++)
                     scsi_device_reset(&scsi_devices[scsi->bus][i]);
-                }
 
-                for (i = 6; i > -1; i--) {
-                    if (scsi_device_present(&scsi_devices[scsi->bus][i])) {
-                        spock_log("Adapter Reset, SCSI reset present devices=%d, phys ID=%d, type=%04x.\n", j, scsi->dev_id[i].phys_id, scsi_devices[scsi->bus][i].type);
-                        scsi->present[j] = i;
-                        j++;
-                    } else {
-                        spock_log("Adapter Reset, SCSI reset not present devices=%d, phys ID=%d, type=%04x.\n", j, scsi->dev_id[i].phys_id, scsi_devices[scsi->bus][i].type);
-                    }
-                }
+            } else if ((scsi->attention & 0x0f) < 7) /*Device reset*/
+                scsi_device_reset(&scsi_devices[scsi->bus][scsi->attention & 0x0f]);
 
-                scsi->scb_state = 0;
-            }
-
+            scsi->scb_state = 0;
             spock_set_irq(scsi, scsi->attention & 0x0f, IRQ_TYPE_IMM_CMD_COMPLETE);
             break;
 
@@ -531,23 +525,13 @@ static void
 spock_execute_cmd(spock_t *scsi, scb_t *scb)
 {
     int c;
-    int j = 0;
     int old_scb_state;
 
     if (scsi->in_reset) {
-        spock_log("Reset type = %d\n", scsi->in_reset);
-
         scsi->status &= ~STATUS_BUSY;
-        scsi->irq_status = 0;
 
-        for (c = 0; c < SCSI_ID_MAX; c++)
-            spock_clear_irq(scsi, c);
-
-        if (scsi->in_reset == 1) {
-            scsi->basic_ctrl |= CTRL_IRQ_ENA;
-        }
-
-        spock_set_irq(scsi, 0x0f, IRQ_TYPE_RESET_COMPLETE);
+        scsi->irq_status = 0x0f;
+        spock_rethink_irqs(scsi);
 
         /*Reset device mappings*/
         for (c = 0; c < 7; c++) {
@@ -558,16 +542,7 @@ spock_execute_cmd(spock_t *scsi, scb_t *scb)
             scsi->dev_id[c].phys_id = -1;
 
         scsi->in_reset = 0;
-
-        for (c = 6; c > -1; c--) {
-            if (scsi_device_present(&scsi_devices[scsi->bus][c])) {
-                spock_log("Reset, SCSI reset present devices=%d, phys ID=%d, type=%04x.\n", j, scsi->dev_id[c].phys_id, scsi_devices[scsi->bus][c].type);
-                scsi->present[j] = c;
-                j++;
-            } else {
-                spock_log("Reset, SCSI reset not present devices=%d, phys ID=%d, type=%04x.\n", j, scsi->dev_id[c].phys_id, scsi_devices[scsi->bus][c].type);
-            }
-        }
+        spock_log("Reset.\n");
         return;
     }
 
@@ -585,6 +560,7 @@ spock_execute_cmd(spock_t *scsi, scb_t *scb)
 
         switch (scsi->scb_state) {
             case 0: /* Idle */
+                spock_log("Start Idle.\n");
                 break;
 
             case 1: /* Select */
@@ -674,10 +650,10 @@ spock_execute_cmd(spock_t *scsi, scb_t *scb)
                             spock_log("Get POS Info\n");
                             get_pos_info_t *get_pos_info = &scsi->get_pos_info;
 
-                            get_pos_info->pos  = 0x8eff;
+                            get_pos_info->pos  = scsi->spock_16bit ? 0x8efe : 0x8eff;
                             get_pos_info->pos1 = scsi->pos_regs[3] | (scsi->pos_regs[2] << 8);
-                            get_pos_info->pos2 = 0x0e | (scsi->pos_regs[4] << 8);
-                            get_pos_info->pos3 = 1 << 12;
+                            get_pos_info->pos2 = scsi->irq | (scsi->pos_regs[4] << 8);
+                            get_pos_info->pos3 = scsi->spock_16bit ? (1 << 12) : (0 << 12);
                             get_pos_info->pos4 = (7 << 8) | 8;
                             get_pos_info->pos5 = (16 << 8) | scsi->pacing;
                             get_pos_info->pos6 = (30 << 8) | 1;
@@ -698,8 +674,15 @@ spock_execute_cmd(spock_t *scsi, scb_t *scb)
                         break;
 
                     case CMD_DEVICE_INQUIRY:
-                        scsi->cdb_id = scsi->assign ? scsi->dev_id[scsi->scb_id].phys_id : scsi->present[scsi->scb_id];
-                        spock_log("Device Inquiry, ID=%d\n", scsi->cdb_id);
+                        if (scsi->scb_id != 15) {
+                            if (scsi->present[scsi->scb_id])
+                                scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+                            else
+                                scsi->cdb_id = 0xff;
+                        } else
+                            scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+
+                        spock_log("Device Inquiry, ID=%d, connected=%d, present=%d.\n", scsi->cdb_id, scsi->id_connected, scsi->present[scsi->scb_id + 1]);
                         scsi->cdb[0]     = GPCMD_INQUIRY;
                         scsi->cdb[1]     = scsi->dev_id[scsi->scb_id].lun_id << 5; /*LUN*/
                         scsi->cdb[2]     = 0;                                      /*Page code*/
@@ -714,9 +697,16 @@ spock_execute_cmd(spock_t *scsi, scb_t *scb)
                         return;
 
                     case CMD_SEND_OTHER_SCSI:
-                        scsi->cdb_id = scsi->assign ? scsi->dev_id[scsi->scb_id].phys_id : scsi->present[scsi->scb_id];
+                        if (scsi->scb_id != 15) {
+                            if (scsi->present[scsi->scb_id])
+                                scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+                            else
+                                scsi->cdb_id = 0xff;
+                        } else
+                            scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+
                         dma_bm_read(scsi->scb_addr + 0x18, scsi->cdb, 12, 2);
-                        spock_log("Send Other SCSI, SCB ID=%d, PHYS ID=%d\n", scsi->scb_id, scsi->dev_id[scsi->scb_id].phys_id);
+                        spock_log("Send Other SCSI, SCB ID=%d, PHYS ID=%d, LUN=%d, CDB[0]=%02x, CDB_ID=%d, ID Present=%d.\n", scsi->scb_id, scsi->dev_id[scsi->scb_id].phys_id, scsi->dev_id[scsi->scb_id].lun_id, scsi->cdb[0], scsi->cdb_id, scsi->present[scsi->scb_id + 1]);
                         scsi->cdb[1]     = (scsi->cdb[1] & 0x1f) | (scsi->dev_id[scsi->scb_id].lun_id << 5); /*Patch correct LUN into command*/
                         scsi->cdb_len    = (scb->lba_addr & 0xff) ? (scb->lba_addr & 0xff) : 6;
                         scsi->scsi_state = SCSI_STATE_SELECT;
@@ -724,7 +714,14 @@ spock_execute_cmd(spock_t *scsi, scb_t *scb)
                         return;
 
                     case CMD_READ_DEVICE_CAPACITY:
-                        scsi->cdb_id = scsi->assign ? scsi->dev_id[scsi->scb_id].phys_id : scsi->present[scsi->scb_id];
+                        if (scsi->scb_id != 15) {
+                            if (scsi->present[scsi->scb_id])
+                                scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+                            else
+                                scsi->cdb_id = 0xff;
+                        } else
+                            scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+
                         spock_log("Device Capacity, SCB ID=%d, PHYS ID=%d\n", scsi->scb_id, scsi->dev_id[scsi->scb_id].phys_id);
                         scsi->cdb[0]     = GPCMD_READ_CDROM_CAPACITY;
                         scsi->cdb[1]     = scsi->dev_id[scsi->scb_id].lun_id << 5; /*LUN*/
@@ -742,7 +739,14 @@ spock_execute_cmd(spock_t *scsi, scb_t *scb)
                         return;
 
                     case CMD_READ_DATA:
-                        scsi->cdb_id = scsi->assign ? scsi->dev_id[scsi->scb_id].phys_id : scsi->present[scsi->scb_id];
+                        if (scsi->scb_id != 15) {
+                            if (scsi->present[scsi->scb_id])
+                                scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+                            else
+                                scsi->cdb_id = 0xff;
+                        } else
+                            scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+
                         spock_log("Device Read Data, SCB ID=%d, PHYS ID=%d\n", scsi->scb_id, scsi->dev_id[scsi->scb_id].phys_id);
                         scsi->cdb[0]     = GPCMD_READ_10;
                         scsi->cdb[1]     = scsi->dev_id[scsi->scb_id].lun_id << 5; /*LUN*/
@@ -760,7 +764,14 @@ spock_execute_cmd(spock_t *scsi, scb_t *scb)
                         return;
 
                     case CMD_WRITE_DATA:
-                        scsi->cdb_id = scsi->assign ? scsi->dev_id[scsi->scb_id].phys_id : scsi->present[scsi->scb_id];
+                        if (scsi->scb_id != 15) {
+                            if (scsi->present[scsi->scb_id])
+                                scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+                            else
+                                scsi->cdb_id = 0xff;
+                        } else
+                            scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+
                         spock_log("Device Write Data\n");
                         scsi->cdb[0]     = GPCMD_WRITE_10;
                         scsi->cdb[1]     = scsi->dev_id[scsi->scb_id].lun_id << 5; /*LUN*/
@@ -778,7 +789,14 @@ spock_execute_cmd(spock_t *scsi, scb_t *scb)
                         return;
 
                     case CMD_VERIFY:
-                        scsi->cdb_id = scsi->assign ? scsi->dev_id[scsi->scb_id].phys_id : scsi->present[scsi->scb_id];
+                        if (scsi->scb_id != 15) {
+                            if (scsi->present[scsi->scb_id])
+                                scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+                            else
+                                scsi->cdb_id = 0xff;
+                        } else
+                            scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+
                         spock_log("Device Verify\n");
                         scsi->cdb[0]     = GPCMD_VERIFY_10;
                         scsi->cdb[1]     = scsi->dev_id[scsi->scb_id].lun_id << 5; /*LUN*/
@@ -796,8 +814,40 @@ spock_execute_cmd(spock_t *scsi, scb_t *scb)
                         scsi->scb_state  = 2;
                         return;
 
+                    case CMD_WRITE_VERIFY:
+                        if (scsi->scb_id != 15) {
+                            if (scsi->present[scsi->scb_id])
+                                scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+                            else
+                                scsi->cdb_id = 0xff;
+                        } else
+                            scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+
+                        spock_log("Device Write with Verify\n");
+                        scsi->cdb[0]     = GPCMD_WRITE_AND_VERIFY_10;
+                        scsi->cdb[1]     = scsi->dev_id[scsi->scb_id].lun_id << 5; /*LUN*/
+                        scsi->cdb[2]     = (scb->lba_addr >> 24) & 0xff;           /*LBA*/
+                        scsi->cdb[3]     = (scb->lba_addr >> 16) & 0xff;
+                        scsi->cdb[4]     = (scb->lba_addr >> 8) & 0xff;
+                        scsi->cdb[5]     = scb->lba_addr & 0xff;
+                        scsi->cdb[6]     = 0; /*Reserved*/
+                        scsi->cdb[7]     = (scb->block_count >> 8) & 0xff;
+                        scsi->cdb[8]     = scb->block_count & 0xff;
+                        scsi->cdb[9]     = 0; /*Control*/
+                        scsi->cdb_len    = 10;
+                        scsi->scsi_state = SCSI_STATE_SELECT;
+                        scsi->scb_state  = 2;
+                        return;
+
                     case CMD_REQUEST_SENSE:
-                        scsi->cdb_id = scsi->assign ? scsi->dev_id[scsi->scb_id].phys_id : scsi->present[scsi->scb_id];
+                        if (scsi->scb_id != 15) {
+                            if (scsi->present[scsi->scb_id])
+                                scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+                            else
+                                scsi->cdb_id = 0xff;
+                        } else
+                            scsi->cdb_id = scsi->dev_id[scsi->scb_id].phys_id;
+
                         spock_log("Device Request Sense, ID=%d\n", scsi->cdb_id);
                         scsi->cdb[0]     = GPCMD_REQUEST_SENSE;
                         scsi->cdb[1]     = scsi->dev_id[scsi->scb_id].lun_id << 5; /*LUN*/
@@ -817,10 +867,10 @@ spock_execute_cmd(spock_t *scsi, scb_t *scb)
 
             case 2: /* Wait */
                 if (scsi->scsi_state == SCSI_STATE_IDLE) {
-                    if (scsi_device_present(&scsi_devices[scsi->bus][scsi->cdb_id])) {
+                    if (scsi_device_present(&scsi_devices[scsi->bus][scsi->cdb_id]) && (scsi->cdb_id != 0xff)) {
                         if (scsi->last_status == SCSI_STATUS_OK) {
                             scsi->scb_state = 3;
-                            spock_log("Status is Good on device ID %d, cdb id = %d.\n", scsi->scb_id, scsi->cdb_id);
+                            spock_log("Status is Good on device ID %d, cdb id = %d, devsel = %d.\n", scsi->scb_id, scsi->cdb_id, scsi->attention & 0x0f);
                         } else if (scsi->last_status == SCSI_STATUS_CHECK_CONDITION) {
                             uint16_t term_stat_block_addr7 = (0xc << 8) | 2;
                             uint16_t term_stat_block_addr8 = 0x20;
@@ -855,7 +905,7 @@ spock_execute_cmd(spock_t *scsi, scb_t *scb)
                 } else {
                     spock_set_irq(scsi, scsi->scb_id, IRQ_TYPE_SCB_COMPLETE);
                     scsi->scb_state = 0;
-                    spock_log("Complete SCB ID = %d.\n", scsi->attention & 0x0f);
+                    spock_log("Complete SCB ID = %d.\n", scsi->scb_id);
                 }
                 break;
 
@@ -877,7 +927,7 @@ spock_process_scsi(spock_t *scsi, scb_t *scb)
 
         case SCSI_STATE_SELECT:
             spock_log("Selecting ID %d, SCB ID %d, LUN %d, adapter id = %d.\n", scsi->cdb_id, scsi->scb_id, scsi->dev_id[scsi->scb_id].lun_id, scsi->attention);
-            if ((scsi->cdb_id != (uint8_t) -1) && scsi_device_present(&scsi_devices[scsi->bus][scsi->cdb_id])) {
+            if ((scsi->cdb_id != 0xff) && scsi_device_present(&scsi_devices[scsi->bus][scsi->cdb_id])) {
                 scsi->scsi_state = SCSI_STATE_SEND_COMMAND;
                 spock_log("Device selected at ID %i.\n", scsi->cdb_id);
             } else {
@@ -892,6 +942,7 @@ spock_process_scsi(spock_t *scsi, scb_t *scb)
             break;
 
         case SCSI_STATE_SEND_COMMAND:
+            spock_log("Send Command ID=%d.\n", scsi->cdb_id);
             sd = &scsi_devices[scsi->bus][scsi->cdb_id];
             memset(scsi->temp_cdb, 0x00, 12);
 
@@ -913,10 +964,12 @@ spock_process_scsi(spock_t *scsi, scb_t *scb)
             else
                 sd->buffer_length = spock_get_len(scsi, scb);
 
-            scsi_device_command_phase0(sd, scsi->temp_cdb);
-            spock_log("SCSI ID %i: Current CDB[0] = %02x, LUN = %i, data len = %i, max len = %i, phase val = %02x\n", scsi->cdb_id, scsi->temp_cdb[0], scsi->temp_cdb[1] >> 5, sd->buffer_length, spock_get_len(scsi, scb), sd->phase);
+            scsi_device_identify(sd, scsi->temp_cdb[1] >> 5);
 
-            if (sd->phase != SCSI_PHASE_STATUS && sd->buffer_length > 0) {
+            scsi_device_command_phase0(sd, scsi->temp_cdb);
+            spock_log("SCSI ID %i: Current CDB[0]=%02x, LUN=%i, buffer len=%i, max len=%i, phase val=%02x, data len=%d, enable bit 10=%03x\n", scsi->cdb_id, scsi->temp_cdb[0], scsi->temp_cdb[1] >> 5, sd->buffer_length, spock_get_len(scsi, scb), sd->phase, scsi->data_len, scb->enable & 0x400);
+
+            if ((sd->phase != SCSI_PHASE_STATUS) && (sd->buffer_length > 0)) {
                 p = scsi_device_get_callback(sd);
                 if (p <= 0.0)
                     spock_add_to_period(scsi, sd->buffer_length);
@@ -953,9 +1006,9 @@ spock_process_scsi(spock_t *scsi, scb_t *scb)
                     }
                 } else {
                     spock_log("Normal Transfer\n");
-                    if (sd->phase == SCSI_PHASE_DATA_IN) {
+                    if (sd->phase == SCSI_PHASE_DATA_IN)
                         dma_bm_write(scsi->data_ptr, sd->sc->temp_buffer, MIN(sd->buffer_length, (int) scsi->data_len), 2);
-                    } else if (sd->phase == SCSI_PHASE_DATA_OUT)
+                    else if (sd->phase == SCSI_PHASE_DATA_OUT)
                         dma_bm_read(scsi->data_ptr, sd->sc->temp_buffer, MIN(sd->buffer_length, (int) scsi->data_len), 2);
                 }
 
@@ -966,12 +1019,16 @@ spock_process_scsi(spock_t *scsi, scb_t *scb)
             break;
 
         case SCSI_STATE_END_PHASE:
+            sd = &scsi_devices[scsi->bus][scsi->cdb_id];
             scsi->scsi_state = SCSI_STATE_IDLE;
 
+            if (sd->type != SCSI_NONE)
+                scsi_device_identify(sd, SCSI_LUN_USE_CDB);
+
             spock_log("State to idle, cmd timer %d\n", scsi->cmd_timer);
-            if (!scsi->cmd_timer) {
+            if (!scsi->cmd_timer)
                 scsi->cmd_timer = 1;
-            }
+
             spock_add_to_period(scsi, 1);
             break;
     }
@@ -989,12 +1046,11 @@ spock_callback(void *priv)
 
     if (scsi->cmd_timer) {
         scsi->cmd_timer--;
-        if (!scsi->cmd_timer) {
+        if (!scsi->cmd_timer)
             spock_execute_cmd(scsi, scb);
-        }
     }
 
-    if (scsi->attention_wait && (scsi->scb_state == 0 || (scsi->attention_pending & 0xf0) == 0xe0)) {
+    if (scsi->attention_wait && ((scsi->scb_state == 0) || (scsi->attention_pending & 0xf0) == 0xe0)) {
         scsi->attention_wait--;
         if (!scsi->attention_wait) {
             scsi->attention = scsi->attention_pending;
@@ -1028,10 +1084,10 @@ spock_callback(void *priv)
                 case 4:
                 case 0x0f: /*Start SCB*/
                     scsi->cmd_status = 1;
-                    scsi->scb_addr   = scsi->cir[0] | (scsi->cir[1] << 8) | (scsi->cir[2] << 16) | (scsi->cir[3] << 24);
-                    scsi->scb_id     = scsi->attention & 0x0f;
+                    scsi->scb_addr = scsi->cir[0] | (scsi->cir[1] << 8) | (scsi->cir[2] << 16) | (scsi->cir[3] << 24);
+                    scsi->scb_id = scsi->attention & 0x0f;
                     scsi->cmd_timer  = SPOCK_TIME * 2;
-                    spock_log("Start SCB at ID = %d, attention = %02x\n", scsi->scb_id, scsi->attention >> 4);
+                    spock_log("Start SCB at ID = %d, attention = %02x, cdb_id = %d\n", scsi->scb_id, scsi->attention >> 4, scsi->cdb_id);
                     scsi->scb_state = 1;
                     break;
 
@@ -1043,6 +1099,7 @@ spock_callback(void *priv)
 
                 case 0x0e: /*EOI*/
                     scsi->irq_status = 0;
+                    scsi->status &= ~STATUS_IRQ;
                     spock_clear_irq(scsi, scsi->attention & 0x0f);
                     break;
 
@@ -1055,8 +1112,8 @@ spock_callback(void *priv)
     spock_process_scsi(scsi, scb);
 
     period = 0.2 * ((double) scsi->temp_period);
-    timer_on(&scsi->callback_timer, (scsi->media_period + period + 10.0), 0);
-    spock_log("Temporary period: %lf us (%" PRIi64 " periods)\n", scsi->callback_timer.period, scsi->temp_period);
+    timer_on_auto(&scsi->callback_timer, (scsi->media_period + period + 10.0));
+    spock_log("Temporary period: %lf us (%" PRIi64 " periods), media period = %lf\n", scsi->callback_timer.period, scsi->temp_period, scsi->media_period);
 }
 
 static void
@@ -1067,20 +1124,30 @@ spock_mca_write(int port, uint8_t val, void *priv)
     if (port < 0x102)
         return;
 
-    io_removehandler((((scsi->pos_regs[2] >> 1) & 7) * 8) + 0x3540, 0x0008, spock_read, spock_readw, NULL, spock_write, spock_writew, NULL, scsi);
+    io_removehandler((((scsi->pos_regs[2] >> 1) & 7) << 3) + 0x3540, 0x0008, spock_read, spock_readw, NULL, spock_write, spock_writew, NULL, scsi);
     mem_mapping_disable(&scsi->bios_rom.mapping);
 
     scsi->pos_regs[port & 7] = val;
 
     scsi->adapter_id = (scsi->pos_regs[3] & 0xe0) >> 5;
 
-    if (scsi->pos_regs[2] & 1) {
-        io_sethandler((((scsi->pos_regs[2] >> 1) & 7) * 8) + 0x3540, 0x0008, spock_read, spock_readw, NULL, spock_write, spock_writew, NULL, scsi);
-        if ((scsi->pos_regs[2] & 0xf0) != 0xf0) {
-            mem_mapping_set_addr(&scsi->bios_rom.mapping, ((scsi->pos_regs[2] >> 4) * 0x2000) + 0xc0000, 0x8000);
-            mem_mapping_enable(&scsi->bios_rom.mapping);
+    if (scsi->pos_regs[2] & 0x01) {
+        io_sethandler((((scsi->pos_regs[2] >> 1) & 7) << 3) + 0x3540, 0x0008, spock_read, spock_readw, NULL, spock_write, spock_writew, NULL, scsi);
+        if (scsi->pos_regs[4] & 0x02) {
+            if (scsi->pos_regs[4] & 0x80) {
+                if (((scsi->pos_regs[2] >> 4) & 0x0f) != 0x0f) {
+                    mem_mapping_set_addr(&scsi->bios_rom.mapping, ((scsi->pos_regs[2] >> 4) * 0x2000) + 0xc0000, 0x8000);
+                    mem_mapping_enable(&scsi->bios_rom.mapping);
+                }
+            } else {
+                if (((scsi->pos_regs[2] >> 4) & 0x0f) != 0x0f) {
+                    mem_mapping_set_addr(&scsi->bios_rom.mapping, ((scsi->pos_regs[2] >> 4) * 0x2000) + 0xc0000, 0x4000);
+                    mem_mapping_enable(&scsi->bios_rom.mapping);
+                }
+            }
         }
     }
+    spock_log("%04X:%08X: POS Write Port=%x, val=%02x.\n", CS, cpu_state.pc, port & 7, val);
 }
 
 static uint8_t
@@ -1088,6 +1155,8 @@ spock_mca_read(int port, void *priv)
 {
     const spock_t *scsi = (spock_t *) priv;
 
+    spock_log("%04X:%08X: POS Read Port=%x, temp=%02x.\n", CS, cpu_state.pc,
+            port & 7, scsi->pos_regs[port & 7]);
     return scsi->pos_regs[port & 7];
 }
 
@@ -1099,12 +1168,13 @@ spock_mca_feedb(void *priv)
     return (scsi->pos_regs[2] & 0x01);
 }
 
+
 static void
-spock_mca_reset(void *priv)
+spock_reset(void *priv)
 {
     spock_t *scsi = (spock_t *) priv;
 
-    scsi->in_reset       = 2;
+    scsi->in_reset       = 1;
     scsi->cmd_timer      = SPOCK_TIME * 50;
     scsi->status         = STATUS_BUSY;
     scsi->scsi_state     = SCSI_STATE_IDLE;
@@ -1112,33 +1182,41 @@ spock_mca_reset(void *priv)
     scsi->in_invalid     = 0;
     scsi->attention_wait = 0;
     scsi->basic_ctrl     = 0;
+    scsi->id_connected   = 0;
 
-    /* Reset all devices on controller reset. */
-    for (uint8_t i = 0; i < 8; i++) {
-        scsi_device_reset(&scsi_devices[scsi->bus][i]);
-        scsi->present[i] = 0;
-    }
+    spock_log("Actual Reset.\n");
+}
+
+static void
+spock_mca_reset(void *priv)
+{
+    spock_t *scsi = (spock_t *) priv;
+
+    spock_reset(scsi);
+    mem_mapping_disable(&scsi->bios_rom.mapping);
+    scsi->pos_regs[4] = 0x02;
+    spock_mca_write(0x102, 0, scsi);
 }
 
 static void *
-spock_init(UNUSED(const device_t *info))
+spock_init(const device_t *info)
 {
-    spock_t *scsi = malloc(sizeof(spock_t));
-    memset(scsi, 0x00, sizeof(spock_t));
+    spock_t *scsi = calloc(1, sizeof(spock_t));
 
     scsi->bus = scsi_get_bus();
 
     scsi->irq = 14;
 
     scsi->bios_ver = device_get_config_int("bios_ver");
+    scsi->spock_16bit = info->local & 0xff;
 
     switch (scsi->bios_ver) {
-        case 1:
-            rom_init_interleaved(&scsi->bios_rom, SPOCK_U68_1991_ROM, SPOCK_U69_1991_ROM,
-                                 0xc8000, 0x8000, 0x7fff, 0x4000, MEM_MAPPING_EXTERNAL);
-            break;
         case 0:
             rom_init_interleaved(&scsi->bios_rom, SPOCK_U68_1990_ROM, SPOCK_U69_1990_ROM,
+                                 0xc8000, 0x8000, 0x7fff, 0x4000, MEM_MAPPING_EXTERNAL);
+            break;
+        case 1:
+            rom_init_interleaved(&scsi->bios_rom, SPOCK_U68_1991_ROM, SPOCK_U69_1991_ROM,
                                  0xc8000, 0x8000, 0x7fff, 0x4000, MEM_MAPPING_EXTERNAL);
             break;
 
@@ -1147,23 +1225,25 @@ spock_init(UNUSED(const device_t *info))
     }
     mem_mapping_disable(&scsi->bios_rom.mapping);
 
-    scsi->pos_regs[0] = 0xff;
+    scsi->pos_regs[0] = scsi->spock_16bit ? 0xfe : 0xff;
     scsi->pos_regs[1] = 0x8e;
+    scsi->pos_regs[4] = 0x02;
     mca_add(spock_mca_read, spock_mca_write, spock_mca_feedb, spock_mca_reset, scsi);
 
-    scsi->in_reset  = 2;
-    scsi->cmd_timer = SPOCK_TIME * 50;
-    scsi->status    = STATUS_BUSY;
-
-    for (uint8_t c = 0; c < (SCSI_ID_MAX - 1); c++) {
+    for (uint8_t c = 0; c < (SCSI_ID_MAX - 1); c++)
         scsi->dev_id[c].phys_id = -1;
-    }
 
     scsi->dev_id[SCSI_ID_MAX - 1].phys_id = scsi->adapter_id;
 
     timer_add(&scsi->callback_timer, spock_callback, scsi, 1);
     scsi->callback_timer.period = 10.0;
-    timer_set_delay_u64(&scsi->callback_timer, (uint64_t) (scsi->callback_timer.period * ((double) TIMER_USEC)));
+
+    timer_set_delay_u64(&scsi->callback_timer,
+                        (uint64_t) (scsi->callback_timer.period * ((double) TIMER_USEC)));
+
+    scsi_bus_set_speed(scsi->bus, 5000000.0);
+
+    spock_reset(scsi);
 
     return scsi;
 }
@@ -1188,18 +1268,19 @@ spock_available(void)
 static const device_config_t spock_rom_config[] = {
   // clang-format off
     {
-        .name = "bios_ver",
-        .description = "BIOS Version",
-        .type = CONFIG_SELECTION,
-        .default_string = "",
-        .default_int = 1,
-        .file_filter = "",
-        .spinner = { 0 },
-        .selection = {
+        .name           = "bios_ver",
+        .description    = "BIOS Revision",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
             { .description = "1991 BIOS (>1GB)", .value = 1 },
             { .description = "1990 BIOS",        .value = 0 },
             { .description = ""                             }
         },
+        .bios           = { { 0 } }
     },
     { .name = "", .description = "", .type = CONFIG_END }
   // clang-format on
@@ -1212,8 +1293,22 @@ const device_t spock_device = {
     .local         = 0,
     .init          = spock_init,
     .close         = spock_close,
-    .reset         = NULL,
-    { .available = spock_available },
+    .reset         = spock_reset,
+    .available     = spock_available,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = spock_rom_config
+};
+
+const device_t tribble_device = {
+    .name          = "IBM PS/2 SCSI Adapter (Tribble)",
+    .internal_name = "tribble",
+    .flags         = DEVICE_MCA,
+    .local         = 1,
+    .init          = spock_init,
+    .close         = spock_close,
+    .reset         = spock_reset,
+    .available     = spock_available,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = spock_rom_config

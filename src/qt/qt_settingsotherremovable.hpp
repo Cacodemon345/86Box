@@ -2,6 +2,7 @@
 #define QT_SETTINGSOTHERREMOVABLE_HPP
 
 #include <QWidget>
+#include <QStandardItemModel>
 
 namespace Ui {
 class SettingsOtherRemovable;
@@ -13,39 +14,40 @@ class SettingsOtherRemovable : public QWidget {
 public:
     explicit SettingsOtherRemovable(QWidget *parent = nullptr);
     ~SettingsOtherRemovable();
+    void reloadBusChannels_MO();
+    void reloadBusChannels_RDisk();
 
     void save();
 
-private slots:
-    void on_checkBoxZIP250_stateChanged(int arg1);
-
-private slots:
-    void on_comboBoxZIPChannel_activated(int index);
-
-private slots:
-    void on_comboBoxZIPBus_activated(int index);
-
-private slots:
-    void on_comboBoxZIPBus_currentIndexChanged(int index);
-
-private slots:
-    void on_comboBoxMOType_activated(int index);
-
-private slots:
-    void on_comboBoxMOChannel_activated(int index);
-
-private slots:
-    void on_comboBoxMOBus_activated(int index);
-
-private slots:
-    void on_comboBoxMOBus_currentIndexChanged(int index);
+signals:
+    void moChannelChanged();
+    void rdiskChannelChanged();
 
 private slots:
     void onMORowChanged(const QModelIndex &current);
-    void onZIPRowChanged(const QModelIndex &current);
+    void on_comboBoxMOBus_currentIndexChanged(int index);
+    void on_comboBoxMOBus_activated(int index);
+    void on_comboBoxMOChannel_activated(int index);
+    void on_comboBoxMOType_activated(int index);
+
+    void onRDiskRowChanged(const QModelIndex &current);
+    void on_comboBoxRDiskBus_currentIndexChanged(int index);
+    void on_comboBoxRDiskBus_activated(int index);
+    void on_comboBoxRDiskChannel_activated(int index);
+    void on_comboBoxRDiskType_activated(int index);
 
 private:
     Ui::SettingsOtherRemovable *ui;
+
+    void setMOBus(QAbstractItemModel *model, const QModelIndex &idx, uint8_t bus, uint8_t channel);
+    void setRDiskBus(QAbstractItemModel *model, const QModelIndex &idx, uint8_t bus, uint8_t channel);
+    void enableCurrentlySelectedChannel_MO();
+    void enableCurrentlySelectedChannel_RDisk();
+
+    QIcon mo_disabled_icon;
+    QIcon mo_icon;
+    QIcon rdisk_disabled_icon;
+    QIcon rdisk_icon;
 };
 
 #endif // QT_SETTINGSOTHERREMOVABLE_HPP

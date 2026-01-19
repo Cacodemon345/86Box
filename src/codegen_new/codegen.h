@@ -290,7 +290,6 @@ codegen_mark_code_present(codeblock_t *block, uint32_t start_pc, int len)
 }
 
 extern void codegen_init(void);
-extern void codegen_close(void);
 extern void codegen_reset(void);
 extern void codegen_block_init(uint32_t phys_addr);
 extern void codegen_block_remove(void);
@@ -307,6 +306,7 @@ struct ir_data_t;
 x86seg     *codegen_generate_ea(struct ir_data_t *ir, x86seg *op_ea_seg, uint32_t fetchdat, int op_ssegs, uint32_t *op_pc, uint32_t op_32, int stack_offset);
 extern void codegen_check_seg_read(codeblock_t *block, struct ir_data_t *ir, x86seg *seg);
 extern void codegen_check_seg_write(codeblock_t *block, struct ir_data_t *ir, x86seg *seg);
+extern void codegen_check_regs(void);
 
 extern int codegen_purge_purgable_list(void);
 /*Delete a random code block to free memory. This is obviously quite expensive, and
@@ -342,6 +342,7 @@ extern codegen_timing_t codegen_timing_686;
 extern codegen_timing_t codegen_timing_486;
 extern codegen_timing_t codegen_timing_winchip;
 extern codegen_timing_t codegen_timing_winchip2;
+extern codegen_timing_t codegen_timing_k5;
 extern codegen_timing_t codegen_timing_k6;
 extern codegen_timing_t codegen_timing_p6;
 

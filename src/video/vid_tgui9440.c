@@ -6,7 +6,7 @@
  *
  *          This file is part of the 86Box distribution.
  *
- *          Trident TGUI9400CXi and TGUI9440 emulation.
+ *          Trident TGUI9400CXi and TGUI9440/96x0 emulation.
  *
  *          TGUI9400CXi has extended write modes, controlled by extended
  *          GDC registers :
@@ -47,8 +47,6 @@
  *          access size or host data has any affect, but the Windows 3.1
  *          driver always reads bytes and write words of 0xffff.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          Miran Grca, <mgrca8@gmail.com>
  *
@@ -72,11 +70,13 @@
 #include <86box/video.h>
 #include <86box/i2c.h>
 #include <86box/vid_ddc.h>
+#include <86box/vid_xga.h>
 #include <86box/vid_svga.h>
 #include <86box/vid_svga_render.h>
 
 #define ROM_TGUI_9400CXI          "roms/video/tgui9440/9400CXI.VBI"
-#define ROM_TGUI_9440             "roms/video/tgui9440/BIOS.BIN"
+#define ROM_TGUI_9440_VLB         "roms/video/tgui9440/trident_9440_vlb.bin"
+#define ROM_TGUI_9440_PCI         "roms/video/tgui9440/BIOS.BIN"
 #define ROM_TGUI_96xx             "roms/video/tgui9660/Union.VBI"
 
 #define EXT_CTRL_16BIT            0x01
@@ -103,13 +103,15 @@ typedef struct tgui_t {
     svga_t svga;
     int    pci;
 
-    int type, card;
+    uint8_t pci_slot;
+    uint8_t irq_state;
+
+    int type;
 
     uint8_t int_line;
     uint8_t pci_regs[256];
 
-    struct
-    {
+    struct {
         int16_t  src_x, src_y;
         int16_t  src_x_clip, src_y_clip;
         int16_t  dst_x, dst_y;
@@ -122,12 +124,14 @@ typedef struct tgui_t {
         uint8_t  rop;
         uint32_t flags;
         uint8_t  pattern[0x80];
+        uint8_t  pattern_32bpp[0x100];
         int      command;
         int      offset;
         uint16_t ger22;
 
-        int16_t  err, top, left, bottom, right;
-        int      x, y, dx, dy;
+        int16_t  err;
+        int16_t  top, left, bottom, right;
+        int16_t  x, y, cx, cy, dx, dy;
         uint32_t src, dst, src_old, dst_old;
         int      pat_x, pat_y;
         int      use_src;
@@ -138,14 +142,14 @@ typedef struct tgui_t {
         uint32_t pattern_8[8 * 8];
         uint32_t pattern_16[8 * 8];
         uint32_t pattern_32[8 * 8];
+        int pattern_32_idx;
     } accel;
 
-    uint8_t ext_gdc_regs[16]; /*TGUI9400CXi only*/
-    uint8_t copy_latch[16];
+    uint8_t copy_latch[16]; /*TGUI9400CXi only*/
 
     uint8_t tgui_3d8, tgui_3d9;
     int     oldmode;
-    uint8_t oldctrl1, newctrl1;
+    uint8_t oldctrl1;
     uint8_t oldctrl2, newctrl2;
     uint8_t oldgr0e, newgr0e;
 
@@ -155,8 +159,9 @@ typedef struct tgui_t {
 
     int     ramdac_state;
     uint8_t ramdac_ctrl;
+    uint8_t alt_clock;
 
-    int clock_m, clock_n, clock_k;
+    uint16_t vclk;
 
     uint32_t vram_size, vram_mask;
 
@@ -205,11 +210,8 @@ static void    tgui_ext_writel(uint32_t addr, uint32_t val, void *priv);
 
 /*Remap address for chain-4/doubleword style layout*/
 static __inline uint32_t
-dword_remap(svga_t *svga, uint32_t in_addr)
+dword_remap(UNUSED(svga_t *svga), uint32_t in_addr)
 {
-    if (svga->packed_chain4)
-        return in_addr;
-
     return ((in_addr << 2) & 0x3fff0) | ((in_addr >> 14) & 0xc) | (in_addr & ~0x3fffc);
 }
 
@@ -219,11 +221,10 @@ tgui_update_irqs(tgui_t *tgui)
     if (!tgui->pci)
         return;
 
-    if (!(tgui->oldctrl1 & 0x40)) {
-        pci_set_irq(tgui->card, PCI_INTA);
-    } else {
-        pci_clear_irq(tgui->card, PCI_INTA);
-    }
+    if (!(tgui->oldctrl1 & 0x40))
+        pci_set_irq(tgui->pci_slot, PCI_INTA, &tgui->irq_state);
+    else
+        pci_clear_irq(tgui->pci_slot, PCI_INTA, &tgui->irq_state);
 }
 
 static void
@@ -293,7 +294,7 @@ tgui_out(uint16_t addr, uint8_t val, void *priv)
 {
     tgui_t *tgui = (tgui_t *) priv;
     svga_t *svga = &tgui->svga;
-    uint8_t old;
+    uint8_t old, o;
 
     if (((addr & 0xFFF0) == 0x3D0 || (addr & 0xFFF0) == 0x3B0) && !(svga->miscout & 1))
         addr ^= 0x60;
@@ -326,6 +327,18 @@ tgui_out(uint16_t addr, uint8_t val, void *priv)
                     if (!(svga->gdcreg[0xf] & 1))
                         svga->read_bank = svga->write_bank;
                     return;
+
+                case 0x5a:
+                case 0x5b:
+                case 0x5c:
+                case 0x5d:
+                case 0x5e:
+                case 0x5f:
+                    svga->seqregs[svga->seqaddr] = val;
+                    return;
+
+                default:
+                    break;
             }
             break;
 
@@ -337,20 +350,9 @@ tgui_out(uint16_t addr, uint8_t val, void *priv)
             if (tgui->ramdac_state == 4) {
                 tgui->ramdac_state = 0;
                 tgui->ramdac_ctrl  = val;
-                switch ((tgui->ramdac_ctrl >> 4) & 0x0f) {
-                    case 1:
-                        svga->bpp = 15;
-                        break;
-                    case 3:
-                        svga->bpp = 16;
-                        break;
-                    case 0x0d:
-                        svga->bpp = (tgui->type >= TGUI_9660) ? 32 : 24;
-                        break;
-                    default:
-                        svga->bpp = 8;
-                        break;
-                }
+#if 0
+                pclog("TGUI ramdac ctrl=%02x.\n", (tgui->ramdac_ctrl >> 4) & 0x0f);
+#endif
                 svga_recalctimings(svga);
                 return;
             }
@@ -367,30 +369,35 @@ tgui_out(uint16_t addr, uint8_t val, void *priv)
             break;
 
         case 0x3CF:
-            if (svga->gdcaddr == 0x23) {
-                svga->dpms = !!(val & 0x03);
-                svga_recalctimings(svga);
-            }
-            if (tgui->type == TGUI_9400CXI && svga->gdcaddr >= 16 && svga->gdcaddr < 32) {
-                old                                    = tgui->ext_gdc_regs[svga->gdcaddr & 15];
-                tgui->ext_gdc_regs[svga->gdcaddr & 15] = val;
-                if (svga->gdcaddr == 16)
-                    tgui_recalcmapping(tgui);
-                return;
-            }
+            o = svga->gdcreg[svga->gdcaddr];
             switch (svga->gdcaddr) {
-                case 0x6:
+                case 2:
+                    svga->colourcompare = val;
+                    break;
+                case 4:
+                    svga->readplane = val & 3;
+                    break;
+                case 5:
+                    svga->writemode   = val & 3;
+                    svga->readmode    = val & 8;
+                    svga->chain2_read = val & 0x10;
+                    break;
+                case 6:
                     if (svga->gdcreg[6] != val) {
                         svga->gdcreg[6] = val;
                         tgui_recalcmapping(tgui);
                     }
-                    return;
+                    break;
+                case 7:
+                    svga->colournocare = val;
+                    break;
 
                 case 0x0e:
                     svga->gdcreg[0xe] = val ^ 2;
                     if ((svga->gdcreg[0xf] & 1) == 1)
                         svga->read_bank = (svga->gdcreg[0xe]) * 65536;
                     break;
+
                 case 0x0f:
                     if (val & 1)
                         svga->read_bank = (svga->gdcreg[0xe]) * 65536;
@@ -407,6 +414,12 @@ tgui_out(uint16_t addr, uint8_t val, void *priv)
                         svga->write_bank = (svga->seqregs[0xe]) * 65536;
                     break;
 
+                case 0x23:
+                    svga->dpms = !!(val & 0x03);
+                    svga_recalctimings(svga);
+                    break;
+
+                case 0x2f:
                 case 0x5a:
                 case 0x5b:
                 case 0x5c:
@@ -415,12 +428,40 @@ tgui_out(uint16_t addr, uint8_t val, void *priv)
                 case 0x5f:
                     svga->gdcreg[svga->gdcaddr] = val;
                     break;
+
+                default:
+                    break;
             }
-            break;
+            svga->gdcreg[svga->gdcaddr] = val;
+
+            if (tgui->type == TGUI_9400CXI) {
+                if ((svga->gdcaddr >= 0x10) && (svga->gdcaddr <= 0x1f)) {
+                    tgui_recalcmapping(tgui);
+                    return;
+                }
+            }
+            svga->fast = (svga->gdcreg[8] == 0xff && !(svga->gdcreg[3] & 0x18) && !svga->gdcreg[1]) && ((svga->chain4 && (svga->packed_chain4 || svga->force_old_addr)) || svga->fb_only);
+            if (((svga->gdcaddr == 5) && ((val ^ o) & 0x70)) || ((svga->gdcaddr == 6) && ((val ^ o) & 1)))
+                svga_recalctimings(svga);
+            return;
         case 0x3D4:
             svga->crtcreg = val;
             return;
         case 0x3D5:
+            if (!(svga->seqregs[0x0e] & 0x80) && !tgui->oldmode) {
+                switch (svga->crtcreg) {
+                    case 0x21:
+                    case 0x29:
+                    case 0x2a:
+                    case 0x38:
+                    case 0x39:
+                    case 0x3b:
+                    case 0x3c:
+                        return;
+                    default:
+                        break;
+                }
+            }
             if ((svga->crtcreg < 7) && (svga->crtc[0x11] & 0x80))
                 return;
             if ((svga->crtcreg == 7) && (svga->crtc[0x11] & 0x80))
@@ -472,8 +513,12 @@ tgui_out(uint16_t addr, uint8_t val, void *priv)
                         svga->hwcursor.y = (svga->crtc[0x42] | (svga->crtc[0x43] << 8)) & 0x7ff;
 
                         if ((tgui->accel.ger22 & 0xff) == 8) {
-                            if (svga->bpp != 24)
+                            if (svga->bpp != 24) {
                                 svga->hwcursor.x <<= 1;
+                                svga_recalctimings(svga);
+                                if ((svga->vdisp == 1022) && svga->interlace)
+                                    svga->hwcursor.x >>= 1;
+                            }
                         }
 
                         svga->hwcursor.xoff = svga->crtc[0x46] & 0x3f;
@@ -488,15 +533,18 @@ tgui_out(uint16_t addr, uint8_t val, void *priv)
                         svga->hwcursor.cur_xsize = svga->hwcursor.cur_ysize = ((val & 1) ? 64 : 32);
                     }
                     break;
+
+                default:
+                    break;
             }
 
             if (old != val) {
                 if (svga->crtcreg < 0xe || svga->crtcreg > 0x10) {
                     if ((svga->crtcreg == 0xc) || (svga->crtcreg == 0xd)) {
                         svga->fullchange = 3;
-                        svga->ma_latch   = ((svga->crtc[0xc] << 8) | svga->crtc[0xd]) + ((svga->crtc[8] & 0x60) >> 5);
+                        svga->memaddr_latch   = ((svga->crtc[0xc] << 8) | svga->crtc[0xd]) + ((svga->crtc[8] & 0x60) >> 5);
                     } else {
-                        svga->fullchange = changeframecount;
+                        svga->fullchange = svga->monitor->mon_changeframecount;
                         svga_recalctimings(svga);
                     }
                 }
@@ -518,13 +566,21 @@ tgui_out(uint16_t addr, uint8_t val, void *priv)
                 svga->read_bank = (val & 0x3f) * 65536;
             return;
 
+        case 0x3DB:
+            tgui->alt_clock = val;
+            svga_recalctimings(svga);
+            return;
+
         case 0x43c8:
-            tgui->clock_n = val & 0x7f;
-            tgui->clock_m = (tgui->clock_m & ~1) | (val >> 7);
-            break;
+            tgui->vclk = (tgui->vclk & 0xff00) | val;
+            svga_recalctimings(svga);
+            return;
         case 0x43c9:
-            tgui->clock_m = (tgui->clock_m & ~0x1e) | ((val << 1) & 0x1e);
-            tgui->clock_k = (val & 0x10) >> 4;
+            tgui->vclk = (tgui->vclk & 0x00ff) | (val << 8);
+            svga_recalctimings(svga);
+            return;
+
+        default:
             break;
     }
     svga_out(addr, val, svga);
@@ -556,6 +612,9 @@ tgui_in(uint16_t addr, void *priv)
                     case TGUI_9660:
                     case TGUI_9680:
                         return 0xd3; /*TGUI9660XGi*/
+
+                    default:
+                        break;
                 }
             }
             if (svga->seqaddr == 0x0d) {
@@ -572,6 +631,8 @@ tgui_in(uint16_t addr, void *priv)
                     return tgui->oldctrl1 | 0x88;
                 return svga->seqregs[0x0e];
             }
+            if ((svga->seqaddr >= 0x5a) && (svga->seqaddr <= 0x5f))
+                return svga->seqregs[svga->seqaddr];
             break;
 
         case 0x3C6:
@@ -591,9 +652,9 @@ tgui_in(uint16_t addr, void *priv)
             break;
 
         case 0x3CF:
-            if (tgui->type == TGUI_9400CXI && svga->gdcaddr >= 16 && svga->gdcaddr < 32)
-                return tgui->ext_gdc_regs[svga->gdcaddr & 15];
             if (svga->gdcaddr >= 0x5a && svga->gdcaddr <= 0x5f)
+                return svga->gdcreg[svga->gdcaddr];
+            if (svga->gdcaddr == 0x2f)
                 return svga->gdcreg[svga->gdcaddr];
             break;
         case 0x3D4:
@@ -617,6 +678,11 @@ tgui_in(uint16_t addr, void *priv)
             return tgui->tgui_3d8;
         case 0x3d9:
             return tgui->tgui_3d9;
+        case 0x3db:
+            return tgui->alt_clock;
+
+        default:
+            break;
     }
     return svga_in(addr, svga);
 }
@@ -624,37 +690,59 @@ tgui_in(uint16_t addr, void *priv)
 void
 tgui_recalctimings(svga_t *svga)
 {
-    tgui_t *tgui       = (tgui_t *) svga->priv;
-    uint8_t ger22lower = tgui->accel.ger22 & 0xff;
-    uint8_t ger22upper = (tgui->accel.ger22 >> 8);
+    const tgui_t *tgui       = (tgui_t *) svga->priv;
+    uint8_t       ger22lower = (tgui->accel.ger22 & 0xff);
+    uint8_t       ger22upper = (tgui->accel.ger22 >> 8);
+    int           std_vga_clock = 1;
+    int           m = 0;
+    int           n = 0;
+    int           k = 0;
 
-    if (!svga->rowoffset)
-        svga->rowoffset = 0x100;
-
-    if (svga->crtc[0x29] & 0x10)
-        svga->rowoffset |= 0x100;
-
-    if ((tgui->type >= TGUI_9440) && (svga->bpp >= 24)) {
-        if ((tgui->accel.bpp == 0) && (ger22lower != 14) && (svga->bpp == 24))
-            svga->hdisp = (svga->crtc[1] + 1) * 8;
-        if ((tgui->accel.bpp == 3) && (ger22lower == 14) && (svga->bpp == 32) && (tgui->type == TGUI_9440))
-            svga->rowoffset <<= 1;
-        // pclog("Accelbpp = %d, ger22lower = %02x, ger22upper = %02x, bpp = %d, rowoffset = %d.\n", tgui->accel.bpp, ger22lower, ger22upper, svga->bpp, svga->rowoffset);
+    if (tgui->type >= TGUI_9440) {
+        if ((svga->crtc[0x38] & 0x19) == 0x09)
+            svga->bpp = 32;
+        else {
+            switch ((tgui->ramdac_ctrl >> 4) & 0x0f) {
+                case 0x01:
+                    svga->bpp = 15;
+                    break;
+                case 0x03:
+                    svga->bpp = 16;
+                    break;
+                case 0x0d:
+                    svga->bpp = 24;
+                    break;
+                default:
+                    svga->bpp = 8;
+                    break;
+            }
+        }
     }
 
+    if ((tgui->type >= TGUI_9440) && (svga->bpp >= 24))
+        svga->hdisp = (svga->crtc[1] + 1) << 3;
+
+    if (((svga->crtc[0x29] & 0x30) && (svga->bpp >= 15)) || !svga->rowoffset)
+        svga->rowoffset |= 0x100;
+
+#if 0
+    pclog("BPP=%d, DataWidth=%02x, CRTC29 bit 4-5=%02x, pixbusmode=%02x, rowoffset=%02x, doublerowoffset=%x.\n", svga->bpp, svga->crtc[0x2a] & 0x40, svga->crtc[0x29] & 0x30, svga->crtc[0x38], svga->rowoffset, svga->gdcreg[0x2f] & 4);
+#endif
+
     if ((svga->crtc[0x1e] & 0xA0) == 0xA0)
-        svga->ma_latch |= 0x10000;
-    if ((svga->crtc[0x27] & 0x01) == 0x01)
-        svga->ma_latch |= 0x20000;
-    if ((svga->crtc[0x27] & 0x02) == 0x02)
-        svga->ma_latch |= 0x40000;
-    if ((svga->crtc[0x27] & 0x04) == 0x04)
-        svga->ma_latch |= 0x80000;
+        svga->memaddr_latch |= 0x10000;
+    if (svga->crtc[0x27] & 0x01)
+        svga->memaddr_latch |= 0x20000;
+    if (svga->crtc[0x27] & 0x02)
+        svga->memaddr_latch |= 0x40000;
+    if (svga->crtc[0x27] & 0x04)
+        svga->memaddr_latch |= 0x80000;
 
     if (svga->crtc[0x27] & 0x08)
         svga->split |= 0x400;
     if (svga->crtc[0x27] & 0x10)
         svga->dispend |= 0x400;
+
     if (svga->crtc[0x27] & 0x20)
         svga->vsyncstart |= 0x400;
     if (svga->crtc[0x27] & 0x40)
@@ -667,24 +755,38 @@ tgui_recalctimings(svga_t *svga)
         svga->lowres = 0;
     }
 
-    if ((tgui->oldctrl2 & 0x10) || (svga->crtc[0x2a] & 0x40))
-        svga->ma_latch <<= 1;
-
-    svga->lowres = !(svga->crtc[0x2a] & 0x40);
-
     svga->interlace = !!(svga->crtc[0x1e] & 4);
     if (svga->interlace && (tgui->type < TGUI_9440))
         svga->rowoffset >>= 1;
 
-    if (tgui->type >= TGUI_9440) {
-        if (svga->miscout & 8)
-            svga->clock = (cpuclock * (double) (1ULL << 32)) / (((tgui->clock_n + 8) * 14318180.0) / ((tgui->clock_m + 2) * (1 << tgui->clock_k)));
+    if (svga->vdisp == 1020)
+        svga->vdisp += 2;
 
-        if (svga->gdcreg[0xf] & 0x08)
-            svga->clock *= 2;
+    if (tgui->oldctrl2 & 0x10)
+        svga->memaddr_latch <<= 1;
+
+    svga->lowres = !(svga->crtc[0x2a] & 0x40);
+
+    if (tgui->type >= TGUI_9440) {
+        // Bits 0-6: M
+        // Bits 7-11: N
+        // Bit 12: K
+        // Later formula extends each variable by one extra bit (Providia 9685 and later)
+        if (((svga->miscout & 0x0c) >> 2) == 0x02) {
+            m = tgui->vclk & 0x007f;
+            n = (tgui->vclk & 0x0f80) >> 7;
+            k = (tgui->vclk & 0x1000) >> 12;
+            svga->clock = (cpuclock * (double) (1ULL << 32)) / (((m + 8) * 14318180.0) / ((n + 2) * (1 << k)));
+        }
+
+        if ((svga->gdcreg[0xf] & 0x08) || (tgui->alt_clock & 0x20))
+            svga->clock *= 2.0;
         else if (svga->gdcreg[0xf] & 0x40)
-            svga->clock *= 3;
+            svga->clock *= 3.0;
+
+        pclog("GDCREGF=%02x, miscout=%02x.\n", svga->gdcreg[0xf] & 0x48, svga->miscout & 0x0c);
     } else {
+        //pclog("TGUI9400CXi: Clock double=%d.\n", (((svga->miscout >> 2) & 3) | ((tgui->newctrl2 << 2) & 4) | ((tgui->newctrl2 >> 3) & 8)));
         switch (((svga->miscout >> 2) & 3) | ((tgui->newctrl2 << 2) & 4) | ((tgui->newctrl2 >> 3) & 8)) {
             case 0x02:
                 svga->clock = (cpuclock * (double) (1ULL << 32)) / 44900000.0;
@@ -728,11 +830,19 @@ tgui_recalctimings(svga_t *svga)
             case 0x0f:
                 svga->clock = (cpuclock * (double) (1ULL << 32)) / 75000000.0;
                 break;
+
+            default:
+                std_vga_clock = 0;
+                break;
         }
+
         if (svga->gdcreg[0xf] & 0x08) {
             svga->htotal <<= 1;
             svga->hdisp <<= 1;
             svga->hdisp_time <<= 1;
+            svga->dots_per_clock <<= 1;
+            if (std_vga_clock)
+                svga->clock /= 2.0;
         }
     }
 
@@ -740,46 +850,85 @@ tgui_recalctimings(svga_t *svga)
         switch (svga->bpp) {
             case 8:
                 svga->render = svga_render_8bpp_highres;
+                if (svga->vdisp == 1022) {
+                    if (svga->interlace)
+                        svga->dispend++;
+                    else
+                        svga->dispend += 2;
+                }
                 if (tgui->type >= TGUI_9660) {
-                    if ((svga->dispend == 510) || (svga->dispend == 512))
-                        svga->hdisp = 1280;
-                    else if ((svga->dispend == 600) && (svga->hdisp == 800) && svga->interlace)
-                        svga->hdisp = 1600;
+                    switch (svga->vdisp) {
+                        case 1024:
+                        case 1200:
+                            svga->htotal <<= 1;
+                            svga->hdisp <<= 1;
+                            svga->hdisp_time <<= 1;
+                            svga->dots_per_clock <<= 1;
+                            break;
+                        default:
+                            break;
+                    }
+#if OLD_CODE
+                    if (svga->dispend == ((1024 >> 1) - 2))
+                        svga->dispend += 2;
+                    if (svga->dispend == (1024 >> 1))
+                        svga->hdisp <<= 1;
+                    else if ((svga->hdisp == (1600 >> 1)) && (svga->dispend == (1200 >> 1)) && svga->interlace)
+                        svga->hdisp <<= 1;
+                    else if (svga->hdisp == (1024 >> 1)) {
+                        if (svga->interlace && (svga->dispend == (768 >> 1)))
+                            svga->hdisp <<= 1;
+                        else if (!svga->interlace && (svga->dispend == 768))
+                            svga->hdisp <<= 1;
+                    }
+#endif
 
+                    if (ger22upper & 0x80) {
+                        svga->htotal <<= 1;
+                        svga->hdisp <<= 1;
+                        svga->hdisp_time <<= 1;
+                        svga->dots_per_clock <<= 1;
+                    }
                     switch (svga->hdisp) {
                         case 640:
-                            if (ger22upper & 0x01)
+                            if (!ger22lower)
                                 svga->rowoffset = 0x50;
                             break;
-                        case 1600:
-                            if (svga->rowoffset != 0x100)
-                                svga->rowoffset = 0x100;
+
+                        default:
                             break;
                     }
                 }
                 break;
             case 15:
                 svga->render = svga_render_15bpp_highres;
-                if (tgui->type < TGUI_9440)
+                if (tgui->type < TGUI_9440) {
                     svga->hdisp >>= 1;
+                    svga->dots_per_clock >>= 1;
+                }
                 break;
             case 16:
                 svga->render = svga_render_16bpp_highres;
-                if (tgui->type < TGUI_9440)
+                if (tgui->type < TGUI_9440) {
                     svga->hdisp >>= 1;
+                    svga->dots_per_clock >>= 1;
+                }
                 break;
             case 24:
                 svga->render = svga_render_24bpp_highres;
-                if (tgui->type < TGUI_9440)
-                    svga->hdisp = (svga->hdisp << 1) / 3;
+                if (tgui->type < TGUI_9440) {
+                    svga->hdisp /= 3;
+                    svga->dots_per_clock /= 3;
+                }
                 break;
             case 32:
+                if (svga->rowoffset == 0x100)
+                    svga->rowoffset <<= 1;
+
                 svga->render = svga_render_32bpp_highres;
-                if (tgui->type >= TGUI_9660) {
-                    if (svga->hdisp == 1024) {
-                        svga->rowoffset <<= 1;
-                    }
-                }
+                break;
+
+            default:
                 break;
         }
     }
@@ -789,16 +938,17 @@ static void
 tgui_recalcmapping(tgui_t *tgui)
 {
     svga_t *svga = &tgui->svga;
+    xga_t  *xga  = (xga_t *) svga->xga;
 
     if (tgui->type == TGUI_9400CXI) {
-        if (tgui->ext_gdc_regs[0] & EXT_CTRL_LATCH_COPY) {
+        if (svga->gdcreg[0x10] & EXT_CTRL_LATCH_COPY) {
             mem_mapping_set_handler(&tgui->linear_mapping,
                                     tgui_ext_linear_read, NULL, NULL,
                                     tgui_ext_linear_write, tgui_ext_linear_writew, tgui_ext_linear_writel);
             mem_mapping_set_handler(&svga->mapping,
                                     tgui_ext_read, NULL, NULL,
                                     tgui_ext_write, tgui_ext_writew, tgui_ext_writel);
-        } else if (tgui->ext_gdc_regs[0] & EXT_CTRL_MONO_EXPANSION) {
+        } else if (svga->gdcreg[0x10] & EXT_CTRL_MONO_EXPANSION) {
             mem_mapping_set_handler(&tgui->linear_mapping,
                                     svga_read_linear, svga_readw_linear, svga_readl_linear,
                                     tgui_ext_linear_write, tgui_ext_linear_writew, tgui_ext_linear_writel);
@@ -842,6 +992,10 @@ tgui_recalcmapping(tgui_t *tgui)
                 case 0x4: /*64k at A0000*/
                     mem_mapping_set_addr(&svga->mapping, 0xa0000, 0x10000);
                     svga->banked_mask = 0xffff;
+                    if (xga_active && (svga->xga != NULL)) {
+                        xga->on = 0;
+                        mem_mapping_set_handler(&svga->mapping, svga->read, svga->readw, svga->readl, svga->write, svga->writew, svga->writel);
+                    }
                     break;
                 case 0x8: /*32k at B0000*/
                     mem_mapping_set_addr(&svga->mapping, 0xb0000, 0x08000);
@@ -851,11 +1005,13 @@ tgui_recalcmapping(tgui_t *tgui)
                     mem_mapping_set_addr(&svga->mapping, 0xb8000, 0x08000);
                     svga->banked_mask = 0x7fff;
                     break;
+
+                default:
+                    break;
             }
         }
     } else {
         mem_mapping_disable(&tgui->linear_mapping);
-        mem_mapping_disable(&tgui->accel_mapping);
         switch (svga->gdcreg[6] & 0xC) {
             case 0x0: /*128k at A0000*/
                 mem_mapping_set_addr(&svga->mapping, 0xa0000, 0x20000);
@@ -863,13 +1019,11 @@ tgui_recalcmapping(tgui_t *tgui)
                 break;
             case 0x4: /*64k at A0000*/
                 mem_mapping_set_addr(&svga->mapping, 0xa0000, 0x10000);
-                if ((svga->crtc[0x36] & 0x03) == 0x01)
-                    mem_mapping_set_addr(&tgui->accel_mapping, 0xb4000, 0x4000);
-                else if ((svga->crtc[0x36] & 0x03) == 0x02)
-                    mem_mapping_set_addr(&tgui->accel_mapping, 0xbc000, 0x4000);
-                else if ((svga->crtc[0x36] & 0x03) == 0x03)
-                    mem_mapping_set_addr(&tgui->accel_mapping, tgui->ge_base, 0x4000);
                 svga->banked_mask = 0xffff;
+                if (xga_active && (svga->xga != NULL)) {
+                    xga->on = 0;
+                    mem_mapping_set_handler(&svga->mapping, svga->read, svga->readw, svga->readl, svga->write, svga->writew, svga->writel);
+                }
                 break;
             case 0x8: /*32k at B0000*/
                 mem_mapping_set_addr(&svga->mapping, 0xb0000, 0x08000);
@@ -879,11 +1033,26 @@ tgui_recalcmapping(tgui_t *tgui)
                 mem_mapping_set_addr(&svga->mapping, 0xb8000, 0x08000);
                 svga->banked_mask = 0x7fff;
                 break;
+
+            default:
+                break;
         }
+
+        if (tgui->pci && tgui->linear_base) /*Assume that, with PCI, linear addressing is always enabled.*/
+            mem_mapping_set_addr(&tgui->linear_mapping, tgui->linear_base, tgui->linear_size);
+
+        if ((svga->crtc[0x36] & 0x03) == 0x01)
+            mem_mapping_set_addr(&tgui->accel_mapping, 0xb4000, 0x4000);
+        else if ((svga->crtc[0x36] & 0x03) == 0x02)
+            mem_mapping_set_addr(&tgui->accel_mapping, 0xbc000, 0x4000);
+        else if ((svga->crtc[0x36] & 0x03) == 0x03)
+            mem_mapping_set_addr(&tgui->accel_mapping, tgui->ge_base, 0x4000);
+        else
+            mem_mapping_disable(&tgui->accel_mapping);
     }
 
     if (tgui->type >= TGUI_9440) {
-        if ((tgui->mmio_base != 0x00000000) && (svga->crtc[0x39] & 1))
+        if ((tgui->mmio_base != 0x00000000) && (svga->crtc[0x39] & 0x01))
             mem_mapping_set_addr(&tgui->mmio_mapping, tgui->mmio_base, 0x10000);
         else
             mem_mapping_disable(&tgui->mmio_mapping);
@@ -894,7 +1063,7 @@ static void
 tgui_hwcursor_draw(svga_t *svga, int displine)
 {
     uint32_t dat[2];
-    int      offset = svga->hwcursor_latch.x + svga->hwcursor_latch.xoff;
+    int      offset = svga->hwcursor_latch.x - svga->hwcursor_latch.xoff;
     int      pitch  = (svga->hwcursor_latch.cur_xsize == 64) ? 16 : 8;
 
     if (svga->interlace && svga->hwcursor_oddeven)
@@ -906,14 +1075,14 @@ tgui_hwcursor_draw(svga_t *svga, int displine)
         if (svga->crtc[0x50] & 0x40) {
             if (offset >= svga->hwcursor_latch.x) {
                 if (dat[0] & 0x80000000)
-                    ((uint32_t *) buffer32->line[displine])[svga->x_add + offset] = (dat[1] & 0x80000000) ? 0xffffff : 0;
+                    (buffer32->line[displine])[svga->x_add + offset] = (dat[1] & 0x80000000) ? 0xffffff : 0;
             }
         } else {
             if (offset >= svga->hwcursor_latch.x) {
                 if (!(dat[0] & 0x80000000))
-                    ((uint32_t *) buffer32->line[displine])[svga->x_add + offset] = (dat[1] & 0x80000000) ? 0xffffff : 0;
+                    (buffer32->line[displine])[svga->x_add + offset] = (dat[1] & 0x80000000) ? 0xffffff : 0;
                 else if (dat[1] & 0x80000000)
-                    ((uint32_t *) buffer32->line[displine])[svga->x_add + offset] ^= 0xffffff;
+                    (buffer32->line[displine])[svga->x_add + offset] ^= 0xffffff;
             }
         }
         offset++;
@@ -927,9 +1096,9 @@ tgui_hwcursor_draw(svga_t *svga, int displine)
 }
 
 uint8_t
-tgui_pci_read(int func, int addr, void *priv)
+tgui_pci_read(UNUSED(int func), int addr, void *priv)
 {
-    tgui_t *tgui = (tgui_t *) priv;
+    const tgui_t *tgui = (tgui_t *) priv;
 
     switch (addr) {
         case 0x00:
@@ -943,7 +1112,7 @@ tgui_pci_read(int func, int addr, void *priv)
             return (tgui->type == TGUI_9440) ? 0x94 : 0x96;
 
         case PCI_REG_COMMAND:
-            return tgui->pci_regs[PCI_REG_COMMAND]; /*Respond to IO and memory accesses*/
+            return tgui->pci_regs[PCI_REG_COMMAND] | 0x80; /*Respond to IO and memory accesses*/
 
         case 0x07:
             return 1 << 1; /*Medium DEVSEL timing*/
@@ -989,23 +1158,27 @@ tgui_pci_read(int func, int addr, void *priv)
             return tgui->int_line;
         case 0x3d:
             return PCI_INTA;
+
+        default:
+            break;
     }
     return 0;
 }
 
 void
-tgui_pci_write(int func, int addr, uint8_t val, void *priv)
+tgui_pci_write(UNUSED(int func), int addr, uint8_t val, void *priv)
 {
     tgui_t *tgui = (tgui_t *) priv;
     svga_t *svga = &tgui->svga;
 
     switch (addr) {
         case PCI_REG_COMMAND:
-            tgui->pci_regs[PCI_REG_COMMAND] = (val & 0x23);
-            if (val & PCI_COMMAND_IO) {
+            tgui->pci_regs[PCI_REG_COMMAND] = val & 0x23;
+            if (val & PCI_COMMAND_IO)
                 tgui_set_io(tgui);
-            } else
+            else
                 tgui_remove_io(tgui);
+
             tgui_recalcmapping(tgui);
             break;
 
@@ -1060,6 +1233,9 @@ tgui_pci_write(int func, int addr, uint8_t val, void *priv)
         case 0x3c:
             tgui->int_line = val;
             return;
+
+        default:
+            break;
     }
 }
 
@@ -1069,21 +1245,24 @@ tgui_ext_linear_read(uint32_t addr, void *priv)
     svga_t *svga = (svga_t *) priv;
     tgui_t *tgui = (tgui_t *) svga->priv;
 
-    cycles -= video_timing_read_b;
+    cycles -= svga->monitor->mon_video_timing_read_b;
 
     addr &= svga->decode_mask;
     if (addr >= svga->vram_max)
         return 0xff;
 
-    addr &= ~0xf;
-    addr = dword_remap(svga, addr);
+    addr &= svga->vram_mask;
+    addr &= ~0x0f;
+    addr  = dword_remap(svga, addr);
 
-    for (uint8_t c = 0; c < 16; c++) {
-        tgui->copy_latch[c] = svga->vram[addr + c];
-        addr += ((c & 3) == 3) ? 13 : 1;
+    for (int i = 0; i < 16; i++) {
+        tgui->copy_latch[i] = svga->vram[addr];
+        addr += ((i & 3) == 3) ? 0x0d : 0x01;
     }
 
-    return svga->vram[addr & svga->vram_mask];
+    addr &= svga->vram_mask;
+
+    return svga->vram[addr];
 }
 
 static uint8_t
@@ -1099,150 +1278,158 @@ tgui_ext_read(uint32_t addr, void *priv)
 static void
 tgui_ext_linear_write(uint32_t addr, uint8_t val, void *priv)
 {
-    svga_t *svga = (svga_t *) priv;
-    tgui_t *tgui = (tgui_t *) svga->priv;
-    int     c;
-    uint8_t fg[2] = { tgui->ext_gdc_regs[4], tgui->ext_gdc_regs[5] };
-    uint8_t bg[2] = { tgui->ext_gdc_regs[1], tgui->ext_gdc_regs[2] };
-    uint8_t mask  = tgui->ext_gdc_regs[7];
+    svga_t       *svga = (svga_t *) priv;
+    const tgui_t *tgui = (tgui_t *) svga->priv;
+    int           bpp = (svga->gdcreg[0x10] & EXT_CTRL_16BIT);
+    uint8_t       fg[2] = { svga->gdcreg[0x14], svga->gdcreg[0x15] };
+    uint8_t       bg[2] = { svga->gdcreg[0x11], svga->gdcreg[0x12] };
 
-    cycles -= video_timing_write_b;
+    cycles -= svga->monitor->mon_video_timing_write_b;
 
     addr &= svga->decode_mask;
     if (addr >= svga->vram_max)
         return;
+
     addr &= svga->vram_mask;
-    addr &= (tgui->ext_gdc_regs[0] & 8) ? ~0xf : ~0x7;
+    addr &= (svga->gdcreg[0x10] & EXT_CTRL_LATCH_COPY) ? ~0x0f : ~0x07;
+    addr = dword_remap(svga, addr);
 
-    addr                          = dword_remap(svga, addr);
-    svga->changedvram[addr >> 12] = changeframecount;
+    svga->changedvram[addr >> 12] = svga->monitor->mon_changeframecount;
 
-    switch (tgui->ext_gdc_regs[0] & 0xf) {
-        /*8-bit mono->colour expansion, unmasked*/
-        case 2:
-            for (c = 7; c >= 0; c--) {
-                if (mask & (1 << c))
-                    *(uint8_t *) &svga->vram[addr] = (val & (1 << c)) ? fg[0] : bg[0];
-                addr += (c == 4) ? 13 : 1;
+    if (svga->gdcreg[0x10] & EXT_CTRL_LATCH_COPY) {
+        for (int i = 0; i < 8; i++) {
+            if (val & (0x80 >> i))
+                svga->vram[addr] = tgui->copy_latch[i];
+
+            addr += ((i & 3) == 3) ? 0x0d : 0x01;
+            addr &= svga->vram_mask;
+        }
+    } else {
+        if (svga->gdcreg[0x10] & EXT_CTRL_MONO_TRANSPARENT) {
+            if (bpp) {
+                for (int i = 0; i < 8; i++) {
+                    if (val & (0x80 >> i))
+                        svga->vram[addr] = fg[i & 1];
+
+                    addr += ((i & 3) == 3) ? 0x0d : 0x01;
+                    addr &= svga->vram_mask;
+                }
+            } else {
+                for (int i = 0; i < 8; i++) {
+                    if (val & (0x80 >> i))
+                        svga->vram[addr] = fg[0];
+
+                    addr += ((i & 3) == 3) ? 0x0d : 0x01;
+                    addr &= svga->vram_mask;
+                }
             }
-            break;
-
-        /*16-bit mono->colour expansion, unmasked*/
-        case 3:
-            for (c = 7; c >= 0; c--) {
-                if (mask & (1 << c))
-                    *(uint8_t *) &svga->vram[addr] = (val & (1 << c)) ? fg[(c & 1) ^ 1] : bg[(c & 1) ^ 1];
-                addr += (c == 4) ? 13 : 1;
+        } else {
+            if (bpp) {
+                for (int i = 0; i < 8; i++) {
+                    if (val & (0x80 >> i)) {
+                        if (svga->gdcreg[0x17] & (0x80 >> i))
+                            svga->vram[addr] = fg[i & 1];
+                    } else {
+                        if (svga->gdcreg[0x17] & (0x80 >> i))
+                            svga->vram[addr] = bg[i & 1];
+                    }
+                    addr += ((i & 3) == 3) ? 0x0d : 0x01;
+                    addr &= svga->vram_mask;
+                }
+            } else {
+                for (int i = 0; i < 8; i++) {
+                    if (val & (0x80 >> i)) {
+                        if (svga->gdcreg[0x17] & (0x80 >> i))
+                            svga->vram[addr] = fg[0];
+                    } else {
+                        if (svga->gdcreg[0x17] & (0x80 >> i))
+                            svga->vram[addr] = bg[0];
+                    }
+                    addr += ((i & 3) == 3) ? 0x0d : 0x01;
+                    addr &= svga->vram_mask;
+                }
             }
-            break;
-
-        /*8-bit mono->colour expansion, masked*/
-        case 6:
-            for (c = 7; c >= 0; c--) {
-                if ((val & mask) & (1 << c))
-                    *(uint8_t *) &svga->vram[addr] = fg[0];
-                addr += (c == 4) ? 13 : 1;
-            }
-            break;
-
-        /*16-bit mono->colour expansion, masked*/
-        case 7:
-            for (c = 7; c >= 0; c--) {
-                if ((val & mask) & (1 << c))
-                    *(uint8_t *) &svga->vram[addr] = fg[(c & 1) ^ 1];
-                addr += (c == 4) ? 13 : 1;
-            }
-            break;
-
-        case 0x8:
-        case 0x9:
-        case 0xa:
-        case 0xb:
-        case 0xc:
-        case 0xd:
-        case 0xe:
-        case 0xf:
-            for (c = 0; c < 16; c++) {
-                *(uint8_t *) &svga->vram[addr] = tgui->copy_latch[c];
-                addr += ((c & 3) == 3) ? 13 : 1;
-            }
-            break;
+        }
     }
 }
 
 static void
 tgui_ext_linear_writew(uint32_t addr, uint16_t val, void *priv)
 {
-    svga_t  *svga = (svga_t *) priv;
-    tgui_t  *tgui = (tgui_t *) svga->priv;
-    int      c;
-    uint8_t  fg[2] = { tgui->ext_gdc_regs[4], tgui->ext_gdc_regs[5] };
-    uint8_t  bg[2] = { tgui->ext_gdc_regs[1], tgui->ext_gdc_regs[2] };
-    uint16_t mask  = (tgui->ext_gdc_regs[7] << 8) | tgui->ext_gdc_regs[8];
+    svga_t       *svga = (svga_t *) priv;
+    const tgui_t *tgui = (tgui_t *) svga->priv;
+    int           bpp = (svga->gdcreg[0x10] & EXT_CTRL_16BIT);
+    uint8_t       fg[2] = { svga->gdcreg[0x14], svga->gdcreg[0x15] };
+    uint8_t       bg[2] = { svga->gdcreg[0x11], svga->gdcreg[0x12] };
+    uint16_t      mask  = svga->gdcreg[0x18] | (svga->gdcreg[0x17] << 8);
 
-    cycles -= video_timing_write_w;
+    cycles -= svga->monitor->mon_video_timing_write_w;
 
     addr &= svga->decode_mask;
     if (addr >= svga->vram_max)
         return;
+
     addr &= svga->vram_mask;
-    addr &= ~0xf;
+    addr &= ~0x0f;
+    addr = dword_remap(svga, addr);
 
-    addr                          = dword_remap(svga, addr);
-    svga->changedvram[addr >> 12] = changeframecount;
-
+    svga->changedvram[addr >> 12] = svga->monitor->mon_changeframecount;
     val = (val >> 8) | (val << 8);
 
-    switch (tgui->ext_gdc_regs[0] & 0xf) {
-        /*8-bit mono->colour expansion, unmasked*/
-        case 2:
-            for (c = 15; c >= 0; c--) {
-                if (mask & (1 << c))
-                    *(uint8_t *) &svga->vram[addr] = (val & (1 << c)) ? fg[0] : bg[0];
-                addr += (c & 3) ? 1 : 13;
-            }
-            break;
+    if (svga->gdcreg[0x10] & EXT_CTRL_LATCH_COPY) {
+        for (int i = 0; i < 16; i++) {
+            if (val & (0x8000 >> i))
+                svga->vram[addr] = tgui->copy_latch[i];
 
-        /*16-bit mono->colour expansion, unmasked*/
-        case 3:
-            for (c = 15; c >= 0; c--) {
-                if (mask & (1 << c))
-                    *(uint8_t *) &svga->vram[addr] = (val & (1 << c)) ? fg[(c & 1) ^ 1] : bg[(c & 1) ^ 1];
-                addr += (c & 3) ? 1 : 13;
-            }
-            break;
+            addr += ((i & 3) == 3) ? 0x0d : 0x01;
+            addr &= svga->vram_mask;
+        }
+    } else {
+        if (svga->gdcreg[0x10] & EXT_CTRL_MONO_TRANSPARENT) {
+            if (bpp) {
+                for (int i = 0; i < 16; i++) {
+                    if (val & (0x8000 >> i))
+                        svga->vram[addr] = fg[i & 1];
 
-        /*8-bit mono->colour expansion, masked*/
-        case 6:
-            for (c = 15; c >= 0; c--) {
-                if ((val & mask) & (1 << c))
-                    *(uint8_t *) &svga->vram[addr] = fg[0];
-                addr += (c & 3) ? 1 : 13;
-            }
-            break;
+                    addr += ((i & 3) == 3) ? 0x0d : 0x01;
+                    addr &= svga->vram_mask;
+                }
+            } else {
+                for (int i = 0; i < 16; i++) {
+                    if (val & (0x8000 >> i))
+                        svga->vram[addr] = fg[0];
 
-        /*16-bit mono->colour expansion, masked*/
-        case 7:
-            for (c = 15; c >= 0; c--) {
-                if ((val & mask) & (1 << c))
-                    *(uint8_t *) &svga->vram[addr] = fg[(c & 1) ^ 1];
-                addr += (c & 3) ? 1 : 13;
+                    addr += ((i & 3) == 3) ? 0x0d : 0x01;
+                    addr &= svga->vram_mask;
+                }
             }
-            break;
-
-        case 0x8:
-        case 0x9:
-        case 0xa:
-        case 0xb:
-        case 0xc:
-        case 0xd:
-        case 0xe:
-        case 0xf:
-            for (c = 0; c < 16; c++) {
-                *(uint8_t *) &svga->vram[addr + c] = tgui->copy_latch[c];
-                addr += ((c & 3) == 3) ? 13 : 1;
+        } else {
+            if (bpp) {
+                for (int i = 0; i < 16; i++) {
+                    if (val & (0x8000 >> i)) {
+                        if (mask & (0x8000 >> i))
+                            svga->vram[addr] = fg[i & 1];
+                    } else {
+                        if (mask & (0x8000 >> i))
+                            svga->vram[addr] = bg[i & 1];
+                    }
+                    addr += ((i & 3) == 3) ? 0x0d : 0x01;
+                    addr &= svga->vram_mask;
+                }
+            } else {
+                for (int i = 0; i < 16; i++) {
+                    if (val & (0x8000 >> i)) {
+                        if (mask & (0x8000 >> i))
+                            svga->vram[addr] = fg[0];
+                    } else {
+                        if (mask & (0x8000 >> i))
+                            svga->vram[addr] = bg[0];
+                    }
+                    addr += ((i & 3) == 3) ? 0x0d : 0x01;
+                    addr &= svga->vram_mask;
+                }
             }
-            break;
+        }
     }
 }
 
@@ -1257,7 +1444,7 @@ tgui_ext_write(uint32_t addr, uint8_t val, void *priv)
 {
     svga_t *svga = (svga_t *) priv;
 
-    addr = (addr & svga->banked_mask) + svga->read_bank;
+    addr = (addr & svga->banked_mask) + svga->write_bank;
 
     tgui_ext_linear_write(addr, val, svga);
 }
@@ -1266,7 +1453,7 @@ tgui_ext_writew(uint32_t addr, uint16_t val, void *priv)
 {
     svga_t *svga = (svga_t *) priv;
 
-    addr = (addr & svga->banked_mask) + svga->read_bank;
+    addr = (addr & svga->banked_mask) + svga->write_bank;
 
     tgui_ext_linear_writew(addr, val, svga);
 }
@@ -1275,7 +1462,7 @@ tgui_ext_writel(uint32_t addr, uint32_t val, void *priv)
 {
     svga_t *svga = (svga_t *) priv;
 
-    addr = (addr & svga->banked_mask) + svga->read_bank;
+    addr = (addr & svga->banked_mask) + svga->write_bank;
 
     tgui_ext_linear_writel(addr, val, svga);
 }
@@ -1308,52 +1495,814 @@ enum {
     else                                               \
         dat = vram_l[(addr) & (tgui->vram_mask >> 2)];
 
-#define MIX()                                 \
-    do {                                      \
-        out = 0;                              \
-        for (c = 0; c < 32; c++) {            \
-            d = (dst_dat & (1 << c)) ? 1 : 0; \
-            if (src_dat & (1 << c))           \
-                d |= 2;                       \
-            if (pat_dat & (1 << c))           \
-                d |= 4;                       \
-            if (tgui->accel.rop & (1 << d))   \
-                out |= (1 << c);              \
-        }                                     \
+#define ROPMIX(R, D, P, S, out)                    \
+    {                                              \
+        switch (R) {                               \
+            case 0x00:                             \
+                out = 0;                           \
+                break;                             \
+            case 0x01:                             \
+                out = ~(D | (P | S));              \
+                break;                             \
+            case 0x02:                             \
+                out = D & ~(P | S);                \
+                break;                             \
+            case 0x03:                             \
+                out = ~(P | S);                    \
+                break;                             \
+            case 0x04:                             \
+                out = S & ~(D | P);                \
+                break;                             \
+            case 0x05:                             \
+                out = ~(D | P);                    \
+                break;                             \
+            case 0x06:                             \
+                out = ~(P | ~(D ^ S));             \
+                break;                             \
+            case 0x07:                             \
+                out = ~(P | (D & S));              \
+                break;                             \
+            case 0x08:                             \
+                out = S & (D & ~P);                \
+                break;                             \
+            case 0x09:                             \
+                out = ~(P | (D ^ S));              \
+                break;                             \
+            case 0x0a:                             \
+                out = D & ~P;                      \
+                break;                             \
+            case 0x0b:                             \
+                out = ~(P | (S & ~D));             \
+                break;                             \
+            case 0x0c:                             \
+                out = S & ~P;                      \
+                break;                             \
+            case 0x0d:                             \
+                out = ~(P | (D & ~S));             \
+                break;                             \
+            case 0x0e:                             \
+                out = ~(P | ~(D | S));             \
+                break;                             \
+            case 0x0f:                             \
+                out = ~P;                          \
+                break;                             \
+            case 0x10:                             \
+                out = P & ~(D | S);                \
+                break;                             \
+            case 0x11:                             \
+                out = ~(D | S);                    \
+                break;                             \
+            case 0x12:                             \
+                out = ~(S | ~(D ^ P));             \
+                break;                             \
+            case 0x13:                             \
+                out = ~(S | (D & P));              \
+                break;                             \
+            case 0x14:                             \
+                out = ~(D | ~(P ^ S));             \
+                break;                             \
+            case 0x15:                             \
+                out = ~(D | (P & S));              \
+                break;                             \
+            case 0x16:                             \
+                out = P ^ (S ^ (D & ~(P & S)));    \
+                break;                             \
+            case 0x17:                             \
+                out = ~(S ^ ((S ^ P) & (D ^ S)));  \
+                break;                             \
+            case 0x18:                             \
+                out = (S ^ P) & (P ^ D);           \
+                break;                             \
+            case 0x19:                             \
+                out = ~(S ^ (D & ~(P & S)));       \
+                break;                             \
+            case 0x1a:                             \
+                out = P ^ (D | (S & P));           \
+                break;                             \
+            case 0x1b:                             \
+                out = ~(S ^ (D & (P ^ S)));        \
+                break;                             \
+            case 0x1c:                             \
+                out = P ^ (S | (D & P));           \
+                break;                             \
+            case 0x1d:                             \
+                out = ~(D ^ (S & (P ^ D)));        \
+                break;                             \
+            case 0x1e:                             \
+                out = P ^ (D | S);                 \
+                break;                             \
+            case 0x1f:                             \
+                out = ~(P & (D | S));              \
+                break;                             \
+            case 0x20:                             \
+                out = D & (P & ~S);                \
+                break;                             \
+            case 0x21:                             \
+                out = ~(S | (D ^ P));              \
+                break;                             \
+            case 0x22:                             \
+                out = D & ~S;                      \
+                break;                             \
+            case 0x23:                             \
+                out = ~(S | (P & ~D));             \
+                break;                             \
+            case 0x24:                             \
+                out = (S ^ P) & (D ^ S);           \
+                break;                             \
+            case 0x25:                             \
+                out = ~(P ^ (D & ~(S & P)));       \
+                break;                             \
+            case 0x26:                             \
+                out = S ^ (D | (P & S));           \
+                break;                             \
+            case 0x27:                             \
+                out = S ^ (D | ~(P ^ S));          \
+                break;                             \
+            case 0x28:                             \
+                out = D & (P ^ S);                 \
+                break;                             \
+            case 0x29:                             \
+                out = ~(P ^ (S ^ (D | (P & S))));  \
+                break;                             \
+            case 0x2a:                             \
+                out = D & ~(P & S);                \
+                break;                             \
+            case 0x2b:                             \
+                out = ~(S ^ ((S ^ P) & (P ^ D)));  \
+                break;                             \
+            case 0x2c:                             \
+                out = S ^ (P & (D | S));           \
+                break;                             \
+            case 0x2d:                             \
+                out = P ^ (S | ~D);                \
+                break;                             \
+            case 0x2e:                             \
+                out = P ^ (S | (D ^ P));           \
+                break;                             \
+            case 0x2f:                             \
+                out = ~(P & (S | ~D));             \
+                break;                             \
+            case 0x30:                             \
+                out = P & ~S;                      \
+                break;                             \
+            case 0x31:                             \
+                out = ~(S | (D & ~P));             \
+                break;                             \
+            case 0x32:                             \
+                out = S ^ (D | (P | S));           \
+                break;                             \
+            case 0x33:                             \
+                out = ~S;                          \
+                break;                             \
+            case 0x34:                             \
+                out = S ^ (P | (D & S));           \
+                break;                             \
+            case 0x35:                             \
+                out = S ^ (P | ~(D ^ S));          \
+                break;                             \
+            case 0x36:                             \
+                out = S ^ (D | P);                 \
+                break;                             \
+            case 0x37:                             \
+                out = ~(S & (D | P));              \
+                break;                             \
+            case 0x38:                             \
+                out = P ^ (S & (D | P));           \
+                break;                             \
+            case 0x39:                             \
+                out = S ^ (P | ~D);                \
+                break;                             \
+            case 0x3a:                             \
+                out = S ^ (P | (D ^ S));           \
+                break;                             \
+            case 0x3b:                             \
+                out = ~(S & (P | ~D));             \
+                break;                             \
+            case 0x3c:                             \
+                out = P ^ S;                       \
+                break;                             \
+            case 0x3d:                             \
+                out = S ^ (P | ~(D | S));          \
+                break;                             \
+            case 0x3e:                             \
+                out = S ^ (P | (D & ~S));          \
+                break;                             \
+            case 0x3f:                             \
+                out = ~(P & S);                    \
+                break;                             \
+            case 0x40:                             \
+                out = P & (S & ~D);                \
+                break;                             \
+            case 0x41:                             \
+                out = ~(D | (P ^ S));              \
+                break;                             \
+            case 0x42:                             \
+                out = (S ^ D) & (P ^ D);           \
+                break;                             \
+            case 0x43:                             \
+                out = ~(S ^ (P & ~(D & S)));       \
+                break;                             \
+            case 0x44:                             \
+                out = S & ~D;                      \
+                break;                             \
+            case 0x45:                             \
+                out = ~(D | (P & ~S));             \
+                break;                             \
+            case 0x46:                             \
+                out = D ^ (S | (P & D));           \
+                break;                             \
+            case 0x47:                             \
+                out = ~(P ^ (S & (D ^ P)));        \
+                break;                             \
+            case 0x48:                             \
+                out = S & (D ^ P);                 \
+                break;                             \
+            case 0x49:                             \
+                out = ~(P ^ (D ^ (S | (P & D))));  \
+                break;                             \
+            case 0x4a:                             \
+                out = D ^ (P & (S | D));           \
+                break;                             \
+            case 0x4b:                             \
+                out = P ^ (D | ~S);                \
+                break;                             \
+            case 0x4c:                             \
+                out = S & ~(D & P);                \
+                break;                             \
+            case 0x4d:                             \
+                out = ~(S ^ ((S ^ P) | (D ^ S)));  \
+                break;                             \
+            case 0x4e:                             \
+                out = P ^ (D | (S ^ P));           \
+                break;                             \
+            case 0x4f:                             \
+                out = ~(P & (D | ~S));             \
+                break;                             \
+            case 0x50:                             \
+                out = P & ~D;                      \
+                break;                             \
+            case 0x51:                             \
+                out = ~(D | (S & ~P));             \
+                break;                             \
+            case 0x52:                             \
+                out = D ^ (P | (S & D));           \
+                break;                             \
+            case 0x53:                             \
+                out = ~(S ^ (P & (D ^ S)));        \
+                break;                             \
+            case 0x54:                             \
+                out = ~(D | ~(P | S));             \
+                break;                             \
+            case 0x55:                             \
+                out = ~D;                          \
+                break;                             \
+            case 0x56:                             \
+                out = D ^ (P | S);                 \
+                break;                             \
+            case 0x57:                             \
+                out = ~(D & (P | S));              \
+                break;                             \
+            case 0x58:                             \
+                out = P ^ (D & (S | P));           \
+                break;                             \
+            case 0x59:                             \
+                out = D ^ (P | ~S);                \
+                break;                             \
+            case 0x5a:                             \
+                out = D ^ P;                       \
+                break;                             \
+            case 0x5b:                             \
+                out = D ^ (P | ~(S | D));          \
+                break;                             \
+            case 0x5c:                             \
+                out = D ^ (P | (S ^ D));           \
+                break;                             \
+            case 0x5d:                             \
+                out = ~(D & (P | ~S));             \
+                break;                             \
+            case 0x5e:                             \
+                out = D ^ (P | (S & ~D));          \
+                break;                             \
+            case 0x5f:                             \
+                out = ~(D & P);                    \
+                break;                             \
+            case 0x60:                             \
+                out = P & (D ^ S);                 \
+                break;                             \
+            case 0x61:                             \
+                out = ~(D ^ (S ^ (P | (D & S))));  \
+                break;                             \
+            case 0x62:                             \
+                out = D ^ (S & (P | D));           \
+                break;                             \
+            case 0x63:                             \
+                out = S ^ (D | ~P);                \
+                break;                             \
+            case 0x64:                             \
+                out = S ^ (D & (P | S));           \
+                break;                             \
+            case 0x65:                             \
+                out = D ^ (S | ~P);                \
+                break;                             \
+            case 0x66:                             \
+                out = D ^ S;                       \
+                break;                             \
+            case 0x67:                             \
+                out = S ^ (D | ~(P | S));          \
+                break;                             \
+            case 0x68:                             \
+                out = ~(D ^ (S ^ (P | ~(D | S)))); \
+                break;                             \
+            case 0x69:                             \
+                out = ~(P ^ (D ^ S));              \
+                break;                             \
+            case 0x6a:                             \
+                out = D ^ (P & S);                 \
+                break;                             \
+            case 0x6b:                             \
+                out = ~(P ^ (S ^ (D & (P | S))));  \
+                break;                             \
+            case 0x6c:                             \
+                out = S ^ (D & P);                 \
+                break;                             \
+            case 0x6d:                             \
+                out = ~(P ^ (D ^ (S & (P | D))));  \
+                break;                             \
+            case 0x6e:                             \
+                out = S ^ (D & (P | ~S));          \
+                break;                             \
+            case 0x6f:                             \
+                out = ~(P & ~(D ^ S));             \
+                break;                             \
+            case 0x70:                             \
+                out = P & ~(D & S);                \
+                break;                             \
+            case 0x71:                             \
+                out = ~(S ^ ((S ^ D) & (P ^ D)));  \
+                break;                             \
+            case 0x72:                             \
+                out = S ^ (D | (P ^ S));           \
+                break;                             \
+            case 0x73:                             \
+                out = ~(S & (D | ~P));             \
+                break;                             \
+            case 0x74:                             \
+                out = D ^ (S | (P ^ D));           \
+                break;                             \
+            case 0x75:                             \
+                out = ~(D & (S | ~P));             \
+                break;                             \
+            case 0x76:                             \
+                out = S ^ (D | (P & ~S));          \
+                break;                             \
+            case 0x77:                             \
+                out = ~(D & S);                    \
+                break;                             \
+            case 0x78:                             \
+                out = P ^ (D & S);                 \
+                break;                             \
+            case 0x79:                             \
+                out = ~(D ^ (S ^ (P & (D | S))));  \
+                break;                             \
+            case 0x7a:                             \
+                out = D ^ (P & (S | ~D));          \
+                break;                             \
+            case 0x7b:                             \
+                out = ~(S & ~(D ^ P));             \
+                break;                             \
+            case 0x7c:                             \
+                out = S ^ (P & (D | ~S));          \
+                break;                             \
+            case 0x7d:                             \
+                out = ~(D & ~(P ^ S));             \
+                break;                             \
+            case 0x7e:                             \
+                out = (S ^ P) | (D ^ S);           \
+                break;                             \
+            case 0x7f:                             \
+                out = ~(D & (P & S));              \
+                break;                             \
+            case 0x80:                             \
+                out = D & (P & S);                 \
+                break;                             \
+            case 0x81:                             \
+                out = ~((S ^ P) | (D ^ S));        \
+                break;                             \
+            case 0x82:                             \
+                out = D & ~(P ^ S);                \
+                break;                             \
+            case 0x83:                             \
+                out = ~(S ^ (P & (D | ~S)));       \
+                break;                             \
+            case 0x84:                             \
+                out = S & ~(D ^ P);                \
+                break;                             \
+            case 0x85:                             \
+                out = ~(P ^ (D & (S | ~P)));       \
+                break;                             \
+            case 0x86:                             \
+                out = D ^ (S ^ (P & (D | S)));     \
+                break;                             \
+            case 0x87:                             \
+                out = ~(P ^ (D & S));              \
+                break;                             \
+            case 0x88:                             \
+                out = D & S;                       \
+                break;                             \
+            case 0x89:                             \
+                out = ~(S ^ (D | (P & ~S)));       \
+                break;                             \
+            case 0x8a:                             \
+                out = D & (S | ~P);                \
+                break;                             \
+            case 0x8b:                             \
+                out = ~(D ^ (S | (P ^ D)));        \
+                break;                             \
+            case 0x8c:                             \
+                out = S & (D | ~P);                \
+                break;                             \
+            case 0x8d:                             \
+                out = ~(S ^ (D | (P ^ S)));        \
+                break;                             \
+            case 0x8e:                             \
+                out = S ^ ((S ^ D) & (P ^ D));     \
+                break;                             \
+            case 0x8f:                             \
+                out = ~(P & ~(D & S));             \
+                break;                             \
+            case 0x90:                             \
+                out = P & ~(D ^ S);                \
+                break;                             \
+            case 0x91:                             \
+                out = ~(S ^ (D & (P | ~S)));       \
+                break;                             \
+            case 0x92:                             \
+                out = D ^ (P ^ (S & (D | P)));     \
+                break;                             \
+            case 0x93:                             \
+                out = ~(S ^ (P & D));              \
+                break;                             \
+            case 0x94:                             \
+                out = P ^ (S ^ (D & (P | S)));     \
+                break;                             \
+            case 0x95:                             \
+                out = ~(D ^ (P & S));              \
+                break;                             \
+            case 0x96:                             \
+                out = D ^ (P ^ S);                 \
+                break;                             \
+            case 0x97:                             \
+                out = P ^ (S ^ (D | ~(P | S)));    \
+                break;                             \
+            case 0x98:                             \
+                out = ~(S ^ (D | ~(P | S)));       \
+                break;                             \
+            case 0x99:                             \
+                out = ~(D ^ S);                    \
+                break;                             \
+            case 0x9a:                             \
+                out = D ^ (P & ~S);                \
+                break;                             \
+            case 0x9b:                             \
+                out = ~(S ^ (D & (P | S)));        \
+                break;                             \
+            case 0x9c:                             \
+                out = S ^ (P & ~D);                \
+                break;                             \
+            case 0x9d:                             \
+                out = ~(D ^ (S & (P | D)));        \
+                break;                             \
+            case 0x9e:                             \
+                out = D ^ (S ^ (P | (D & S)));     \
+                break;                             \
+            case 0x9f:                             \
+                out = ~(P & (D ^ S));              \
+                break;                             \
+            case 0xa0:                             \
+                out = D & P;                       \
+                break;                             \
+            case 0xa1:                             \
+                out = ~(P ^ (D | (S & ~P)));       \
+                break;                             \
+            case 0xa2:                             \
+                out = D & (P | ~S);                \
+                break;                             \
+            case 0xa3:                             \
+                out = ~(D ^ (P | (S ^ D)));        \
+                break;                             \
+            case 0xa4:                             \
+                out = ~(P ^ (D | ~(S | P)));       \
+                break;                             \
+            case 0xa5:                             \
+                out = ~(P ^ D);                    \
+                break;                             \
+            case 0xa6:                             \
+                out = D ^ (S & ~P);                \
+                break;                             \
+            case 0xa7:                             \
+                out = ~(P ^ (D & (S | P)));        \
+                break;                             \
+            case 0xa8:                             \
+                out = D & (P | S);                 \
+                break;                             \
+            case 0xa9:                             \
+                out = ~(D ^ (P | S));              \
+                break;                             \
+            case 0xaa:                             \
+                out = D;                           \
+                break;                             \
+            case 0xab:                             \
+                out = D | ~(P | S);                \
+                break;                             \
+            case 0xac:                             \
+                out = S ^ (P & (D ^ S));           \
+                break;                             \
+            case 0xad:                             \
+                out = ~(D ^ (P | (S & D)));        \
+                break;                             \
+            case 0xae:                             \
+                out = D | (S & ~P);                \
+                break;                             \
+            case 0xaf:                             \
+                out = D | ~P;                      \
+                break;                             \
+            case 0xb0:                             \
+                out = P & (D | ~S);                \
+                break;                             \
+            case 0xb1:                             \
+                out = ~(P ^ (D | (S ^ P)));        \
+                break;                             \
+            case 0xb2:                             \
+                out = S ^ ((S ^ P) | (D ^ S));     \
+                break;                             \
+            case 0xb3:                             \
+                out = ~(S & ~(D & P));             \
+                break;                             \
+            case 0xb4:                             \
+                out = P ^ (S & ~D);                \
+                break;                             \
+            case 0xb5:                             \
+                out = ~(D ^ (P & (S | D)));        \
+                break;                             \
+            case 0xb6:                             \
+                out = D ^ (P ^ (S | (D & P)));     \
+                break;                             \
+            case 0xb7:                             \
+                out = ~(S & (D ^ P));              \
+                break;                             \
+            case 0xb8:                             \
+                out = P ^ (S & (D ^ P));           \
+                break;                             \
+            case 0xb9:                             \
+                out = ~(D ^ (S | (P & D)));        \
+                break;                             \
+            case 0xba:                             \
+                out = D | (P & ~S);                \
+                break;                             \
+            case 0xbb:                             \
+                out = D | ~S;                      \
+                break;                             \
+            case 0xbc:                             \
+                out = S ^ (P & ~(D & S));          \
+                break;                             \
+            case 0xbd:                             \
+                out = ~((S ^ D) & (P ^ D));        \
+                break;                             \
+            case 0xbe:                             \
+                out = D | (P ^ S);                 \
+                break;                             \
+            case 0xbf:                             \
+                out = D | ~(P & S);                \
+                break;                             \
+            case 0xc0:                             \
+                out = P & S;                       \
+                break;                             \
+            case 0xc1:                             \
+                out = ~(S ^ (P | (D & ~S)));       \
+                break;                             \
+            case 0xc2:                             \
+                out = ~(S ^ (P | ~(D | S)));       \
+                break;                             \
+            case 0xc3:                             \
+                out = ~(P ^ S);                    \
+                break;                             \
+            case 0xc4:                             \
+                out = S & (P | ~D);                \
+                break;                             \
+            case 0xc5:                             \
+                out = ~(S ^ (P | (D ^ S)));        \
+                break;                             \
+            case 0xc6:                             \
+                out = S ^ (D & ~P);                \
+                break;                             \
+            case 0xc7:                             \
+                out = ~(P ^ (S & (D | P)));        \
+                break;                             \
+            case 0xc8:                             \
+                out = S & (D | P);                 \
+                break;                             \
+            case 0xc9:                             \
+                out = ~(S ^ (P | D));              \
+                break;                             \
+            case 0xca:                             \
+                out = D ^ (P & (S ^ D));           \
+                break;                             \
+            case 0xcb:                             \
+                out = ~(S ^ (P | (D & S)));        \
+                break;                             \
+            case 0xcc:                             \
+                out = S;                           \
+                break;                             \
+            case 0xcd:                             \
+                out = S | ~(D | P);                \
+                break;                             \
+            case 0xce:                             \
+                out = S | (D & ~P);                \
+                break;                             \
+            case 0xcf:                             \
+                out = S | ~P;                      \
+                break;                             \
+            case 0xd0:                             \
+                out = P & (S | ~D);                \
+                break;                             \
+            case 0xd1:                             \
+                out = ~(P ^ (S | (D ^ P)));        \
+                break;                             \
+            case 0xd2:                             \
+                out = P ^ (D & ~S);                \
+                break;                             \
+            case 0xd3:                             \
+                out = ~(S ^ (P & (D | S)));        \
+                break;                             \
+            case 0xd4:                             \
+                out = S ^ ((S ^ P) & (P ^ D));     \
+                break;                             \
+            case 0xd5:                             \
+                out = ~(D & ~(P & S));             \
+                break;                             \
+            case 0xd6:                             \
+                out = P ^ (S ^ (D | (P & S)));     \
+                break;                             \
+            case 0xd7:                             \
+                out = ~(D & (P ^ S));              \
+                break;                             \
+            case 0xd8:                             \
+                out = P ^ (D & (S ^ P));           \
+                break;                             \
+            case 0xd9:                             \
+                out = ~(S ^ (D | (P & S)));        \
+                break;                             \
+            case 0xda:                             \
+                out = D ^ (P & ~(S & D));          \
+                break;                             \
+            case 0xdb:                             \
+                out = ~((S ^ P) & (D ^ S));        \
+                break;                             \
+            case 0xdc:                             \
+                out = S | (P & ~D);                \
+                break;                             \
+            case 0xdd:                             \
+                out = S | ~D;                      \
+                break;                             \
+            case 0xde:                             \
+                out = S | (D ^ P);                 \
+                break;                             \
+            case 0xdf:                             \
+                out = S | ~(D & P);                \
+                break;                             \
+            case 0xe0:                             \
+                out = P & (D | S);                 \
+                break;                             \
+            case 0xe1:                             \
+                out = ~(P ^ (D | S));              \
+                break;                             \
+            case 0xe2:                             \
+                out = D ^ (S & (P ^ D));           \
+                break;                             \
+            case 0xe3:                             \
+                out = ~(P ^ (S | (D & P)));        \
+                break;                             \
+            case 0xe4:                             \
+                out = S ^ (D & (P ^ S));           \
+                break;                             \
+            case 0xe5:                             \
+                out = ~(P ^ (D | (S & P)));        \
+                break;                             \
+            case 0xe6:                             \
+                out = S ^ (D & ~(P & S));          \
+                break;                             \
+            case 0xe7:                             \
+                out = ~((S ^ P) & (P ^ D));        \
+                break;                             \
+            case 0xe8:                             \
+                out = S ^ ((S ^ P) & (D ^ S));     \
+                break;                             \
+            case 0xe9:                             \
+                out = ~(D ^ (S ^ (P & ~(D & S)))); \
+                break;                             \
+            case 0xea:                             \
+                out = D | (P & S);                 \
+                break;                             \
+            case 0xeb:                             \
+                out = D | ~(P ^ S);                \
+                break;                             \
+            case 0xec:                             \
+                out = S | (D & P);                 \
+                break;                             \
+            case 0xed:                             \
+                out = S | ~(D ^ P);                \
+                break;                             \
+            case 0xee:                             \
+                out = D | S;                       \
+                break;                             \
+            case 0xef:                             \
+                out = S | (D | ~P);                \
+                break;                             \
+            case 0xf0:                             \
+                out = P;                           \
+                break;                             \
+            case 0xf1:                             \
+                out = P | ~(D | S);                \
+                break;                             \
+            case 0xf2:                             \
+                out = P | (D & ~S);                \
+                break;                             \
+            case 0xf3:                             \
+                out = P | ~S;                      \
+                break;                             \
+            case 0xf4:                             \
+                out = P | (S & ~D);                \
+                break;                             \
+            case 0xf5:                             \
+                out = P | ~D;                      \
+                break;                             \
+            case 0xf6:                             \
+                out = P | (D ^ S);                 \
+                break;                             \
+            case 0xf7:                             \
+                out = P | ~(D & S);                \
+                break;                             \
+            case 0xf8:                             \
+                out = P | (D & S);                 \
+                break;                             \
+            case 0xf9:                             \
+                out = P | ~(D ^ S);                \
+                break;                             \
+            case 0xfa:                             \
+                out = D | P;                       \
+                break;                             \
+            case 0xfb:                             \
+                out = D | (P | ~S);                \
+                break;                             \
+            case 0xfc:                             \
+                out = P | S;                       \
+                break;                             \
+            case 0xfd:                             \
+                out = P | (S | ~D);                \
+                break;                             \
+            case 0xfe:                             \
+                out = D | (P | S);                 \
+                break;                             \
+            case 0xff:                             \
+                out = ~0;                          \
+                break;                             \
+        }                                          \
+    }
+
+#define MIX()                                                    \
+    do {                                                         \
+        out = 0;                                                 \
+        ROPMIX(tgui->accel.rop, dst_dat, pat_dat, src_dat, out); \
     } while (0)
 
-#define WRITE(addr, dat)                                                               \
-    if (tgui->accel.bpp == 0) {                                                        \
-        svga->vram[(addr) &tgui->vram_mask]                   = dat;                   \
-        svga->changedvram[((addr) & (tgui->vram_mask)) >> 12] = changeframecount;      \
-    } else if (tgui->accel.bpp == 1) {                                                 \
-        vram_w[(addr) & (tgui->vram_mask >> 1)]                    = dat;              \
-        svga->changedvram[((addr) & (tgui->vram_mask >> 1)) >> 11] = changeframecount; \
-    } else {                                                                           \
-        vram_l[(addr) & (tgui->vram_mask >> 2)]                    = dat;              \
-        svga->changedvram[((addr) & (tgui->vram_mask >> 2)) >> 10] = changeframecount; \
+#define WRITE(addr, dat)                                                                                  \
+    if (tgui->accel.bpp == 0) {                                                                           \
+        svga->vram[(addr) &tgui->vram_mask]                   = dat;                                      \
+        svga->changedvram[((addr) & (tgui->vram_mask)) >> 12] = svga->monitor->mon_changeframecount;      \
+    } else if (tgui->accel.bpp == 1) {                                                                    \
+        vram_w[(addr) & (tgui->vram_mask >> 1)]                    = dat;                                 \
+        svga->changedvram[((addr) & (tgui->vram_mask >> 1)) >> 11] = svga->monitor->mon_changeframecount; \
+    } else {                                                                                              \
+        vram_l[(addr) & (tgui->vram_mask >> 2)]                    = dat;                                 \
+        svga->changedvram[((addr) & (tgui->vram_mask >> 2)) >> 10] = svga->monitor->mon_changeframecount; \
     }
 
 static void
 tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
 {
-    svga_t   *svga = &tgui->svga;
-    uint32_t *pattern_data;
-    int       x;
-    int       y;
-    int       c;
-    int       d;
-    uint32_t  out;
-    uint32_t  src_dat    = 0;
-    uint32_t  dst_dat;
-    uint32_t  pat_dat;
-    int       xdir       = (tgui->accel.flags & 0x200) ? -1 : 1;
-    int       ydir       = (tgui->accel.flags & 0x100) ? -1 : 1;
-    uint32_t  trans_col  = (tgui->accel.flags & TGUI_TRANSREV) ? tgui->accel.fg_col : tgui->accel.bg_col;
-    uint16_t *vram_w     = (uint16_t *) svga->vram;
-    uint32_t *vram_l     = (uint32_t *) svga->vram;
-    uint8_t   ger22lower = tgui->accel.ger22 & 0xff;
-    uint8_t   ger22upper = (tgui->accel.ger22 >> 8) & 0xff;
+    svga_t         *svga = &tgui->svga;
+    const uint32_t *pattern_data;
+    int             x;
+    int             y;
+    uint32_t        out;
+    uint32_t        src_dat   = 0;
+    uint32_t        dst_dat;
+    uint32_t        pat_dat;
+    int             xdir      = (tgui->accel.flags & 0x200) ? -1 : 1;
+    int             ydir      = (tgui->accel.flags & 0x100) ? -1 : 1;
+    uint32_t        trans_col = (tgui->accel.flags & TGUI_TRANSREV) ? tgui->accel.fg_col : tgui->accel.bg_col;
+    uint16_t       *vram_w    = (uint16_t *) svga->vram;
+    uint32_t       *vram_l    = (uint32_t *) svga->vram;
 
     if (tgui->accel.bpp == 0) {
         trans_col &= 0xff;
@@ -1361,13 +2310,15 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
         trans_col &= 0xffff;
     }
 
-    if (count != -1 && !tgui->accel.x && (tgui->accel.flags & TGUI_SRCMONO)) {
+    if ((count != -1) && !tgui->accel.x && (tgui->accel.flags & TGUI_SRCMONO)) {
         count -= (tgui->accel.flags >> 24) & 7;
         cpu_dat <<= (tgui->accel.flags >> 24) & 7;
     }
 
     if (count == -1)
         tgui->accel.x = tgui->accel.y = 0;
+
+    tgui->accel.pattern_32_idx = 0;
 
     if (tgui->accel.flags & TGUI_SOLIDFILL) {
         for (y = 0; y < 8; y++) {
@@ -1387,61 +2338,48 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
         if (tgui->accel.bpp == 0) {
             for (y = 0; y < 8; y++) {
                 for (x = 0; x < 8; x++) {
-                    tgui->accel.pattern_8[(y * 8) + (7 - x)] = tgui->accel.pattern[x + y * 8];
+                    tgui->accel.pattern_8[(y * 8) + x] = tgui->accel.pattern[x + y * 8];
                 }
             }
             pattern_data = tgui->accel.pattern_8;
         } else if (tgui->accel.bpp == 1) {
             for (y = 0; y < 8; y++) {
                 for (x = 0; x < 8; x++) {
-                    tgui->accel.pattern_16[(y * 8) + (7 - x)] = tgui->accel.pattern[x * 2 + y * 16] | (tgui->accel.pattern[x * 2 + y * 16 + 1] << 8);
+                    tgui->accel.pattern_16[(y * 8) + x] = tgui->accel.pattern[x * 2 + y * 16] | (tgui->accel.pattern[x * 2 + y * 16 + 1] << 8);
                 }
             }
             pattern_data = tgui->accel.pattern_16;
         } else {
-            for (y = 0; y < 4; y++) {
+            for (y = 0; y < 8; y++) {
                 for (x = 0; x < 8; x++) {
-                    tgui->accel.pattern_32[(y * 8) + (7 - x)]       = tgui->accel.pattern[x * 4 + y * 32] | (tgui->accel.pattern[x * 4 + y * 32 + 1] << 8) | (tgui->accel.pattern[x * 4 + y * 32 + 2] << 16) | (tgui->accel.pattern[x * 4 + y * 32 + 3] << 24);
-                    tgui->accel.pattern_32[((y + 4) * 8) + (7 - x)] = tgui->accel.pattern[x * 4 + y * 32] | (tgui->accel.pattern[x * 4 + y * 32 + 1] << 8) | (tgui->accel.pattern[x * 4 + y * 32 + 2] << 16) | (tgui->accel.pattern[x * 4 + y * 32 + 3] << 24);
+                    tgui->accel.pattern_32[(y * 8) + x] = tgui->accel.pattern_32bpp[x * 4 + y * 32] | (tgui->accel.pattern_32bpp[x * 4 + y * 32 + 1] << 8) | (tgui->accel.pattern_32bpp[x * 4 + y * 32 + 2] << 16) | (tgui->accel.pattern_32bpp[x * 4 + y * 32 + 3] << 24);
                 }
             }
             pattern_data = tgui->accel.pattern_32;
         }
     }
 
-    switch (svga->hdisp) {
-        case 640:
-        case 1024:
-        case 1280:
-            tgui->accel.pitch = svga->hdisp;
+    /* See Linux kernel drivers/video/tridentfb.c for the pitch */
+    tgui->accel.pitch = svga->rowoffset;
+
+    switch (svga->bpp) {
+        case 8:
+        case 24:
+            tgui->accel.pitch <<= 3;
             break;
-        case 800: /*Disassembly of the TGUI9440/96x0 drivers shows that 800x600 is treated as 832 in the acceleration pitch (0x340 as horizontal display)*/
-            tgui->accel.pitch = svga->hdisp + 32;
+        case 15:
+        case 16:
+            tgui->accel.pitch <<= 2;
             break;
-        case 1600:
-            tgui->accel.pitch = 2048;
+        case 32:
+            tgui->accel.pitch <<= 1;
+            break;
+        default:
             break;
     }
-
-    switch (ger22lower) {
-        case 4: /*8-bit mode for modes up to 1024x768.*/
-        case 9: /*15-bit and 16-bit modes.*/
-            if (!(ger22upper & 0x01)) {
-                if (ger22upper == 0x00)
-                    tgui->accel.pitch = 1024;
-            }
-            break;
-        case 8: /*8-bit mode for modes greater than 1024x768 and 24-bit mode for 640x480 (latter is TGUI9440AGi only).*/
-            if (!(ger22upper & 0x01)) {
-                if (ger22upper == 0x00) {
-                    if (svga->bpp == 24)
-                        tgui->accel.pitch = 2048;
-                }
-            }
-            break;
-    }
-
-    // pclog("TGUI accel command = %x, ger22 = %04x, hdisp = %d, dispend = %d, vtotal = %d, rowoffset = %d, svgabpp = %d, interlace = %d, accelbpp = %d, pitch = %d.\n", tgui->accel.command, tgui->accel.ger22, svga->hdisp, svga->dispend, svga->vtotal, svga->rowoffset, svga->bpp, svga->interlace, tgui->accel.bpp, tgui->accel.pitch);
+#if 0
+    pclog("TGUI accel command = %x, ger22 = %04x, hdisp = %d, dispend = %d, vtotal = %d, rowoffset = %d, svgabpp = %d, interlace = %d, accelbpp = %d, pitch = %d.\n", tgui->accel.command, tgui->accel.ger22, svga->hdisp, svga->dispend, svga->vtotal, svga->rowoffset, svga->bpp, svga->interlace, tgui->accel.bpp, tgui->accel.pitch);
+#endif
 
     switch (tgui->accel.command) {
         case TGUI_BITBLT:
@@ -1496,6 +2434,7 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
                                 cpu_dat <<= 16;
                                 count -= 3;
                             }
+
 
                             READ(tgui->accel.dst, dst_dat);
 
@@ -1660,49 +2599,47 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
             break;
 
         case TGUI_SCANLINE:
-            {
-                if (count == -1) {
-                    tgui->accel.src_old = tgui->accel.src_x + (tgui->accel.src_y * tgui->accel.pitch);
-                    tgui->accel.src     = tgui->accel.src_old;
+            if (count == -1) {
+                tgui->accel.src_old = tgui->accel.src_x + (tgui->accel.src_y * tgui->accel.pitch);
+                tgui->accel.src     = tgui->accel.src_old;
 
-                    tgui->accel.dst_old = tgui->accel.dst_x + (tgui->accel.dst_y * tgui->accel.pitch);
-                    tgui->accel.dst     = tgui->accel.dst_old;
+                tgui->accel.dst_old = tgui->accel.dst_x + (tgui->accel.dst_y * tgui->accel.pitch);
+                tgui->accel.dst     = tgui->accel.dst_old;
 
-                    tgui->accel.pat_x = tgui->accel.dst_x;
-                    tgui->accel.pat_y = tgui->accel.dst_y;
+                tgui->accel.pat_x = tgui->accel.dst_x;
+                tgui->accel.pat_y = tgui->accel.dst_y;
+            }
+
+            while (count--) {
+                READ(tgui->accel.src, src_dat);
+                READ(tgui->accel.dst, dst_dat);
+
+                pat_dat = pattern_data[((tgui->accel.pat_y & 7) * 8) + (tgui->accel.pat_x & 7)];
+
+                if (tgui->accel.bpp == 0)
+                    pat_dat &= 0xff;
+                else if (tgui->accel.bpp == 1)
+                    pat_dat &= 0xffff;
+
+                if (!(tgui->accel.flags & TGUI_TRANSENA) || (src_dat != trans_col)) {
+                    MIX();
+
+                    WRITE(tgui->accel.dst, out);
                 }
 
-                while (count--) {
-                    READ(tgui->accel.src, src_dat);
-                    READ(tgui->accel.dst, dst_dat);
+                tgui->accel.src += xdir;
+                tgui->accel.dst += xdir;
+                tgui->accel.pat_x += xdir;
 
-                    pat_dat = pattern_data[((tgui->accel.pat_y & 7) * 8) + (tgui->accel.pat_x & 7)];
+                tgui->accel.x++;
+                if (tgui->accel.x > tgui->accel.size_x) {
+                    tgui->accel.x = 0;
 
-                    if (tgui->accel.bpp == 0)
-                        pat_dat &= 0xff;
-                    else if (tgui->accel.bpp == 1)
-                        pat_dat &= 0xffff;
-
-                    if (!(tgui->accel.flags & TGUI_TRANSENA) || (src_dat != trans_col)) {
-                        MIX();
-
-                        WRITE(tgui->accel.dst, out);
-                    }
-
-                    tgui->accel.src += xdir;
-                    tgui->accel.dst += xdir;
-                    tgui->accel.pat_x += xdir;
-
-                    tgui->accel.x++;
-                    if (tgui->accel.x > tgui->accel.size_x) {
-                        tgui->accel.x = 0;
-
-                        tgui->accel.pat_x = tgui->accel.dst_x;
-                        tgui->accel.src = tgui->accel.src_old = tgui->accel.src_old + (ydir * tgui->accel.pitch);
-                        tgui->accel.dst = tgui->accel.dst_old = tgui->accel.dst_old + (ydir * tgui->accel.pitch);
-                        tgui->accel.pat_y += ydir;
-                        return;
-                    }
+                    tgui->accel.pat_x = tgui->accel.dst_x;
+                    tgui->accel.src = tgui->accel.src_old = tgui->accel.src_old + (ydir * tgui->accel.pitch);
+                    tgui->accel.dst = tgui->accel.dst_old = tgui->accel.dst_old + (ydir * tgui->accel.pitch);
+                    tgui->accel.pat_y += ydir;
+                    return;
                 }
             }
             break;
@@ -1711,11 +2648,7 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
             if (count == -1) {
                 tgui->accel.dx = tgui->accel.dst_x & 0xfff;
                 tgui->accel.dy = tgui->accel.dst_y & 0xfff;
-
-                if (tgui->accel.dst_x & 0x1000)
-                    tgui->accel.dx |= ~0xfff;
-                if (tgui->accel.dst_y & 0x1000)
-                    tgui->accel.dy |= ~0xfff;
+                tgui->accel.y = tgui->accel.size_y;
 
                 tgui->accel.left   = tgui->accel.src_x_clip & 0xfff;
                 tgui->accel.right  = tgui->accel.dst_x_clip & 0xfff;
@@ -1731,99 +2664,74 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
                 }
             }
 
-            // pclog("TGUI bres = %04x, err = %d, sizex = %d, sizey = %d, srcx = %d, srcy = %d.\n", tgui->accel.flags & 0x700, err, tgui->accel.size_x, tgui->accel.size_y, cx, tgui->accel.src_y);
-            while (count-- && (tgui->accel.y <= (tgui->accel.size_y))) {
-                // READ(tgui->accel.src_x + (tgui->accel.src_y * tgui->accel.pitch), src_dat);
-
+            while (count--) {
                 /*Note by TC1995: I suppose the x/y clipping max is always more than 0 in the TGUI 96xx, but the TGUI 9440 lacks clipping*/
-                if ((tgui->type == TGUI_9440) || ((tgui->type >= TGUI_9660) && tgui->accel.dx >= tgui->accel.left && tgui->accel.dx <= tgui->accel.right && tgui->accel.dy >= tgui->accel.top && tgui->accel.dy <= tgui->accel.bottom)) {
+                if ((tgui->type == TGUI_9440) || ((tgui->type >= TGUI_9660) && ((tgui->accel.dx & 0xfff) >= tgui->accel.left) && ((tgui->accel.dx & 0xfff) <= tgui->accel.right) && ((tgui->accel.dy & 0xfff) >= tgui->accel.top) && ((tgui->accel.dy & 0xfff) <= tgui->accel.bottom))) {
                     READ(tgui->accel.dx + (tgui->accel.dy * tgui->accel.pitch), dst_dat);
 
                     pat_dat = tgui->accel.fg_col;
-
-                    if (tgui->accel.bpp == 0)
-                        pat_dat &= 0xff;
-                    else if (tgui->accel.bpp == 1)
-                        pat_dat &= 0xffff;
 
                     MIX();
 
                     WRITE(tgui->accel.dx + (tgui->accel.dy * tgui->accel.pitch), out);
                 }
 
-                if (tgui->accel.y == (tgui->accel.size_y & 0xfff)) {
+                if (!tgui->accel.y)
                     break;
-                }
 
-                if (tgui->accel.err >= (tgui->accel.size_y & 0xfff)) {
-                    // pclog("Bres DEC: destx = %d, desty = %d, err = %d, sizey = %d.\n", tgui->accel.src_x, tgui->accel.src_y, tgui->accel.err, tgui->accel.size_y);
-                    if ((tgui->accel.src_x >= 2048) && (tgui->accel.src_x < 4096))
-                        tgui->accel.err -= (4096 - tgui->accel.src_x);
-                    else if ((tgui->accel.src_x >= 4096) && (tgui->accel.src_x < 32768))
-                        tgui->accel.err -= (32768 - tgui->accel.src_x);
-                    else
-                        tgui->accel.err += tgui->accel.src_x;
+                if (tgui->accel.size_x >= 0) {
+                    tgui->accel.size_x += tgui->accel.src_x;
                     /*Step minor axis*/
-                    switch (tgui->accel.flags & 0x700) {
-                        case 0x300:
-                            tgui->accel.dy--;
-                            break;
-                        case 0x100:
-                            tgui->accel.dy--;
-                            break;
-                        case 0x700:
-                            tgui->accel.dx--;
-                            break;
-                        case 0x500:
-                            tgui->accel.dx++;
-                            break;
-                        case 0x200:
+                    switch ((tgui->accel.flags >> 8) & 7) {
+                        case 0:
+                        case 2:
                             tgui->accel.dy++;
                             break;
-                        case 0x000:
-                            tgui->accel.dy++;
+                        case 1:
+                        case 3:
+                            tgui->accel.dy--;
                             break;
-                        case 0x600:
-                            tgui->accel.dx--;
-                            break;
-                        case 0x400:
+                        case 4:
+                        case 5:
                             tgui->accel.dx++;
                             break;
-                    }
-                } else {
-                    // pclog("Bres INC: desty = %d, destx = %d, err = %d, sizey = %d.\n", tgui->accel.src_y, tgui->accel.src_x, tgui->accel.err, tgui->accel.size_y);
-                    tgui->accel.err += tgui->accel.src_y;
-                }
+                        case 6:
+                        case 7:
+                            tgui->accel.dx--;
+                            break;
+
+                        default:
+                            break;
+                        }
+                } else
+                    tgui->accel.size_x += tgui->accel.src_y;
 
                 /*Step major axis*/
-                switch (tgui->accel.flags & 0x700) {
-                    case 0x300:
-                        tgui->accel.dx--;
-                        break;
-                    case 0x100:
+                switch ((tgui->accel.flags >> 8) & 7) {
+                    case 0:
+                    case 1:
                         tgui->accel.dx++;
                         break;
-                    case 0x700:
-                        tgui->accel.dy--;
-                        break;
-                    case 0x500:
-                        tgui->accel.dy--;
-                        break;
-                    case 0x200:
+                    case 2:
+                    case 3:
                         tgui->accel.dx--;
                         break;
-                    case 0x000:
-                        tgui->accel.dx++;
-                        break;
-                    case 0x600:
+                    case 4:
+                    case 6:
                         tgui->accel.dy++;
                         break;
-                    case 0x400:
-                        tgui->accel.dy++;
+                    case 5:
+                    case 7:
+                        tgui->accel.dy--;
+                        break;
+
+                    default:
                         break;
                 }
 
-                tgui->accel.y++;
+                tgui->accel.y--;
+                tgui->accel.dx &= 0xfff;
+                tgui->accel.dy &= 0xfff;
             }
             break;
 
@@ -1831,11 +2739,7 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
             if (count == -1) {
                 tgui->accel.dx = tgui->accel.dst_x & 0xfff;
                 tgui->accel.dy = tgui->accel.dst_y & 0xfff;
-
-                if (tgui->accel.dst_x & 0x1000)
-                    tgui->accel.dx |= ~0xfff;
-                if (tgui->accel.dst_y & 0x1000)
-                    tgui->accel.dy |= ~0xfff;
+                tgui->accel.y = tgui->accel.sv_size_y & 0xfff;
 
                 tgui->accel.left   = tgui->accel.src_x_clip & 0xfff;
                 tgui->accel.right  = tgui->accel.dst_x_clip & 0xfff;
@@ -1851,26 +2755,19 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
                 }
             }
 
-            while (count-- && (tgui->accel.y <= (tgui->accel.sv_size_y & 0xfff))) {
-                // READ(tgui->accel.src_x + (tgui->accel.src_y * tgui->accel.pitch), src_dat);
-
+            while (count--) {
                 /*Note by TC1995: I suppose the x/y clipping max is always more than 0 in the TGUI 96xx, but the TGUI 9440 lacks clipping*/
-                if ((tgui->type == TGUI_9440) || ((tgui->type >= TGUI_9660) && tgui->accel.dx >= tgui->accel.left && tgui->accel.dx <= tgui->accel.right && tgui->accel.dy >= tgui->accel.top && tgui->accel.dy <= tgui->accel.bottom)) {
+                if ((tgui->type == TGUI_9440) || ((tgui->type >= TGUI_9660) && ((tgui->accel.dx & 0xfff) >= tgui->accel.left) && ((tgui->accel.dx & 0xfff) <= tgui->accel.right) && ((tgui->accel.dy & 0xfff) >= tgui->accel.top) && ((tgui->accel.dy & 0xfff) <= tgui->accel.bottom))) {
                     READ(tgui->accel.dx + (tgui->accel.dy * tgui->accel.pitch), dst_dat);
 
                     pat_dat = tgui->accel.fg_col;
-
-                    if (tgui->accel.bpp == 0)
-                        pat_dat &= 0xff;
-                    else if (tgui->accel.bpp == 1)
-                        pat_dat &= 0xffff;
 
                     MIX();
 
                     WRITE(tgui->accel.dx + (tgui->accel.dy * tgui->accel.pitch), out);
                 }
 
-                if (tgui->accel.y == (tgui->accel.sv_size_y & 0xfff))
+                if (!tgui->accel.y)
                     break;
 
                 switch ((tgui->accel.sv_size_y >> 8) & 0xe0) {
@@ -1902,9 +2799,14 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
                         tgui->accel.dx++;
                         tgui->accel.dy++;
                         break;
+
+                    default:
+                        break;
                 }
 
-                tgui->accel.y++;
+                tgui->accel.y--;
+                tgui->accel.dx &= 0xfff;
+                tgui->accel.dy &= 0xfff;
             }
             break;
 
@@ -1915,11 +2817,7 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
             if (count == -1) {
                 tgui->accel.dx = tgui->accel.dst_x & 0xfff;
                 tgui->accel.dy = tgui->accel.dst_y & 0xfff;
-
-                if (tgui->accel.dst_x & 0x1000)
-                    tgui->accel.dx |= ~0xfff;
-                if (tgui->accel.dst_y & 0x1000)
-                    tgui->accel.dy |= ~0xfff;
+                tgui->accel.y = tgui->accel.size_y;
 
                 tgui->accel.left   = tgui->accel.src_x_clip & 0xfff;
                 tgui->accel.right  = tgui->accel.dst_x_clip & 0xfff;
@@ -1935,26 +2833,19 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
                 }
             }
 
-            while (count-- && (tgui->accel.y <= (tgui->accel.size_y & 0xfff))) {
-                // READ(tgui->accel.src_x + (tgui->accel.src_y * tgui->accel.pitch), src_dat);
-
+            while (count--) {
                 /*Note by TC1995: I suppose the x/y clipping max is always more than 0 in the TGUI 96xx, but the TGUI 9440 lacks clipping*/
-                if (tgui->accel.dx >= tgui->accel.left && tgui->accel.dx <= tgui->accel.right && tgui->accel.dy >= tgui->accel.top && tgui->accel.dy <= tgui->accel.bottom) {
+                if ((tgui->type == TGUI_9440) || ((tgui->type >= TGUI_9660) && ((tgui->accel.dx & 0xfff) >= tgui->accel.left) && ((tgui->accel.dx & 0xfff) <= tgui->accel.right) && ((tgui->accel.dy & 0xfff) >= tgui->accel.top) && ((tgui->accel.dy & 0xfff) <= tgui->accel.bottom))) {
                     READ(tgui->accel.dx + (tgui->accel.dy * tgui->accel.pitch), dst_dat);
 
                     pat_dat = tgui->accel.fg_col;
-
-                    if (tgui->accel.bpp == 0)
-                        pat_dat &= 0xff;
-                    else if (tgui->accel.bpp == 1)
-                        pat_dat &= 0xffff;
 
                     MIX();
 
                     WRITE(tgui->accel.dx + (tgui->accel.dy * tgui->accel.pitch), out);
                 }
 
-                if (tgui->accel.y == (tgui->accel.size_y & 0xfff))
+                if (!tgui->accel.y)
                     break;
 
                 switch ((tgui->accel.size_y >> 8) & 0xe0) {
@@ -1986,10 +2877,18 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
                         tgui->accel.dx++;
                         tgui->accel.dy++;
                         break;
+
+                    default:
+                        break;
                 }
 
-                tgui->accel.y++;
+                tgui->accel.y--;
+                tgui->accel.dx &= 0xfff;
+                tgui->accel.dy &= 0xfff;
             }
+            break;
+
+        default:
             break;
     }
 }
@@ -1998,49 +2897,47 @@ static void
 tgui_accel_out(uint16_t addr, uint8_t val, void *priv)
 {
     tgui_t *tgui = (tgui_t *) priv;
+    svga_t *svga = &tgui->svga;
 
     switch (addr) {
         case 0x2122:
             tgui->accel.ger22 = (tgui->accel.ger22 & 0xff00) | val;
-            switch (val & 0xff) {
-                case 4:
+            switch (svga->bpp) {
                 case 8:
+                case 24:
                     tgui->accel.bpp = 0;
                     break;
-
-                case 9:
-                    switch (tgui->svga.bpp) {
-                        case 32:
-                            tgui->accel.bpp = 3;
-                            break;
-                        default:
-                            tgui->accel.bpp = 1;
-                            break;
-                    }
+                case 15:
+                case 16:
+                    tgui->accel.bpp = 1;
+                    break;
+                case 32:
+                    tgui->accel.bpp = 3;
                     break;
 
-                case 13:
-                case 14:
-                    switch (tgui->svga.bpp) {
-                        case 15:
-                        case 16:
-                            tgui->accel.bpp = 1;
-                            break;
-
-                        case 24:
-                            tgui->accel.bpp = 0;
-                            break;
-
-                        case 32:
-                            tgui->accel.bpp = 3;
-                            break;
-                    }
+                default:
                     break;
             }
             break;
 
         case 0x2123:
             tgui->accel.ger22 = (tgui->accel.ger22 & 0xff) | (val << 8);
+#if 0
+            pclog("Pitch IO23: val = %02x, rowoffset = %x.\n", tgui->accel.ger22, svga->crtc[0x13]);
+#endif
+            switch (svga->bpp) {
+                case 8:
+                case 24:
+                    tgui->accel.bpp = 0;
+                    break;
+                case 15:
+                case 16:
+                    tgui->accel.bpp = 1;
+                    break;
+                case 32:
+                    tgui->accel.bpp = 3;
+                    break;
+            }
             break;
 
         case 0x2124: /*Command*/
@@ -2120,36 +3017,37 @@ tgui_accel_out(uint16_t addr, uint8_t val, void *priv)
             tgui->accel.dst_y = (tgui->accel.dst_y & 0xff) | (val << 8);
             break;
 
-        case 0x213c: /*Src X*/
-            tgui->accel.src_x = (tgui->accel.src_x & 0xff00) | val;
+        case 0x213c: /*Src X, Diagonal Step Constant*/
+            tgui->accel.src_x = (tgui->accel.src_x & 0x3f00) | val;
             break;
-        case 0x213d: /*Src X*/
-            tgui->accel.src_x = (tgui->accel.src_x & 0xff) | (val << 8);
+        case 0x213d: /*Src X, Diagonal Step Constant*/
+            tgui->accel.src_x = (tgui->accel.src_x & 0xff) | ((val & 0x3f) << 8);
+            if (val & 0x20)
+                tgui->accel.src_x |= ~0x3fff;
             break;
-        case 0x213e: /*Src Y*/
-            tgui->accel.src_y = (tgui->accel.src_y & 0xff00) | val;
+        case 0x213e: /*Src Y, Axial Step Constant*/
+            tgui->accel.src_y = (tgui->accel.src_y & 0x3f00) | val;
             break;
-        case 0x213f: /*Src Y*/
-            tgui->accel.src_y = (tgui->accel.src_y & 0xff) | (val << 8);
+        case 0x213f: /*Src Y, Axial Step Constant*/
+            tgui->accel.src_y = (tgui->accel.src_y & 0xff) | ((val & 0x3f) << 8);
+            if (val & 0x20)
+                tgui->accel.src_y |= ~0x3fff;
             break;
 
-        case 0x2140: /*Size X*/
-            tgui->accel.size_x = (tgui->accel.size_x & 0xff00) | val;
+        case 0x2140: /*Size X, Line Error Term*/
+            tgui->accel.size_x = (tgui->accel.size_x & 0x3f00) | val;
             break;
-        case 0x2141: /*Size X*/
-            tgui->accel.size_x = (tgui->accel.size_x & 0xff) | (val << 8);
-            tgui->accel.err    = tgui->accel.size_x;
-            if ((tgui->accel.err >= 2048) && (tgui->accel.err < 4096))
-                tgui->accel.err -= 4096;
-            else if ((tgui->accel.err >= 4096) && (tgui->accel.err < 32768))
-                tgui->accel.err -= 32768;
+        case 0x2141: /*Size X, Line Error Term*/
+            tgui->accel.size_x = (tgui->accel.size_x & 0xff) | ((val & 0x3f) << 8);
+            if (val & 0x20)
+                tgui->accel.size_x |= ~0x1fff;
             break;
-        case 0x2142: /*Size Y*/
-            tgui->accel.size_y    = (tgui->accel.size_y & 0xff00) | val;
+        case 0x2142: /*Size Y, Major Axis Pixel Count*/
+            tgui->accel.size_y    = (tgui->accel.size_y & 0xf00) | val;
             tgui->accel.sv_size_y = (tgui->accel.sv_size_y & 0xff00) | val;
             break;
-        case 0x2143: /*Size Y*/
-            tgui->accel.size_y    = (tgui->accel.size_y & 0xff) | (val << 8);
+        case 0x2143: /*Size Y, Major Axis Pixel Count*/
+            tgui->accel.size_y    = (tgui->accel.size_y & 0xff) | ((val & 0x0f) << 8);
             tgui->accel.sv_size_y = (tgui->accel.sv_size_y & 0xff) | (val << 8);
             break;
 
@@ -2334,6 +3232,11 @@ tgui_accel_out(uint16_t addr, uint8_t val, void *priv)
         case 0x21fe:
         case 0x21ff:
             tgui->accel.pattern[addr & 0x7f] = val;
+            tgui->accel.pattern_32bpp[tgui->accel.pattern_32_idx] = val;
+            tgui->accel.pattern_32_idx = (tgui->accel.pattern_32_idx + 1) & 0xff;
+            break;
+
+        default:
             break;
     }
 }
@@ -2371,7 +3274,7 @@ tgui_accel_out_l(uint16_t addr, uint32_t val, void *priv)
 static uint8_t
 tgui_accel_in(uint16_t addr, void *priv)
 {
-    tgui_t *tgui = (tgui_t *) priv;
+    const tgui_t *tgui = (tgui_t *) priv;
 
     switch (addr) {
         case 0x2120: /*Status*/
@@ -2617,6 +3520,9 @@ tgui_accel_in(uint16_t addr, void *priv)
         case 0x21fe:
         case 0x21ff:
             return tgui->accel.pattern[addr & 0x7f];
+
+        default:
+            break;
     }
     return 0;
 }
@@ -2649,343 +3555,7 @@ tgui_accel_write(uint32_t addr, uint8_t val, void *priv)
             return;
     }
 
-    switch (addr & 0xff) {
-        case 0x22:
-            tgui->accel.ger22 = (tgui->accel.ger22 & 0xff00) | val;
-            switch (val & 0xff) {
-                case 4:
-                case 8:
-                    tgui->accel.bpp = 0;
-                    break;
-
-                case 9:
-                    switch (tgui->svga.bpp) {
-                        case 32:
-                            tgui->accel.bpp = 3;
-                            break;
-                        default:
-                            tgui->accel.bpp = 1;
-                            break;
-                    }
-                    break;
-
-                case 13:
-                case 14:
-                    switch (tgui->svga.bpp) {
-                        case 15:
-                        case 16:
-                            tgui->accel.bpp = 1;
-                            break;
-
-                        case 24:
-                            tgui->accel.bpp = 0;
-                            break;
-
-                        case 32:
-                            tgui->accel.bpp = 3;
-                            break;
-                    }
-                    break;
-            }
-            break;
-
-        case 0x23:
-            tgui->accel.ger22 = (tgui->accel.ger22 & 0xff) | (val << 8);
-            break;
-
-        case 0x24: /*Command*/
-            tgui->accel.command = val;
-            tgui_accel_command(-1, 0, tgui);
-            break;
-
-        case 0x27: /*ROP*/
-            tgui->accel.rop     = val;
-            tgui->accel.use_src = (val & 0x33) ^ ((val >> 2) & 0x33);
-            break;
-
-        case 0x28: /*Flags*/
-            tgui->accel.flags = (tgui->accel.flags & 0xffffff00) | val;
-            break;
-        case 0x29: /*Flags*/
-            tgui->accel.flags = (tgui->accel.flags & 0xffff00ff) | (val << 8);
-            break;
-        case 0x2a: /*Flags*/
-            tgui->accel.flags = (tgui->accel.flags & 0xff00ffff) | (val << 16);
-            break;
-        case 0x2b: /*Flags*/
-            tgui->accel.flags = (tgui->accel.flags & 0x0000ffff) | (val << 24);
-            break;
-
-        case 0x2c: /*Foreground colour*/
-        case 0x78:
-            tgui->accel.fg_col = (tgui->accel.fg_col & 0xffffff00) | val;
-            break;
-        case 0x2d: /*Foreground colour*/
-        case 0x79:
-            tgui->accel.fg_col = (tgui->accel.fg_col & 0xffff00ff) | (val << 8);
-            break;
-        case 0x2e: /*Foreground colour*/
-        case 0x7a:
-            tgui->accel.fg_col = (tgui->accel.fg_col & 0xff00ffff) | (val << 16);
-            break;
-        case 0x2f: /*Foreground colour*/
-        case 0x7b:
-            tgui->accel.fg_col = (tgui->accel.fg_col & 0x00ffffff) | (val << 24);
-            break;
-
-        case 0x30: /*Background colour*/
-        case 0x7c:
-            tgui->accel.bg_col = (tgui->accel.bg_col & 0xffffff00) | val;
-            break;
-        case 0x31: /*Background colour*/
-        case 0x7d:
-            tgui->accel.bg_col = (tgui->accel.bg_col & 0xffff00ff) | (val << 8);
-            break;
-        case 0x32: /*Background colour*/
-        case 0x7e:
-            tgui->accel.bg_col = (tgui->accel.bg_col & 0xff00ffff) | (val << 16);
-            break;
-        case 0x33: /*Background colour*/
-        case 0x7f:
-            tgui->accel.bg_col = (tgui->accel.bg_col & 0x00ffffff) | (val << 24);
-            break;
-
-        case 0x34: /*Pattern location*/
-            tgui->accel.patloc = (tgui->accel.patloc & 0xff00) | val;
-            break;
-        case 0x35: /*Pattern location*/
-            tgui->accel.patloc = (tgui->accel.patloc & 0xff) | (val << 8);
-            break;
-
-        case 0x38: /*Dest X*/
-            tgui->accel.dst_x = (tgui->accel.dst_x & 0xff00) | val;
-            break;
-        case 0x39: /*Dest X*/
-            tgui->accel.dst_x = (tgui->accel.dst_x & 0xff) | (val << 8);
-            break;
-        case 0x3a: /*Dest Y*/
-            tgui->accel.dst_y = (tgui->accel.dst_y & 0xff00) | val;
-            break;
-        case 0x3b: /*Dest Y*/
-            tgui->accel.dst_y = (tgui->accel.dst_y & 0xff) | (val << 8);
-            break;
-
-        case 0x3c: /*Src X*/
-            tgui->accel.src_x = (tgui->accel.src_x & 0xff00) | val;
-            break;
-        case 0x3d: /*Src X*/
-            tgui->accel.src_x = (tgui->accel.src_x & 0xff) | (val << 8);
-            break;
-        case 0x3e: /*Src Y*/
-            tgui->accel.src_y = (tgui->accel.src_y & 0xff00) | val;
-            break;
-        case 0x3f: /*Src Y*/
-            tgui->accel.src_y = (tgui->accel.src_y & 0xff) | (val << 8);
-            break;
-
-        case 0x40: /*Size X*/
-            tgui->accel.size_x = (tgui->accel.size_x & 0xff00) | val;
-            break;
-        case 0x41: /*Size X*/
-            tgui->accel.size_x = (tgui->accel.size_x & 0xff) | (val << 8);
-            tgui->accel.err    = tgui->accel.size_x;
-            if ((tgui->accel.err >= 2048) && (tgui->accel.err < 4096))
-                tgui->accel.err -= 4096;
-            else if ((tgui->accel.err >= 4096) && (tgui->accel.err < 32768))
-                tgui->accel.err -= 32768;
-            break;
-        case 0x42: /*Size Y*/
-            tgui->accel.size_y    = (tgui->accel.size_y & 0xff00) | val;
-            tgui->accel.sv_size_y = (tgui->accel.sv_size_y & 0xff00) | val;
-            break;
-        case 0x43: /*Size Y*/
-            tgui->accel.size_y    = (tgui->accel.size_y & 0xff) | (val << 8);
-            tgui->accel.sv_size_y = (tgui->accel.sv_size_y & 0xff) | (val << 8);
-            break;
-
-        case 0x44: /*Style*/
-            tgui->accel.style = (tgui->accel.style & 0xffffff00) | val;
-            break;
-        case 0x45: /*Style*/
-            tgui->accel.style = (tgui->accel.style & 0xffff00ff) | (val << 8);
-            break;
-        case 0x46: /*Style*/
-            tgui->accel.style = (tgui->accel.style & 0xff00ffff) | (val << 16);
-            break;
-        case 0x47: /*Style*/
-            tgui->accel.style = (tgui->accel.style & 0x00ffffff) | (val << 24);
-            break;
-
-        case 0x48: /*Clip Src X*/
-            tgui->accel.src_x_clip = (tgui->accel.src_x_clip & 0xff00) | val;
-            break;
-        case 0x49: /*Clip Src X*/
-            tgui->accel.src_x_clip = (tgui->accel.src_x_clip & 0xff) | (val << 8);
-            break;
-        case 0x4a: /*Clip Src Y*/
-            tgui->accel.src_y_clip = (tgui->accel.src_y_clip & 0xff00) | val;
-            break;
-        case 0x4b: /*Clip Src Y*/
-            tgui->accel.src_y_clip = (tgui->accel.src_y_clip & 0xff) | (val << 8);
-            break;
-
-        case 0x4c: /*Clip Dest X*/
-            tgui->accel.dst_x_clip = (tgui->accel.dst_x_clip & 0xff00) | val;
-            break;
-        case 0x4d: /*Clip Dest X*/
-            tgui->accel.dst_x_clip = (tgui->accel.dst_x_clip & 0xff) | (val << 8);
-            break;
-        case 0x4e: /*Clip Dest Y*/
-            tgui->accel.dst_y_clip = (tgui->accel.dst_y_clip & 0xff00) | val;
-            break;
-        case 0x4f: /*Clip Dest Y*/
-            tgui->accel.dst_y_clip = (tgui->accel.dst_y_clip & 0xff) | (val << 8);
-            break;
-
-        case 0x68: /*CKey*/
-            tgui->accel.ckey = (tgui->accel.ckey & 0xffffff00) | val;
-            break;
-        case 0x69: /*CKey*/
-            tgui->accel.ckey = (tgui->accel.ckey & 0xffff00ff) | (val << 8);
-            break;
-        case 0x6a: /*CKey*/
-            tgui->accel.ckey = (tgui->accel.ckey & 0xff00ffff) | (val << 16);
-            break;
-        case 0x6b: /*CKey*/
-            tgui->accel.ckey = (tgui->accel.ckey & 0x00ffffff) | (val << 24);
-            break;
-
-        case 0x80:
-        case 0x81:
-        case 0x82:
-        case 0x83:
-        case 0x84:
-        case 0x85:
-        case 0x86:
-        case 0x87:
-        case 0x88:
-        case 0x89:
-        case 0x8a:
-        case 0x8b:
-        case 0x8c:
-        case 0x8d:
-        case 0x8e:
-        case 0x8f:
-        case 0x90:
-        case 0x91:
-        case 0x92:
-        case 0x93:
-        case 0x94:
-        case 0x95:
-        case 0x96:
-        case 0x97:
-        case 0x98:
-        case 0x99:
-        case 0x9a:
-        case 0x9b:
-        case 0x9c:
-        case 0x9d:
-        case 0x9e:
-        case 0x9f:
-        case 0xa0:
-        case 0xa1:
-        case 0xa2:
-        case 0xa3:
-        case 0xa4:
-        case 0xa5:
-        case 0xa6:
-        case 0xa7:
-        case 0xa8:
-        case 0xa9:
-        case 0xaa:
-        case 0xab:
-        case 0xac:
-        case 0xad:
-        case 0xae:
-        case 0xaf:
-        case 0xb0:
-        case 0xb1:
-        case 0xb2:
-        case 0xb3:
-        case 0xb4:
-        case 0xb5:
-        case 0xb6:
-        case 0xb7:
-        case 0xb8:
-        case 0xb9:
-        case 0xba:
-        case 0xbb:
-        case 0xbc:
-        case 0xbd:
-        case 0xbe:
-        case 0xbf:
-        case 0xc0:
-        case 0xc1:
-        case 0xc2:
-        case 0xc3:
-        case 0xc4:
-        case 0xc5:
-        case 0xc6:
-        case 0xc7:
-        case 0xc8:
-        case 0xc9:
-        case 0xca:
-        case 0xcb:
-        case 0xcc:
-        case 0xcd:
-        case 0xce:
-        case 0xcf:
-        case 0xd0:
-        case 0xd1:
-        case 0xd2:
-        case 0xd3:
-        case 0xd4:
-        case 0xd5:
-        case 0xd6:
-        case 0xd7:
-        case 0xd8:
-        case 0xd9:
-        case 0xda:
-        case 0xdb:
-        case 0xdc:
-        case 0xdd:
-        case 0xde:
-        case 0xdf:
-        case 0xe0:
-        case 0xe1:
-        case 0xe2:
-        case 0xe3:
-        case 0xe4:
-        case 0xe5:
-        case 0xe6:
-        case 0xe7:
-        case 0xe8:
-        case 0xe9:
-        case 0xea:
-        case 0xeb:
-        case 0xec:
-        case 0xed:
-        case 0xee:
-        case 0xef:
-        case 0xf0:
-        case 0xf1:
-        case 0xf2:
-        case 0xf3:
-        case 0xf4:
-        case 0xf5:
-        case 0xf6:
-        case 0xf7:
-        case 0xf8:
-        case 0xf9:
-        case 0xfa:
-        case 0xfb:
-        case 0xfc:
-        case 0xfd:
-        case 0xfe:
-        case 0xff:
-            tgui->accel.pattern[addr & 0x7f] = val;
-            break;
-    }
+    tgui_accel_out((addr & 0xff) + 0x2100, val, tgui);
 }
 
 static void
@@ -3000,8 +3570,8 @@ tgui_accel_write_w(uint32_t addr, uint16_t val, void *priv)
 static void
 tgui_accel_write_l(uint32_t addr, uint32_t val, void *priv)
 {
-    tgui_t *tgui = (tgui_t *) priv;
-    svga_t *svga = &tgui->svga;
+    tgui_t       *tgui = (tgui_t *) priv;
+    const svga_t *svga = &tgui->svga;
 
     switch (addr & 0xff) {
         case 0x24: /*Long version of Command and ROP together*/
@@ -3028,8 +3598,8 @@ tgui_accel_write_l(uint32_t addr, uint32_t val, void *priv)
 static uint8_t
 tgui_accel_read(uint32_t addr, void *priv)
 {
-    tgui_t *tgui = (tgui_t *) priv;
-    svga_t *svga = &tgui->svga;
+    const tgui_t *tgui = (tgui_t *) priv;
+    const svga_t *svga = &tgui->svga;
 
     if ((svga->crtc[0x36] & 0x03) == 0x02) {
         if ((addr & ~0xff) != 0xbff00)
@@ -3283,6 +3853,9 @@ tgui_accel_read(uint32_t addr, void *priv)
         case 0xfe:
         case 0xff:
             return tgui->accel.pattern[addr & 0x7f];
+
+        default:
+            break;
     }
     return 0xff;
 }
@@ -3342,8 +3915,8 @@ tgui_accel_write_fb_l(uint32_t addr, uint32_t val, void *priv)
 static void
 tgui_mmio_write(uint32_t addr, uint8_t val, void *priv)
 {
-    tgui_t *tgui = (tgui_t *) priv;
-    svga_t *svga = &tgui->svga;
+    const tgui_t *tgui = (tgui_t *) priv;
+    const svga_t *svga = &tgui->svga;
 
     addr &= 0x0000ffff;
 
@@ -3358,8 +3931,8 @@ tgui_mmio_write(uint32_t addr, uint8_t val, void *priv)
 static void
 tgui_mmio_write_w(uint32_t addr, uint16_t val, void *priv)
 {
-    tgui_t *tgui = (tgui_t *) priv;
-    svga_t *svga = &tgui->svga;
+    const tgui_t *tgui = (tgui_t *) priv;
+    const svga_t *svga = &tgui->svga;
 
     addr &= 0x0000ffff;
 
@@ -3376,8 +3949,8 @@ tgui_mmio_write_w(uint32_t addr, uint16_t val, void *priv)
 static void
 tgui_mmio_write_l(uint32_t addr, uint32_t val, void *priv)
 {
-    tgui_t *tgui = (tgui_t *) priv;
-    svga_t *svga = &tgui->svga;
+    const tgui_t *tgui = (tgui_t *) priv;
+    const svga_t *svga = &tgui->svga;
 
     addr &= 0x0000ffff;
 
@@ -3396,8 +3969,8 @@ tgui_mmio_write_l(uint32_t addr, uint32_t val, void *priv)
 static uint8_t
 tgui_mmio_read(uint32_t addr, void *priv)
 {
-    tgui_t *tgui = (tgui_t *) priv;
-    svga_t *svga = &tgui->svga;
+    const tgui_t *tgui = (tgui_t *) priv;
+    const svga_t *svga = &tgui->svga;
 
     uint8_t ret = 0xff;
 
@@ -3416,9 +3989,9 @@ tgui_mmio_read(uint32_t addr, void *priv)
 static uint16_t
 tgui_mmio_read_w(uint32_t addr, void *priv)
 {
-    tgui_t  *tgui = (tgui_t *) priv;
-    svga_t  *svga = &tgui->svga;
-    uint16_t ret  = 0xffff;
+    const tgui_t *tgui = (tgui_t *) priv;
+    const svga_t *svga = &tgui->svga;
+    uint16_t      ret  = 0xffff;
 
     addr &= 0x0000ffff;
 
@@ -3435,9 +4008,9 @@ tgui_mmio_read_w(uint32_t addr, void *priv)
 static uint32_t
 tgui_mmio_read_l(uint32_t addr, void *priv)
 {
-    tgui_t  *tgui = (tgui_t *) priv;
-    svga_t  *svga = &tgui->svga;
-    uint32_t ret  = 0xffffffff;
+    const tgui_t *tgui = (tgui_t *) priv;
+    const svga_t *svga = &tgui->svga;
+    uint32_t      ret  = 0xffffffff;
 
     addr &= 0x0000ffff;
 
@@ -3472,11 +4045,14 @@ tgui_init(const device_t *info)
             bios_fn = ROM_TGUI_9400CXI;
             break;
         case TGUI_9440:
-            bios_fn = (info->local & ONBOARD) ? NULL : ROM_TGUI_9440;
+            if (tgui->pci)
+                bios_fn = (info->local & ONBOARD) ? NULL : ROM_TGUI_9440_PCI;
+            else
+                bios_fn = ROM_TGUI_9440_VLB;
             break;
         case TGUI_9660:
         case TGUI_9680:
-            bios_fn = ROM_TGUI_96xx;
+            bios_fn = (info->local & ONBOARD) ? NULL : ROM_TGUI_96xx;
             break;
         default:
             free(tgui);
@@ -3486,7 +4062,7 @@ tgui_init(const device_t *info)
     tgui->has_bios = (bios_fn != NULL);
 
     if (tgui->has_bios) {
-        rom_init(&tgui->bios_rom, (char *) bios_fn, 0xc0000, 0x8000, 0x7fff, 0, MEM_MAPPING_EXTERNAL);
+        rom_init(&tgui->bios_rom, bios_fn, 0xc0000, 0x8000, 0x7fff, 0, MEM_MAPPING_EXTERNAL);
         if (tgui->pci)
             mem_mapping_disable(&tgui->bios_rom.mapping);
     }
@@ -3512,16 +4088,19 @@ tgui_init(const device_t *info)
     mem_mapping_disable(&tgui->accel_mapping);
     mem_mapping_disable(&tgui->mmio_mapping);
 
+    if (tgui->vram_size == (2 << 20))
+        svga->crtc[0x21] |= 0x10;
+
     tgui_set_io(tgui);
 
     if (tgui->pci && (tgui->type >= TGUI_9440)) {
         if (tgui->has_bios)
-            tgui->card = pci_add_card(PCI_ADD_VIDEO, tgui_pci_read, tgui_pci_write, tgui);
+            pci_add_card(PCI_ADD_NORMAL, tgui_pci_read, tgui_pci_write, tgui, &tgui->pci_slot);
         else
-            tgui->card = pci_add_card(PCI_ADD_VIDEO | PCI_ADD_STRICT, tgui_pci_read, tgui_pci_write, tgui);
+            pci_add_card(PCI_ADD_VIDEO | PCI_ADD_STRICT, tgui_pci_read, tgui_pci_write, tgui, &tgui->pci_slot);
     }
 
-    tgui->pci_regs[PCI_REG_COMMAND] = 7;
+    tgui->pci_regs[PCI_REG_COMMAND] = 0x83;
 
     if (tgui->has_bios) {
         tgui->pci_regs[0x30] = 0x00;
@@ -3531,7 +4110,6 @@ tgui_init(const device_t *info)
 
     if (tgui->type >= TGUI_9440) {
         svga->packed_chain4 = 1;
-
         tgui->i2c = i2c_gpio_init("ddc_tgui");
         tgui->ddc = ddc_init(i2c_gpio_get_bus(tgui->i2c));
     }
@@ -3546,9 +4124,15 @@ tgui9400cxi_available(void)
 }
 
 static int
-tgui9440_available(void)
+tgui9440_vlb_available(void)
 {
-    return rom_present(ROM_TGUI_9440);
+    return rom_present(ROM_TGUI_9440_VLB);
+}
+
+static int
+tgui9440_pci_available(void)
+{
+    return rom_present(ROM_TGUI_9440_PCI);
 }
 
 static int
@@ -3585,62 +4169,47 @@ tgui_force_redraw(void *priv)
 {
     tgui_t *tgui = (tgui_t *) priv;
 
-    tgui->svga.fullchange = changeframecount;
+    tgui->svga.fullchange = tgui->svga.monitor->mon_changeframecount;
 }
 
 // clang-format off
 static const device_config_t tgui9440_config[] = {
     {
-        .name = "memory",
-        .description = "Memory size",
-        .type = CONFIG_SELECTION,
-        .selection = {
-            {
-                .description = "1 MB",
-                .value = 1
-            },
-            {
-                .description = "2 MB",
-                .value = 2
-            },
-            {
-                .description = ""
-            }
+        .name           = "memory",
+        .description    = "Memory size",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 2,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "1 MB", .value = 1 },
+            { .description = "2 MB", .value = 2 },
+            { .description = ""                 }
         },
-        .default_int = 2
+        .bios           = { { 0 } }
     },
-    {
-        .type = CONFIG_END
-    }
+    { .name = "", .description = "", .type = CONFIG_END }
 };
 
 static const device_config_t tgui96xx_config[] = {
     {
-        .name = "memory",
-        .description = "Memory size",
-        .type = CONFIG_SELECTION,
-        .selection = {
-            {
-                .description = "1 MB",
-                .value = 1
-            },
-            {
-                .description = "2 MB",
-                .value = 2
-            },
-            {
-                .description = "4 MB",
-                .value = 4
-            },
-            {
-                .description = ""
-            }
+        .name           = "memory",
+        .description    = "Memory size",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 4,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "1 MB", .value = 1 },
+            { .description = "2 MB", .value = 2 },
+            { .description = "4 MB", .value = 4 },
+            { .description = ""                 }
         },
-        .default_int = 4
+        .bios           = { { 0 } }
     },
-    {
-        .type = CONFIG_END
-    }
+    { .name = "", .description = "", .type = CONFIG_END }
 };
 // clang-format on
 
@@ -3652,7 +4221,7 @@ const device_t tgui9400cxi_device = {
     .init          = tgui_init,
     .close         = tgui_close,
     .reset         = NULL,
-    { .available = tgui9400cxi_available },
+    .available     = tgui9400cxi_available,
     .speed_changed = tgui_speed_changed,
     .force_redraw  = tgui_force_redraw,
     .config        = tgui9440_config
@@ -3666,7 +4235,7 @@ const device_t tgui9440_vlb_device = {
     .init          = tgui_init,
     .close         = tgui_close,
     .reset         = NULL,
-    { .available = tgui9440_available },
+    .available     = tgui9440_vlb_available,
     .speed_changed = tgui_speed_changed,
     .force_redraw  = tgui_force_redraw,
     .config        = tgui9440_config
@@ -3680,7 +4249,7 @@ const device_t tgui9440_pci_device = {
     .init          = tgui_init,
     .close         = tgui_close,
     .reset         = NULL,
-    { .available = tgui9440_available },
+    .available     = tgui9440_pci_available,
     .speed_changed = tgui_speed_changed,
     .force_redraw  = tgui_force_redraw,
     .config        = tgui9440_config
@@ -3694,7 +4263,7 @@ const device_t tgui9440_onboard_pci_device = {
     .init          = tgui_init,
     .close         = tgui_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = tgui_speed_changed,
     .force_redraw  = tgui_force_redraw,
     .config        = tgui9440_config
@@ -3708,7 +4277,21 @@ const device_t tgui9660_pci_device = {
     .init          = tgui_init,
     .close         = tgui_close,
     .reset         = NULL,
-    { .available = tgui96xx_available },
+    .available     = tgui96xx_available,
+    .speed_changed = tgui_speed_changed,
+    .force_redraw  = tgui_force_redraw,
+    .config        = tgui96xx_config
+};
+
+const device_t tgui9660_onboard_pci_device = {
+    .name          = "Trident TGUI 9660XGi On-Board PCI",
+    .internal_name = "tgui9660_onboard_pci",
+    .flags         = DEVICE_PCI,
+    .local         = TGUI_9660 | ONBOARD,
+    .init          = tgui_init,
+    .close         = tgui_close,
+    .reset         = NULL,
+    .available     = NULL,
     .speed_changed = tgui_speed_changed,
     .force_redraw  = tgui_force_redraw,
     .config        = tgui96xx_config
@@ -3722,7 +4305,7 @@ const device_t tgui9680_pci_device = {
     .init          = tgui_init,
     .close         = tgui_close,
     .reset         = NULL,
-    { .available = tgui96xx_available },
+    .available     = tgui96xx_available,
     .speed_changed = tgui_speed_changed,
     .force_redraw  = tgui_force_redraw,
     .config        = tgui96xx_config

@@ -1,5 +1,39 @@
+/****************************************************************************
+**
+** Copyright (C) 2022 Cacodemon345
+** Copyright (C) 2017 The Qt Company Ltd.
+**
+** "Redistribution and use in source and binary forms, with or without
+** modification, are permitted provided that the following conditions are
+** met:
+**   * Redistributions of source code must retain the above copyright
+**     notice, this list of conditions and the following disclaimer.
+**   * Redistributions in binary form must reproduce the above copyright
+**     notice, this list of conditions and the following disclaimer in
+**     the documentation and/or other materials provided with the
+**     distribution.
+**   * Neither the name of The Qt Company Ltd nor the names of its
+**     contributors may be used to endorse or promote products derived
+**     from this software without specific prior written permission.
+**
+**
+** THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+** "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+** LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+** A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+** OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+** SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+** LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+** DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+** THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+** OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
+**
+****************************************************************************/
 #include "qt_vulkanwindowrenderer.hpp"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QMessageBox>
 #include <QWindow>
 
@@ -14,6 +48,8 @@
 
 extern "C" {
 #    include <86box/86box.h>
+#    include <86box/path.h>
+#    include <86box/plat.h>
 #    include <86box/video.h>
 }
 #    if 0
@@ -697,7 +733,7 @@ public:
 #        if VK_HEADER_VERSION >= 135 && VK_HEADER_VERSION < 162
             case VK_ERROR_INCOMPATIBLE_VERSION_KHR:
                 return "VK_ERROR_INCOMPATIBLE_VERSION_KHR";
-#        endif
+#        endif /* VK_HEADER_VERSION >= 135 && VK_HEADER_VERSION < 162 */
             case VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT:
                 return "VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT";
             case VK_ERROR_NOT_PERMITTED_EXT:
@@ -788,10 +824,10 @@ public:
         m_devFuncs->vkDeviceWaitIdle(m_window->device());
     }
 };
-#    endif
+#    endif     /* 0*/
 
 VulkanWindowRenderer::VulkanWindowRenderer(QWidget *parent)
-    : QVulkanWindow(parent->windowHandle())
+    : QVulkanWindow(NULL)
 {
     parentWidget = parent;
     instance.setApiVersion(QVersionNumber(1, 0));
@@ -814,6 +850,7 @@ VulkanWindowRenderer::createRenderer()
 void
 VulkanWindowRenderer::resizeEvent(QResizeEvent *event)
 {
+    this->pixelRatio = devicePixelRatio();
     onResize(width(), height());
 
     QVulkanWindow::resizeEvent(event);
@@ -828,6 +865,8 @@ VulkanWindowRenderer::event(QEvent *event)
     return res;
 }
 
+extern void take_screenshot_clipboard_monitor(int sx, int sy, int sw, int sh, int i);
+
 void
 VulkanWindowRenderer::onBlit(int buf_idx, int x, int y, int w, int h)
 {
@@ -836,8 +875,44 @@ VulkanWindowRenderer::onBlit(int buf_idx, int x, int y, int w, int h)
     if (isExposed())
         requestUpdate();
     buf_usage[0].clear();
-    if (origSource != source)
+    if (origSource != source) {
+        this->pixelRatio = devicePixelRatio();
         onResize(this->width(), this->height());
+    }
+
+    if (monitors[r_monitor_index].mon_screenshots) {
+        char path[1024];
+        char fn[256];
+
+        memset(fn, 0, sizeof(fn));
+        memset(path, 0, sizeof(path));
+
+        path_append_filename(path, usr_path, SCREENSHOT_PATH);
+
+        if (!plat_dir_check(path))
+            plat_dir_create(path);
+
+        path_slash(path);
+        strcat(path, "Monitor_");
+        snprintf(&path[strlen(path)], 42, "%d_", r_monitor_index + 1);
+
+        plat_tempfile(fn, NULL, (char *) ".png");
+        strcat(path, fn);
+
+        QImage image = this->grab();
+        image.rgbSwapped().save(path, "png");
+        monitors[r_monitor_index].mon_screenshots--;
+    }
+    if (monitors[r_monitor_index].mon_screenshots_clipboard) {
+        QImage image = this->grab();
+        image = image.rgbSwapped();
+        QClipboard *clipboard = QApplication::clipboard();
+        clipboard->setImage(image, QClipboard::Clipboard);
+        monitors[r_monitor_index].mon_screenshots_clipboard--;
+    }
+    if (monitors[r_monitor_index].mon_screenshots_raw_clipboard) {
+        take_screenshot_clipboard_monitor(x, y, w, h, r_monitor_index);
+    }
 }
 
 uint32_t
@@ -851,4 +926,4 @@ VulkanWindowRenderer::getBuffers()
 {
     return std::vector { std::make_tuple((uint8_t *) renderer->mappedPtr, &this->buf_usage[0]) };
 }
-#endif
+#endif /* QT_CONFIG(vulkan) */

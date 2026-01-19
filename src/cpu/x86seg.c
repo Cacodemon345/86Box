@@ -31,18 +31,30 @@
 #include <86box/machine.h>
 #include <86box/mem.h>
 #include <86box/nvr.h>
+#include <86box/plat_fallthrough.h>
+#include <86box/plat_unused.h>
+
 #include "x86.h"
 #include "x86_flags.h"
+#include "x86seg.h"
+#include "x86seg_common.h"
 #include "386_common.h"
 
-uint8_t opcode2;
-
-int cgate16, cgate32;
-int intgatesize;
-
-void taskswitch286(uint16_t seg, uint16_t *segdat, int is32);
-
-void pmodeint(int num, int soft);
+#ifdef OPS_286_386
+#define  seg_readmembl  readmembl_2386
+#define  seg_readmemwl  readmemwl_2386
+#define  seg_readmemll  readmemll_2386
+#define  seg_writemembl writemembl_2386
+#define  seg_writememwl writememwl_2386
+#define  seg_writememll writememll_2386
+#else
+#define  seg_readmembl  readmembl
+#define  seg_readmemwl  readmemwl
+#define  seg_readmemll  readmemll
+#define  seg_writemembl writemembl
+#define  seg_writememwl writememwl
+#define  seg_writememll writememll
+#endif
 
 #define DPL  ((segdat[2] >> 13) & 3)
 #define DPL2 ((segdat2[2] >> 13) & 3)
@@ -66,41 +78,16 @@ x86seg_log(const char *fmt, ...)
 #    define x86seg_log(fmt, ...)
 #endif
 
-static void
-seg_reset(x86seg *s)
-{
-    s->access     = 0x82;
-    s->ar_high    = 0x10;
-    s->limit      = 0xffff;
-    s->limit_low  = 0;
-    s->limit_high = 0xffff;
-    if (s == &cpu_state.seg_cs) {
-        if (!cpu_inited)
-            fatal("seg_reset(&cpu_state.seg.cs) without an initialized CPU\n");
-        if (is6117)
-            s->base = 0x03ff0000;
-        else
-            s->base = is286 ? (cpu_16bitbus ? 0x00ff0000 : 0xffff0000) : 0x000ffff0;
-        s->seg = is286 ? 0xf000 : 0xffff;
-    } else {
-        s->base = 0;
-        s->seg  = 0;
-    }
-}
+#ifdef USE_DYNAREC
+extern int cpu_block_end;
+#endif
 
 void
-x86seg_reset(void)
-{
-    seg_reset(&cpu_state.seg_cs);
-    seg_reset(&cpu_state.seg_ds);
-    seg_reset(&cpu_state.seg_es);
-    seg_reset(&cpu_state.seg_fs);
-    seg_reset(&cpu_state.seg_gs);
-    seg_reset(&cpu_state.seg_ss);
-}
-
-void
+#ifdef OPS_286_386
+x86_doabrt_2386(int x86_abrt)
+#else
 x86_doabrt(int x86_abrt)
+#endif
 {
 #ifndef USE_NEW_DYNAREC
     CS = oldcs;
@@ -110,7 +97,7 @@ x86_doabrt(int x86_abrt)
     cpu_state.seg_cs.ar_high = 0x10;
 
     if (msw & 1)
-        pmodeint(x86_abrt, 0);
+        op_pmodeint(x86_abrt, 0);
     else {
         uint32_t addr = (x86_abrt << 2) + idt.base;
         if (stack32) {
@@ -130,7 +117,7 @@ x86_doabrt(int x86_abrt)
         oxpc = cpu_state.pc;
 #endif
         cpu_state.pc = readmemw(0, addr);
-        loadcs(readmemw(0, addr + 2));
+        op_loadcs(readmemw(0, addr + 2));
         return;
     }
 
@@ -156,53 +143,7 @@ x86_doabrt(int x86_abrt)
     }
 }
 
-void
-x86de(char *s, uint16_t error)
-{
-#ifdef BAD_CODE
-    cpu_state.abrt = ABRT_DE;
-    abrt_error     = error;
-#else
-    x86_int(0);
-#endif
-}
-
-void
-x86gpf(char *s, uint16_t error)
-{
-    cpu_state.abrt = ABRT_GPF;
-    abrt_error     = error;
-}
-
-void
-x86gpf_expected(char *s, uint16_t error)
-{
-    cpu_state.abrt = ABRT_GPF | ABRT_EXPECTED;
-    abrt_error     = error;
-}
-
-void
-x86ss(char *s, uint16_t error)
-{
-    cpu_state.abrt = ABRT_SS;
-    abrt_error     = error;
-}
-
-void
-x86ts(char *s, uint16_t error)
-{
-    cpu_state.abrt = ABRT_TS;
-    abrt_error     = error;
-}
-
-void
-x86np(char *s, uint16_t error)
-{
-    cpu_state.abrt = ABRT_NP;
-    abrt_error     = error;
-}
-
-static void
+static inline void
 set_stack32(int s)
 {
     stack32 = s;
@@ -213,7 +154,7 @@ set_stack32(int s)
         cpu_cur_status &= ~CPU_STATUS_STACK32;
 }
 
-static void
+static inline void
 set_use32(int u)
 {
     use32 = u ? 0x300 : 0;
@@ -224,6 +165,7 @@ set_use32(int u)
         cpu_cur_status &= ~CPU_STATUS_USE32;
 }
 
+#ifndef OPS_286_386
 void
 do_seg_load(x86seg *s, uint16_t *segdat)
 {
@@ -258,8 +200,9 @@ do_seg_load(x86seg *s, uint16_t *segdat)
             cpu_cur_status |= CPU_STATUS_NOTFLATSS;
     }
 }
+#endif
 
-static void
+static inline void
 do_seg_v86_init(x86seg *s)
 {
     s->access     = 0xe2;
@@ -272,9 +215,9 @@ do_seg_v86_init(x86seg *s)
 static void
 check_seg_valid(x86seg *s)
 {
-    int     dpl   = (s->access >> 5) & 3;
-    int     valid = 1;
-    x86seg *dt    = (s->seg & 0x0004) ? &ldt : &gdt;
+    int           dpl   = (s->access >> 5) & 3;
+    int           valid = 1;
+    const x86seg *dt    = (s->seg & 0x0004) ? &ldt : &gdt;
 
     if (((s->seg & 0xfff8UL) + 7UL) > dt->limit)
         valid = 0;
@@ -306,7 +249,7 @@ check_seg_valid(x86seg *s)
     }
 
     if (!valid)
-        loadseg(0, s);
+        op_loadseg(0, s);
 }
 
 static void
@@ -332,12 +275,17 @@ int
 #else
 void
 #endif
+#ifdef OPS_286_386
+loadseg_2386(uint16_t seg, x86seg *s)
+#else
 loadseg(uint16_t seg, x86seg *s)
+#endif
 {
-    uint16_t segdat[4];
-    uint32_t addr, *segdat32 = (uint32_t *) segdat;
-    int      dpl;
-    x86seg  *dt;
+    uint16_t      segdat[4];
+    uint32_t      addr;
+    uint32_t     *segdat32 = (uint32_t *) segdat;
+    int           dpl;
+    const x86seg *dt;
 
     if ((msw & 1) && !(cpu_state.eflags & VM_FLAG)) {
         if (!(seg & 0xfffc)) {
@@ -529,11 +477,16 @@ loadseg(uint16_t seg, x86seg *s)
 }
 
 void
+#ifdef OPS_286_386
+loadcs_2386(uint16_t seg)
+#else
 loadcs(uint16_t seg)
+#endif
 {
-    uint16_t segdat[4];
-    uint32_t addr, *segdat32 = (uint32_t *) segdat;
-    x86seg  *dt;
+    uint16_t      segdat[4];
+    uint32_t      addr;
+    uint32_t     *segdat32 = (uint32_t *) segdat;
+    const x86seg *dt;
 
     x86seg_log("Load CS %04X\n", seg);
 
@@ -617,13 +570,19 @@ loadcs(uint16_t seg)
 }
 
 void
+#ifdef OPS_286_386
+loadcsjmp_2386(uint16_t seg, uint32_t old_pc)
+#else
 loadcsjmp(uint16_t seg, uint32_t old_pc)
+#endif
 {
-    uint16_t  type, seg2;
-    uint16_t  segdat[4];
-    uint32_t  addr, newpc;
-    uint32_t *segdat32 = (uint32_t *) segdat;
-    x86seg   *dt;
+    uint16_t      type;
+    uint16_t      seg2;
+    uint16_t      segdat[4];
+    uint32_t      addr;
+    uint32_t      newpc;
+    uint32_t     *segdat32 = (uint32_t *) segdat;
+    const x86seg *dt;
 
     if ((msw & 1) && !(cpu_state.eflags & VM_FLAG)) {
         if (!(seg & 0xfffc)) {
@@ -743,7 +702,7 @@ loadcsjmp(uint16_t seg, uint32_t old_pc)
                                 x86gpf("loadcsjmp(): Non-conforming DPL > CPL", seg2 & 0xfffc);
                                 return;
                             }
-                            /*FALLTHROUGH*/
+                            fallthrough;
                         case 0x1c00:
                         case 0x1d00:
                         case 0x1e00:
@@ -775,7 +734,7 @@ loadcsjmp(uint16_t seg, uint32_t old_pc)
                     cpu_state.pc = old_pc;
                     optype       = JMP;
                     cpl_override = 1;
-                    taskswitch286(seg, segdat, segdat[2] & 0x800);
+                    op_taskswitch286(seg, segdat, segdat[2] & 0x800);
                     cpu_state.flags &= ~NT_FLAG;
                     cpl_override = 0;
                     return;
@@ -802,7 +761,7 @@ loadcsjmp(uint16_t seg, uint32_t old_pc)
     }
 }
 
-void
+static inline void
 PUSHW(uint16_t v)
 {
     if (stack32) {
@@ -818,7 +777,7 @@ PUSHW(uint16_t v)
     }
 }
 
-void
+static inline void
 PUSHL(uint32_t v)
 {
     if (cpu_16bitbus) {
@@ -839,7 +798,28 @@ PUSHL(uint32_t v)
     }
 }
 
-uint16_t
+static inline void
+PUSHL_SEL(uint32_t v)
+{
+    if (cpu_16bitbus) {
+        PUSHW(v >> 16);
+        PUSHW(v & 0xffff);
+    } else {
+        if (stack32) {
+            writememw(ss, ESP - 4, v);
+            if (cpu_state.abrt)
+                return;
+            ESP -= 4;
+        } else {
+            writememw(ss, ((SP - 4) & 0xffff), v);
+            if (cpu_state.abrt)
+                return;
+            SP -= 4;
+        }
+    }
+}
+
+static inline uint16_t
 POPW(void)
 {
     uint16_t tempw;
@@ -857,7 +837,7 @@ POPW(void)
     return tempw;
 }
 
-uint32_t
+static inline uint32_t
 POPL(void)
 {
     uint32_t templ;
@@ -882,6 +862,15 @@ POPL(void)
     return templ;
 }
 
+#ifdef OPS_286_386
+#ifdef USE_NEW_DYNAREC
+void
+loadcscall_2386(uint16_t seg, uint32_t old_pc)
+#else
+void
+loadcscall_2386(uint16_t seg)
+#endif
+#else
 #ifdef USE_NEW_DYNAREC
 void
 loadcscall(uint16_t seg, uint32_t old_pc)
@@ -889,17 +878,26 @@ loadcscall(uint16_t seg, uint32_t old_pc)
 void
 loadcscall(uint16_t seg)
 #endif
+#endif
 {
-    uint16_t  seg2, newss;
-    uint16_t  segdat[4], segdat2[4];
-    uint32_t  addr, oldssbase = ss;
-    uint32_t  oaddr, newpc;
-    uint32_t *segdat32  = (uint32_t *) segdat;
-    uint32_t *segdat232 = (uint32_t *) segdat2;
-    int       count, type;
-    uint32_t  oldss, oldsp, newsp, oldsp2;
-    uint16_t  tempw;
-    x86seg   *dt;
+    uint16_t      seg2;
+    uint16_t      newss;
+    uint16_t      segdat[4];
+    uint16_t      segdat2[4];
+    uint32_t      addr;
+    uint32_t      oldssbase = ss;
+    uint32_t      oaddr;
+    uint32_t      newpc;
+    uint32_t     *segdat32  = (uint32_t *) segdat;
+    uint32_t     *segdat232 = (uint32_t *) segdat2;
+    int           count;
+    int           type;
+    uint32_t      oldss;
+    uint32_t      oldsp;
+    uint32_t      newsp;
+    uint32_t      oldsp2;
+    uint32_t      oldss_limit_high = cpu_state.seg_ss.limit_high;
+    const x86seg *dt;
 
     if ((msw & 1) && !(cpu_state.eflags & VM_FLAG)) {
         x86seg_log("Protected mode CS load! %04X\n", seg);
@@ -1115,7 +1113,7 @@ loadcscall(uint16_t seg)
 
                                 x86seg_log("Type %04X\n", type);
                                 if (type == 0x0c00) {
-                                    PUSHL(oldss);
+                                    is586 ? PUSHL(oldss) : PUSHL_SEL(oldss);
                                     PUSHL(oldsp2);
                                     if (cpu_state.abrt) {
                                         SS  = oldss;
@@ -1127,7 +1125,31 @@ loadcscall(uint16_t seg)
                                     }
                                     if (count) {
                                         while (count--) {
-                                            PUSHL(readmeml(oldssbase, oldsp + (count << 2)));
+                                            uint32_t temp_val;
+                                            switch (oldss_limit_high - oldsp - (count << 2)) {
+                                                default:
+                                                case 3:
+                                                    /* We are at least an entire DWORD away from the limit,
+                                                       read long. */
+                                                    PUSHL(readmeml(oldssbase, oldsp + (count << 2)));
+                                                    break;
+                                                case 2:
+                                                    /* We are 3 bytes away from the limit,
+                                                       read word + byte. */
+                                                    temp_val = readmemw(oldssbase, oldsp + (count << 2));
+                                                    temp_val |= (readmemb(oldssbase, oldsp +
+                                                                          (count << 2) + 2) << 16);
+                                                    PUSHL(temp_val);
+                                                    break;
+                                                case 1:
+                                                    /* We are a WORD away from the limit, read word. */
+                                                    PUSHL(readmemw(oldssbase, oldsp + (count << 2)));
+                                                    break;
+                                                case 0:
+                                                    /* We are a BYTE away from the limit, read byte. */
+                                                    PUSHL(readmemb(oldssbase, oldsp + (count << 2)));
+                                                    break;
+                                            }
                                             if (cpu_state.abrt) {
                                                 SS  = oldss;
                                                 ESP = oldsp2;
@@ -1154,9 +1176,20 @@ loadcscall(uint16_t seg)
                                     x86seg_log("Write SP to %04X:%04X\n", SS, SP);
                                     if (count) {
                                         while (count--) {
-                                            tempw = readmemw(oldssbase, (oldsp & 0xffff) + (count << 1));
-                                            x86seg_log("PUSH %04X\n", tempw);
-                                            PUSHW(tempw);
+                                            switch (oldss_limit_high - (oldsp & 0xffff) - (count << 1)) {
+                                                default:
+                                                case 1:
+                                                    /* We are at least an entire WORD away from the limit,
+                                                       read word. */
+                                                    PUSHW(readmemw(oldssbase, (oldsp & 0xffff) +
+                                                          (count << 1)));
+                                                    break;
+                                                case 0:
+                                                    /* We are a BYTE away from the limit, read byte. */
+                                                    PUSHW(readmemb(oldssbase, (oldsp & 0xffff) +
+                                                          (count << 1)));
+                                                    break;
+                                            }
                                             if (cpu_state.abrt) {
                                                 SS  = oldss;
                                                 ESP = oldsp2;
@@ -1174,7 +1207,7 @@ loadcscall(uint16_t seg)
                                 x86gpf("loadcscall(): Call PM Gate Inner DPL > CPL", seg2 & 0xfffc);
                                 return;
                             }
-                            /*FALLTHROUGH*/
+                            fallthrough;
                         case 0x1c00:
                         case 0x1d00:
                         case 0x1e00:
@@ -1209,7 +1242,7 @@ loadcscall(uint16_t seg)
                     cpu_state.pc = oxpc;
 #endif
                     cpl_override = 1;
-                    taskswitch286(seg, segdat, segdat[2] & 0x0800);
+                    op_taskswitch286(seg, segdat, segdat[2] & 0x0800);
                     cpl_override = 0;
                     break;
 
@@ -1235,14 +1268,24 @@ loadcscall(uint16_t seg)
 }
 
 void
+#ifdef OPS_286_386
+pmoderetf_2386(int is32, uint16_t off)
+#else
 pmoderetf(int is32, uint16_t off)
+#endif
 {
-    uint16_t  segdat[4], segdat2[4], seg, newss;
-    uint32_t  newpc, newsp, addr, oaddr;
-    uint32_t  oldsp     = ESP;
-    uint32_t *segdat32  = (uint32_t *) segdat;
-    uint32_t *segdat232 = (uint32_t *) segdat2;
-    x86seg   *dt;
+    uint16_t      segdat[4];
+    uint16_t      segdat2[4];
+    uint16_t      seg;
+    uint16_t      newss;
+    uint32_t      newpc;
+    uint32_t      newsp;
+    uint32_t      addr;
+    uint32_t      oaddr;
+    uint32_t      oldsp     = ESP;
+    uint32_t     *segdat32  = (uint32_t *) segdat;
+    uint32_t     *segdat232 = (uint32_t *) segdat2;
+    const x86seg *dt;
 
     x86seg_log("RETF %i %04X:%04X  %08X %04X\n", is32, CS, cpu_state.pc, cr0, cpu_state.eflags);
     if (is32) {
@@ -1291,6 +1334,12 @@ pmoderetf(int is32, uint16_t off)
     if (CPL == (seg & 0x0003)) {
         x86seg_log("RETF CPL = RPL  %04X\n", segdat[2]);
         switch (segdat[2] & 0x1f00) {
+            case 0x1000:
+            case 0x1100:
+            case 0x1200:
+            case 0x1300:
+                 /* Data segment, apparently valid when CPL is the same, used by MS LINK for DOS. */
+                 fallthrough;
             case 0x1800:
             case 0x1900:
             case 0x1a00:
@@ -1341,6 +1390,12 @@ pmoderetf(int is32, uint16_t off)
         cycles -= timing_retf_pm;
     } else {
         switch (segdat[2] & 0x1f00) {
+            case 0x1000:
+            case 0x1100:
+            case 0x1200:
+            case 0x1300:
+                 /* Data segment, apparently valid when CPL is the same, used by MS LINK for DOS. */
+                 fallthrough;
             case 0x1800:
             case 0x1900:
             case 0x1a00:
@@ -1465,19 +1520,28 @@ pmoderetf(int is32, uint16_t off)
 }
 
 void
+#ifdef OPS_286_386
+pmodeint_2386(int num, int soft)
+#else
 pmodeint(int num, int soft)
+#endif
 {
-    uint16_t  segdat[4], segdat2[4];
-    uint16_t  segdat3[4];
-    uint16_t  newss, seg = 0;
-    int       type, new_cpl;
-    uint32_t  addr, oaddr;
-    uint32_t  oldss, oldsp;
-    uint32_t  newsp;
-    uint32_t *segdat32  = (uint32_t *) segdat;
-    uint32_t *segdat232 = (uint32_t *) segdat2;
-    uint32_t *segdat332 = (uint32_t *) segdat3;
-    x86seg   *dt;
+    uint16_t      segdat[4];
+    uint16_t      segdat2[4];
+    uint16_t      segdat3[4];
+    uint16_t      newss;
+    uint16_t      seg = 0;
+    int           type;
+    int           new_cpl;
+    uint32_t      addr;
+    uint32_t      oaddr;
+    uint32_t      oldss;
+    uint32_t      oldsp;
+    uint32_t      newsp;
+    uint32_t     *segdat32  = (uint32_t *) segdat;
+    uint32_t     *segdat232 = (uint32_t *) segdat2;
+    uint32_t     *segdat332 = (uint32_t *) segdat3;
+    const x86seg *dt;
 
     if ((cpu_state.eflags & VM_FLAG) && (IOPL != 3) && soft) {
         x86seg_log("V86 banned int\n");
@@ -1491,7 +1555,7 @@ pmodeint(int num, int soft)
             softresetx86();
             cpu_set_edx();
         } else if (num == 0x0d)
-            pmodeint(8, 0);
+            op_pmodeint(8, 0);
         else
             x86gpf("pmodeint(): Vector > IDT limit", (num << 3) + 2 + !soft);
         x86seg_log("addr >= IDT.limit\n");
@@ -1553,6 +1617,12 @@ pmodeint(int num, int soft)
                 return;
             }
             switch (segdat2[2] & 0x1f00) {
+                case 0x1000:
+                case 0x1100:
+                case 0x1200:
+                case 0x1300:
+                     /* Data segment, apparently valid when CPL is the same, used by MS CodeView for DOS. */
+                     fallthrough;
                 case 0x1800:
                 case 0x1900:
                 case 0x1a00:
@@ -1626,21 +1696,28 @@ pmodeint(int num, int soft)
                         cpl_override = 1;
                         if (type >= 0x0800) {
                             if (cpu_state.eflags & VM_FLAG) {
-                                PUSHL(GS);
-                                PUSHL(FS);
-                                PUSHL(DS);
-                                PUSHL(ES);
+                                if (is586) {
+                                    PUSHL(GS);
+                                    PUSHL(FS);
+                                    PUSHL(DS);
+                                    PUSHL(ES);
+                                } else {
+                                    PUSHL_SEL(GS);
+                                    PUSHL_SEL(FS);
+                                    PUSHL_SEL(DS);
+                                    PUSHL_SEL(ES);
+                                }
                                 if (cpu_state.abrt)
                                     return;
-                                loadseg(0, &cpu_state.seg_ds);
-                                loadseg(0, &cpu_state.seg_es);
-                                loadseg(0, &cpu_state.seg_fs);
-                                loadseg(0, &cpu_state.seg_gs);
+                                op_loadseg(0, &cpu_state.seg_ds);
+                                op_loadseg(0, &cpu_state.seg_es);
+                                op_loadseg(0, &cpu_state.seg_fs);
+                                op_loadseg(0, &cpu_state.seg_gs);
                             }
-                            PUSHL(oldss);
+                            is586 ? PUSHL(oldss) : PUSHL_SEL(oldss);
                             PUSHL(oldsp);
                             PUSHL(cpu_state.flags | (cpu_state.eflags << 16));
-                            PUSHL(CS);
+                            is586 ? PUSHL(CS) : PUSHL_SEL(CS);
                             PUSHL(cpu_state.pc);
                             if (cpu_state.abrt)
                                 return;
@@ -1661,7 +1738,7 @@ pmodeint(int num, int soft)
                         x86gpf("pmodeint(): DPL != CPL", seg & 0xfffc);
                         return;
                     }
-                    /*FALLTHROUGH*/
+                    fallthrough;
                 case 0x1c00:
                 case 0x1d00:
                 case 0x1e00:
@@ -1676,7 +1753,7 @@ pmodeint(int num, int soft)
                     }
                     if (type > 0x0800) {
                         PUSHL(cpu_state.flags | (cpu_state.eflags << 16));
-                        PUSHL(CS);
+                        is586 ? PUSHL(CS) : PUSHL_SEL(CS);
                         PUSHL(cpu_state.pc);
                         if (cpu_state.abrt)
                             return;
@@ -1737,7 +1814,7 @@ pmodeint(int num, int soft)
             }
             optype       = OPTYPE_INT;
             cpl_override = 1;
-            taskswitch286(seg, segdat2, segdat2[2] & 0x0800);
+            op_taskswitch286(seg, segdat2, segdat2[2] & 0x0800);
             cpl_override = 0;
             break;
 
@@ -1748,18 +1825,27 @@ pmodeint(int num, int soft)
 }
 
 void
+#ifdef OPS_286_386
+pmodeiret_2386(int is32)
+#else
 pmodeiret(int is32)
+#endif
 {
-    uint16_t  newss, seg = 0;
-    uint16_t  segdat[4], segdat2[4];
-    uint16_t  segs[4];
-    uint32_t  tempflags, flagmask;
-    uint32_t  newpc, newsp;
-    uint32_t  addr, oaddr;
-    uint32_t  oldsp     = ESP;
-    uint32_t *segdat32  = (uint32_t *) segdat;
-    uint32_t *segdat232 = (uint32_t *) segdat2;
-    x86seg   *dt;
+    uint16_t      newss;
+    uint16_t      seg = 0;
+    uint16_t      segdat[4];
+    uint16_t      segdat2[4];
+    uint16_t      segs[4];
+    uint32_t      tempflags;
+    uint32_t      flagmask;
+    uint32_t      newpc;
+    uint32_t      newsp;
+    uint32_t      addr;
+    uint32_t      oaddr;
+    uint32_t      oldsp     = ESP;
+    uint32_t     *segdat32  = (uint32_t *) segdat;
+    uint32_t     *segdat232 = (uint32_t *) segdat2;
+    const x86seg *dt;
 
     if (is386 && (cpu_state.eflags & VM_FLAG)) {
         if (IOPL != 3) {
@@ -1795,7 +1881,9 @@ pmodeiret(int is32)
     }
 
     if (cpu_state.flags & NT_FLAG) {
+        cpl_override = 1;
         seg  = readmemw(tr.base, 0);
+        cpl_override = 0;
         addr = seg & 0xfff8;
         if (seg & 0x0004) {
             x86seg_log("TS LDT %04X %04X IRET\n", seg, gdt.limit);
@@ -1808,9 +1896,9 @@ pmodeiret(int is32)
             }
             addr += gdt.base;
         }
-        cpl_override = 1;
         read_descriptor(addr, segdat, segdat32, 1);
-        taskswitch286(seg, segdat, segdat[2] & 0x0800);
+        cpl_override = 1;
+        op_taskswitch286(seg, segdat, segdat[2] & 0x0800);
         cpl_override = 0;
         return;
     }
@@ -1844,14 +1932,14 @@ pmodeiret(int is32)
             }
             cpu_state.eflags = tempflags >> 16;
             cpu_cur_status |= CPU_STATUS_V86;
-            loadseg(segs[0], &cpu_state.seg_es);
+            op_loadseg(segs[0], &cpu_state.seg_es);
             do_seg_v86_init(&cpu_state.seg_es);
-            loadseg(segs[1], &cpu_state.seg_ds);
+            op_loadseg(segs[1], &cpu_state.seg_ds);
             do_seg_v86_init(&cpu_state.seg_ds);
             cpu_cur_status |= CPU_STATUS_NOTFLATDS;
-            loadseg(segs[2], &cpu_state.seg_fs);
+            op_loadseg(segs[2], &cpu_state.seg_fs);
             do_seg_v86_init(&cpu_state.seg_fs);
-            loadseg(segs[3], &cpu_state.seg_gs);
+            op_loadseg(segs[3], &cpu_state.seg_gs);
             do_seg_v86_init(&cpu_state.seg_gs);
 
             cpu_state.pc                = newpc & 0xffff;
@@ -1869,7 +1957,7 @@ pmodeiret(int is32)
 #endif
 
             ESP = newsp;
-            loadseg(newss, &cpu_state.seg_ss);
+            op_loadseg(newss, &cpu_state.seg_ss);
             do_seg_v86_init(&cpu_state.seg_ss);
             cpu_cur_status |= CPU_STATUS_NOTFLATSS;
             use32 = 0;
@@ -1913,6 +2001,12 @@ pmodeiret(int is32)
     }
 
     switch (segdat[2] & 0x1f00) {
+        case 0x1000:
+        case 0x1100:
+        case 0x1200:
+        case 0x1300:
+             /* Data segment, apparently valid when CPL is the same, used by MS CodeView for DOS. */
+             fallthrough;
         case 0x1800:
         case 0x1900:
         case 0x1a00:
@@ -2056,17 +2150,39 @@ pmodeiret(int is32)
 }
 
 void
+#ifdef OPS_286_386
+taskswitch286_2386(uint16_t seg, uint16_t *segdat, int is32)
+#else
 taskswitch286(uint16_t seg, uint16_t *segdat, int is32)
+#endif
 {
-    uint16_t  tempw, new_ldt;
-    uint16_t  new_es, new_cs, new_ss, new_ds, new_fs, new_gs;
-    uint16_t  segdat2[4];
-    uint32_t  base, limit;
-    uint32_t  templ, new_cr3 = 0;
-    uint32_t  new_eax, new_ebx, new_ecx, new_edx, new_esp, new_ebp;
-    uint32_t  new_esi, new_edi, new_pc, new_flags, addr;
-    uint32_t *segdat232 = (uint32_t *) segdat2;
-    x86seg   *dt;
+    uint16_t      tempw;
+    uint16_t      new_ldt;
+    uint16_t      new_es;
+    uint16_t      new_cs;
+    uint16_t      new_ss;
+    uint16_t      new_ds;
+    uint16_t      new_fs;
+    uint16_t      new_gs;
+    uint16_t      segdat2[4];
+    uint32_t      base;
+    uint32_t      limit;
+    uint32_t      templ;
+    uint32_t      new_cr3 = 0;
+    uint32_t      new_eax;
+    uint32_t      new_ebx;
+    uint32_t      new_ecx;
+    uint32_t      new_edx;
+    uint32_t      new_esp;
+    uint32_t      new_ebp;
+    uint32_t      new_esi;
+    uint32_t      new_edi;
+    uint32_t      new_pc;
+    uint32_t      new_flags;
+    uint32_t      t_bit;
+    uint32_t      addr;
+    uint32_t     *segdat232 = (uint32_t *) segdat2;
+    const x86seg *dt;
 
     base  = segdat[1] | ((segdat[2] & 0x00ff) << 16);
     limit = segdat[0];
@@ -2165,6 +2281,7 @@ taskswitch286(uint16_t seg, uint16_t *segdat, int is32)
         new_fs  = readmemw(base, 0x58);
         new_gs  = readmemw(base, 0x5C);
         new_ldt = readmemw(base, 0x60);
+        t_bit   = readmemb(base, 0x64) & 1;
 
         cr0 |= 8;
 
@@ -2186,7 +2303,7 @@ taskswitch286(uint16_t seg, uint16_t *segdat, int is32)
         ldt.base = (readmemw(0, templ + 2)) | (readmemb(0, templ + 4) << 16) | (readmemb(0, templ + 7) << 24);
 
         if (cpu_state.eflags & VM_FLAG) {
-            loadcs(new_cs);
+            op_loadcs(new_cs);
             set_use32(0);
             cpu_cur_status |= CPU_STATUS_V86;
         } else {
@@ -2250,11 +2367,24 @@ taskswitch286(uint16_t seg, uint16_t *segdat, int is32)
         ESI = new_esi;
         EDI = new_edi;
 
-        loadseg(new_es, &cpu_state.seg_es);
-        loadseg(new_ss, &cpu_state.seg_ss);
-        loadseg(new_ds, &cpu_state.seg_ds);
-        loadseg(new_fs, &cpu_state.seg_fs);
-        loadseg(new_gs, &cpu_state.seg_gs);
+        op_loadseg(new_es, &cpu_state.seg_es);
+        op_loadseg(new_ss, &cpu_state.seg_ss);
+        op_loadseg(new_ds, &cpu_state.seg_ds);
+        op_loadseg(new_fs, &cpu_state.seg_fs);
+        op_loadseg(new_gs, &cpu_state.seg_gs);
+
+        if (!cpu_use_exec)
+            rf_flag_no_clear = 1;
+
+        if (t_bit) {
+            if (cpu_use_exec)
+                trap = 2;
+            else
+                trap |= 2;
+#ifdef USE_DYNAREC
+            cpu_block_end = 1;
+#endif
+        }
     } else {
         if (limit < 43) {
             x86ts(NULL, seg);
@@ -2358,7 +2488,7 @@ taskswitch286(uint16_t seg, uint16_t *segdat, int is32)
             ldt.base |= (readmemb(0, templ + 7) << 24);
         }
 
-        if (!(new_cs & 0xfff8)) {
+        if (!(new_cs & 0xfff8) && !(new_cs & 0x0004)) {
             x86ts(NULL, 0);
             return;
         }
@@ -2416,12 +2546,12 @@ taskswitch286(uint16_t seg, uint16_t *segdat, int is32)
         ESI = new_esi | 0xffff0000;
         EDI = new_edi | 0xffff0000;
 
-        loadseg(new_es, &cpu_state.seg_es);
-        loadseg(new_ss, &cpu_state.seg_ss);
-        loadseg(new_ds, &cpu_state.seg_ds);
+        op_loadseg(new_es, &cpu_state.seg_es);
+        op_loadseg(new_ss, &cpu_state.seg_ss);
+        op_loadseg(new_ds, &cpu_state.seg_ds);
         if (is386) {
-            loadseg(0, &cpu_state.seg_fs);
-            loadseg(0, &cpu_state.seg_gs);
+            op_loadseg(0, &cpu_state.seg_fs);
+            op_loadseg(0, &cpu_state.seg_gs);
         }
     }
 
@@ -2430,10 +2560,16 @@ taskswitch286(uint16_t seg, uint16_t *segdat, int is32)
     tr.limit   = limit;
     tr.access  = segdat[2] >> 8;
     tr.ar_high = segdat[3] & 0xff;
+    if (!cpu_use_exec)
+        dr[7] &= 0xFFFFFFAA;
 }
 
 void
+#ifdef OPS_286_386
+cyrix_write_seg_descriptor_2386(uint32_t addr, x86seg *seg)
+#else
 cyrix_write_seg_descriptor(uint32_t addr, x86seg *seg)
+#endif
 {
     uint32_t limit_raw = seg->limit;
 
@@ -2445,9 +2581,14 @@ cyrix_write_seg_descriptor(uint32_t addr, x86seg *seg)
 }
 
 void
+#ifdef OPS_286_386
+cyrix_load_seg_descriptor_2386(uint32_t addr, x86seg *seg)
+#else
 cyrix_load_seg_descriptor(uint32_t addr, x86seg *seg)
+#endif
 {
-    uint16_t segdat[4], selector;
+    uint16_t segdat[4];
+    uint16_t selector;
 
     segdat[0] = readmemw(0, addr);
     segdat[1] = readmemw(0, addr + 2);
@@ -2464,19 +2605,17 @@ cyrix_load_seg_descriptor(uint32_t addr, x86seg *seg)
                 cpu_cur_status &= ~CPU_STATUS_NOTFLATDS;
             else
                 cpu_cur_status |= CPU_STATUS_NOTFLATDS;
-#ifdef USE_DYNAREC
-            codegen_flat_ds = 0;
-#endif
         }
+
+        if (seg == &cpu_state.seg_cs)
+            set_use32(segdat[3] & 0x40);
+
         if (seg == &cpu_state.seg_ss) {
             if (seg->base == 0 && seg->limit_low == 0 && seg->limit_high == 0xffffffff)
                 cpu_cur_status &= ~CPU_STATUS_NOTFLATSS;
             else
                 cpu_cur_status |= CPU_STATUS_NOTFLATSS;
             set_stack32((segdat[3] & 0x40) ? 1 : 0);
-#ifdef USE_DYNAREC
-            codegen_flat_ss = 0;
-#endif
         }
     }
 }

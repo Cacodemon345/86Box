@@ -13,6 +13,7 @@
 #include "cpu.h"
 #include <86box/timer.h>
 #include "x86.h"
+#include "x87_sf.h"
 #include "x87.h"
 #include <86box/nmi.h>
 #include <86box/mem.h>
@@ -23,16 +24,17 @@
 #include <86box/fdc.h>
 #include <86box/keyboard.h>
 #include <86box/timer.h>
+#include "x86seg_common.h"
+#include "x86seg.h"
 #include "386_common.h"
 #include "x86_flags.h"
-#include "x86seg.h"
 
-MMX_REG *MMP[8];
+MMX_REG  *MMP[8];
 uint16_t *MMEP[8];
 
 static uint16_t MME[8];
 
-#define MMX_GETREGP(r) fpu_softfloat ? ((MMX_REG *) &fpu_state.st_space[r].fraction) : &(cpu_state.MM[r])
+#define MMX_GETREGP(r) fpu_softfloat ? ((MMX_REG *) &fpu_state.st_space[r].signif) : &(cpu_state.MM[r])
 void
 mmx_init(void)
 {
@@ -40,10 +42,10 @@ mmx_init(void)
 
     for (uint8_t i = 0; i < 8; i++) {
         if (fpu_softfloat) {
-            MMP[i] = (MMX_REG *) &fpu_state.st_space[i].fraction;
-            MMEP[i] = (uint16_t *) &fpu_state.st_space[i].exp;
+            MMP[i]  = (MMX_REG *) &fpu_state.st_space[i].signif;
+            MMEP[i] = (uint16_t *) &fpu_state.st_space[i].signExp;
         } else {
-            MMP[i] = &(cpu_state.MM[i]);
+            MMP[i]  = &(cpu_state.MM[i]);
             MMEP[i] = &(MME[i]);
         }
     }

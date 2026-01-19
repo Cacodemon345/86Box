@@ -8,8 +8,6 @@
  *
  *          Handling of the PS/2 series CMOS devices.
  *
- *
- *
  * Authors: Fred N. van Kempen, <decwiz@yahoo.com>
  *          Sarah Walker, <https://pcem-emulator.co.uk/>
  *
@@ -111,11 +109,10 @@ static void *
 ps2_nvr_init(const device_t *info)
 {
     ps2_nvr_t *nvr;
-    FILE      *f = NULL;
+    FILE      *fp = NULL;
     int        c;
 
-    nvr = (ps2_nvr_t *) malloc(sizeof(ps2_nvr_t));
-    memset(nvr, 0x00, sizeof(ps2_nvr_t));
+    nvr = (ps2_nvr_t *) calloc(1, sizeof(ps2_nvr_t));
 
     if (info->local)
         nvr->size = 2048;
@@ -123,21 +120,21 @@ ps2_nvr_init(const device_t *info)
         nvr->size = 8192;
 
     /* Set up the NVR file's name. */
-    c       = strlen(machine_get_internal_name()) + 9;
+    c       = strlen(machine_get_nvr_name()) + 9;
     nvr->fn = (char *) malloc(c + 1);
-    sprintf(nvr->fn, "%s_sec.nvr", machine_get_internal_name());
+    sprintf(nvr->fn, "%s_sec.nvr", machine_get_nvr_name());
 
     io_sethandler(0x0074, 3,
                   ps2_nvr_read, NULL, NULL, ps2_nvr_write, NULL, NULL, nvr);
 
-    f = nvr_fopen(nvr->fn, "rb");
+    fp = nvr_fopen(nvr->fn, "rb");
 
     nvr->ram = (uint8_t *) malloc(nvr->size);
     memset(nvr->ram, 0xff, nvr->size);
-    if (f != NULL) {
-        if (fread(nvr->ram, 1, nvr->size, f) != nvr->size)
+    if (fp != NULL) {
+        if (fread(nvr->ram, 1, nvr->size, fp) != nvr->size)
             fatal("ps2_nvr_init(): Error reading EEPROM data\n");
-        fclose(f);
+        fclose(fp);
     }
 
     return nvr;
@@ -147,13 +144,13 @@ static void
 ps2_nvr_close(void *priv)
 {
     ps2_nvr_t *nvr = (ps2_nvr_t *) priv;
-    FILE      *f   = NULL;
+    FILE      *fp  = NULL;
 
-    f = nvr_fopen(nvr->fn, "wb");
+    fp = nvr_fopen(nvr->fn, "wb");
 
-    if (f != NULL) {
-        (void) fwrite(nvr->ram, nvr->size, 1, f);
-        fclose(f);
+    if (fp != NULL) {
+        (void) fwrite(nvr->ram, nvr->size, 1, fp);
+        fclose(fp);
     }
 
     if (nvr->ram != NULL)
@@ -170,7 +167,7 @@ const device_t ps2_nvr_device = {
     .init          = ps2_nvr_init,
     .close         = ps2_nvr_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -184,7 +181,7 @@ const device_t ps2_nvr_55ls_device = {
     .init          = ps2_nvr_init,
     .close         = ps2_nvr_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL

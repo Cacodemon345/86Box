@@ -26,8 +26,6 @@
  * NOTE:    The IRQ functionalities have been implemented, but not yet
  *          tested, as I need to write test software for them first :)
  *
- *
- *
  * Authors: Fred N. van Kempen, <decwiz@yahoo.com>
  *
  *          Copyright 2018 Fred N. van Kempen.
@@ -76,17 +74,25 @@
 #include <86box/machine.h>
 #include <86box/io.h>
 #include <86box/device.h>
+#include <86box/mem.h>
 #include <86box/nvr.h>
+#include <86box/rom.h>
 #include <86box/ui.h>
 #include <86box/plat.h>
 #include <86box/pic.h>
 #include <86box/isartc.h>
 
-#define ISARTC_EV170  0
-#define ISARTC_DTK    1
-#define ISARTC_P5PAK  2
-#define ISARTC_A6PAK  3
-#define ISARTC_VENDEX 4
+#define ISARTC_EV170    0
+#define ISARTC_DTK      1
+#define ISARTC_P5PAK    2
+#define ISARTC_A6PAK    3
+#define ISARTC_VENDEX   4
+#define ISARTC_MPLUS2   5
+#define ISARTC_RTC58167 6
+#define ISARTC_MM58167  10
+
+#define ISARTC_ROM_MM58167_1 "roms/rtc/glatick/GLaTICK_0.8.8_NS_86B.ROM"  /* Generic 58167, AST or EV-170 */
+#define ISARTC_ROM_MM58167_2 "roms/rtc/glatick/GLaTICK_0.8.8_NS_86B2.ROM" /* PII-147 */
 
 #define ISARTC_DEBUG  0
 
@@ -101,12 +107,14 @@ typedef struct rtcdev_t {
     int8_t   irq; /* configured IRQ channel */
     int8_t   base_addrsz;
     uint32_t base_addr; /* configured I/O address */
+    rom_t    rom; /* BIOS ROM, If configured */
 
     /* Fields for the specific driver. */
     void    (*f_wr)(uint16_t, uint8_t, void *);
     uint8_t (*f_rd)(uint16_t, void *);
     int8_t    year; /* register for YEAR value */
-    char      pad[3];
+    int8_t    century; /* register for CENTURY value */
+    char      pad[2];
 
     nvr_t nvr; /* RTC/NVR */
 } rtcdev_t;
@@ -312,9 +320,14 @@ mm67_time_get(nvr_t *nvr, struct tm *tm)
             tm->tm_year = regs[dev->year];
         if (dev->flags & FLAG_YEAR80)
             tm->tm_year += 80;
-#ifdef MM67_CENTURY
-        tm->tm_year += (regs[MM67_CENTURY] * 100) - 1900;
-#endif
+
+        if ((dev->century != -1) && !(dev->flags & FLAG_YEAR80)) {
+            if (dev->flags & FLAG_YEARBCD)
+                tm->tm_year += (RTC_DCB(regs[dev->century]) * 100) - 1900;
+            else
+                tm->tm_year += (regs[dev->century] * 100) - 1900;
+        }
+
 #if ISARTC_DEBUG > 1
         isartc_log("ISARTC: get_time: year=%i [%02x]\n", tm->tm_year, regs[dev->year]);
 #endif
@@ -344,9 +357,14 @@ mm67_time_set(nvr_t *nvr, struct tm *tm)
             regs[dev->year] = RTC_BCD(year % 100);
         else
             regs[dev->year] = year % 100;
-#ifdef MM67_CENTURY
-        regs[MM67_CENTURY] = (year + 1900) / 100;
-#endif
+
+        if ((dev->year != -1) && !(dev->flags & FLAG_YEAR80)) {
+            if (dev->flags & FLAG_YEARBCD)
+                regs[dev->century] = RTC_BCD((year + 1900) / 100);
+            else
+                regs[dev->century] = (year + 1900) / 100;
+        }
+
 #if ISARTC_DEBUG > 1
         isartc_log("ISARTC: set_time: [%02x] year=%i (%i)\n", regs[dev->year], year, tm->tm_year);
 #endif
@@ -402,11 +420,16 @@ mm67_read(uint16_t port, void *priv)
             break;
 
         case MM67_AL_MSEC:
+        case MM67_MSEC:
             ret                = dev->nvr.regs[reg] & 0xf0;
             break;
 
         case MM67_AL_DOW:
             ret                = dev->nvr.regs[reg] & 0x0f;
+            break;
+
+        case MM67_DOW:
+            ret                = dev->nvr.regs[reg] & 0x07;
             break;
 
         default:
@@ -462,9 +485,13 @@ mm67_write(uint16_t port, uint8_t val, void *priv)
                         dev->nvr.regs[dev->year] = RTC_BCD(val);
                     else
                         dev->nvr.regs[dev->year] = val;
-#ifdef MM67_CENTURY
-                    dev->nvr.regs[MM67_CENTURY] = 19;
-#endif
+
+                    if ((dev->century != -1) && !(dev->flags & FLAG_YEAR80)) {
+                        if (dev->flags & FLAG_YEARBCD)
+                            dev->nvr.regs[dev->century] = RTC_BCD(19);
+                        else
+                            dev->nvr.regs[dev->century] = (1900 + val) / 100;
+                    }
                 }
             }
             break;
@@ -498,6 +525,73 @@ mm67_write(uint16_t port, uint8_t val, void *priv)
     }
 }
 
+/* Multitech PC-500/PC-500+ onboard RTC 58167 device disigned to use I/O port
+ * base+0 as register index and base+1 as register data read/write window,
+ * according to the official RTC utilities SDATE.EXE, STIME.EXE, and TODAY.EXE
+ *
+ * the RTC utilities check the RTC millisecond counter first to deteminate the
+ * presence of the RTC 58167 IC, so here implement the bogus_msec to fool them 
+ */
+static uint8_t rtc58167_index = 0x00;
+
+static uint8_t
+rtc58167_read(uint16_t port, void *priv)
+{
+    uint8_t ret = 0xff;
+    uint16_t bogus_msec = (uint16_t)((tsc * 1000) / cpu_s->rspeed);
+
+    switch (port)
+    {
+        case 0x2c0:
+        case 0x300:
+            ret = rtc58167_index;
+            break;
+
+        case 0x2c1:
+        case 0x301:
+            switch (rtc58167_index)
+            {
+                case MM67_MSEC:
+                    ret = (uint8_t)(bogus_msec % 10) << 4;
+                    break;
+
+                case MM67_HUNTEN:
+                    ret = RTC_BCD((uint8_t)((bogus_msec / 10) % 100));
+                    break;
+
+                default:
+                    ret = mm67_read(((port - 1) + rtc58167_index), priv);
+                    break;
+            }
+            break;
+
+        default:
+            break;
+    }
+
+    return ret;
+}
+
+static void
+rtc58167_write(uint16_t port, uint8_t val, void *priv)
+{
+    switch (port)
+    {
+        case 0x2c0:
+        case 0x300:
+            rtc58167_index = val;
+            break;
+
+        case 0x2c1:
+        case 0x301:
+            mm67_write(((port - 1) + rtc58167_index), val, priv);
+            break;
+
+        default:
+            break;
+    }
+}
+
 /************************************************************************
  *                                                                      *
  *            Generic code for all supported chips.                     *
@@ -510,20 +604,28 @@ isartc_init(const device_t *info)
 {
     rtcdev_t *dev;
     int       is_at = IS_AT(machine);
-    is_at           = is_at || !strcmp(machine_get_internal_name(), "xi8088");
+    is_at           = is_at || (machines[machine].init == machine_xt_xi8088_init);
 
     /* Create a device instance. */
-    dev = (rtcdev_t *) malloc(sizeof(rtcdev_t));
-    memset(dev, 0x00, sizeof(rtcdev_t));
+    dev = (rtcdev_t *) calloc(1, sizeof(rtcdev_t));
     dev->name     = info->name;
     dev->board    = info->local;
     dev->irq      = -1;
     dev->year     = -1;
+    dev->century  = -1;
     dev->nvr.data = dev;
     dev->nvr.size = 16;
 
     /* Do per-board initialization. */
     switch (dev->board) {
+        case ISARTC_MM58167: /* Generic MM58167 RTC */
+            {
+                uint32_t rom_addr = device_get_config_hex20("bios_addr");
+                if (rom_addr != 0)
+                    rom_init(&dev->rom, ISARTC_ROM_MM58167_1,
+                             rom_addr, 0x0800, 0x7ff, 0, MEM_MAPPING_EXTERNAL);
+
+            }
         case ISARTC_EV170: /* Everex EV-170 Magic I/O */
             dev->flags |= FLAG_YEAR80;
             dev->base_addr   = device_get_config_hex16("base");
@@ -549,8 +651,9 @@ isartc_init(const device_t *info)
             dev->year        = MM67_AL_HUNTEN; /* year, NON STANDARD */
             break;
 
-        case ISARTC_P5PAK: /* Paradise Systems 5PAK */
-        case ISARTC_A6PAK: /* AST SixPakPlus */
+        case ISARTC_P5PAK:  /* Paradise Systems 5PAK */
+        case ISARTC_A6PAK:  /* AST SixPakPlus */
+        case ISARTC_MPLUS2: /* AST MegaPlus II */
             dev->flags |= FLAG_YEAR80;
             dev->base_addr   = 0x02c0;
             dev->base_addrsz = 32;
@@ -573,6 +676,20 @@ isartc_init(const device_t *info)
             dev->nvr.start   = mm67_start;
             dev->nvr.tick    = mm67_tick;
             dev->year        = MM67_AL_DOM; /* year, NON STANDARD */
+            break;
+
+        case ISARTC_RTC58167: /* Multitech PC-500/PC-500+ onboard RTC */
+            dev->flags |= FLAG_YEARBCD;
+            dev->base_addr   = machine_get_config_int("rtc_port");
+            dev->base_addrsz = 8;
+            dev->irq         = machine_get_config_int("rtc_irq");
+            dev->f_rd        = rtc58167_read;
+            dev->f_wr        = rtc58167_write;
+            dev->nvr.reset   = mm67_reset;
+            dev->nvr.start   = mm67_start;
+            dev->nvr.tick    = mm67_tick;
+            dev->year        = MM67_AL_HUNTEN;  /* year,    NON STANDARD */
+            dev->century     = MM67_AL_SEC;     /* century, NON STANDARD */
             break;
 
         default:
@@ -614,24 +731,38 @@ isartc_close(void *priv)
 static const device_config_t ev170_config[] = {
   // clang-format off
     {
-        "base", "Address", CONFIG_HEX16, "", 0x02C0, "", { 0 },
-        {
-            { "240H", 0x0240 },
-            { "2C0H", 0x02c0 },
-            { ""             }
+        .name           = "base",
+		.description    = "Address",
+		.type           = CONFIG_HEX16,
+		.default_string = NULL,
+		.default_int    = 0x02C0,
+		.file_filter    = NULL,
+		.spinner        = { 0 },
+        .selection      = {
+            { .description = "240H", .value = 0x0240 },
+            { .description = "2C0H", .value = 0x02c0 },
+            { .description = ""                      }
         },
+        .bios           = { { 0 } }
     },
     {
-        "irq", "IRQ", CONFIG_SELECTION, "", -1, "", { 0 },
-        {
-            { "Disabled", -1 },
-            { "IRQ2",      2 },
-            { "IRQ5",      5 },
-            { "IRQ7",      7 },
-            { ""             }
+        .name           = "irq",
+		.description    = "IRQ",
+		.type           = CONFIG_SELECTION,
+		.default_string = NULL,
+		.default_int    = -1,
+		.file_filter    = NULL,
+		.spinner        = { 0 },
+        .selection      = {
+            { .description = "Disabled", .value = -1 },
+            { .description = "IRQ2",     .value =  2 },
+            { .description = "IRQ5",     .value =  5 },
+            { .description = "IRQ7",     .value =  7 },
+            { .description = ""                      }
         },
+        .bios           = { { 0 } }
     },
-    { "", "", -1 }
+    { .name = "", .description = "", .type = CONFIG_END }
   // clang-format on
 };
 
@@ -643,7 +774,7 @@ static const device_t ev170_device = {
     .init          = isartc_init,
     .close         = isartc_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = ev170_config
@@ -652,14 +783,21 @@ static const device_t ev170_device = {
 static const device_config_t pii147_config[] = {
   // clang-format off
     {
-        "base", "Address", CONFIG_HEX16, "", 0x0240, "", { 0 },
-        {
-            { "Clock 1", 0x0240 },
-            { "Clock 2", 0x0340 },
-            { "" }
+        .name           = "base",
+		.description    = "Address",
+		.type           = CONFIG_HEX16,
+		.default_string = NULL,
+		.default_int    = 0x0240,
+		.file_filter    = NULL,
+		.spinner        = { 0 },
+        .selection      = {
+            { .description = "Clock 1", .value = 0x0240 },
+            { .description = "Clock 2", .value = 0x0340 },
+            { .description = ""                         }
         },
+        .bios           = { { 0 } }
     },
-    { "", "", -1 }
+    { .name = "", .description = "", .type = CONFIG_END }
   // clang-format on
 };
 
@@ -671,7 +809,7 @@ static const device_t pii147_device = {
     .init          = isartc_init,
     .close         = isartc_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = pii147_config
@@ -680,16 +818,23 @@ static const device_t pii147_device = {
 static const device_config_t p5pak_config[] = {
   // clang-format off
     {
-        "irq", "IRQ", CONFIG_SELECTION, "", -1, "", { 0 },
-        {
-            { "Disabled", -1 },
-            { "IRQ2",      2 },
-            { "IRQ3",      3 },
-            { "IRQ5",      5 },
-            { ""             }
+        .name           = "irq",
+		.description    = "IRQ",
+		.type           = CONFIG_SELECTION,
+		.default_string = NULL,
+		.default_int    = -1,
+		.file_filter    = NULL,
+		.spinner        = { 0 },
+        .selection      = {
+            { .description = "Disabled", -1 },
+            { .description = "IRQ2",      2 },
+            { .description = "IRQ3",      3 },
+            { .description = "IRQ5",      5 },
+            { .description = ""             }
         },
+        .bios           = { { 0 } }
     },
-    { "", "", -1 }
+    { .name = "", .description = "", .type = CONFIG_END }
   // clang-format on
 };
 
@@ -701,7 +846,7 @@ static const device_t p5pak_device = {
     .init          = isartc_init,
     .close         = isartc_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = p5pak_config
@@ -710,16 +855,23 @@ static const device_t p5pak_device = {
 static const device_config_t a6pak_config[] = {
   // clang-format off
     {
-        "irq", "IRQ", CONFIG_SELECTION, "", -1, "", { 0 },
-        {
-            { "Disabled", -1 },
-            { "IRQ2",      2 },
-            { "IRQ3",      3 },
-            { "IRQ5",      5 },
-            { ""             }
+        .name           = "irq",
+        .description    = "IRQ",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = -1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "Disabled", .value = -1 },
+            { .description = "IRQ2",     .value =  2 },
+            { .description = "IRQ3",     .value =  3 },
+            { .description = "IRQ5",     .value =  5 },
+            { .description = ""                      }
         },
+        .bios           = { { 0 } }
     },
-    { "", "", -1 }
+    { .name = "", .description = "", .type = CONFIG_END }
   // clang-format on
 };
 
@@ -731,10 +883,133 @@ static const device_t a6pak_device = {
     .init          = isartc_init,
     .close         = isartc_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = a6pak_config
+};
+
+static const device_config_t mplus2_config[] = {
+  // clang-format off
+    {
+        .name           = "irq",
+        .description    = "IRQ",
+        .type           = CONFIG_SELECTION,
+        .default_string = "",
+        .default_int    = -1,
+        .file_filter    = "",
+        .spinner        = { 0 },
+        .selection      = {
+            { "Disabled", -1 },
+            { "IRQ2",      2 },
+            { "IRQ3",      3 },
+            { "IRQ5",      5 },
+            { ""             }
+        },
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+  // clang-format on
+};
+
+static const device_t mplus2_device = {
+    .name          = "AST MegaPlus II",
+    .internal_name = "mplus2",
+    .flags         = DEVICE_ISA,
+    .local         = ISARTC_MPLUS2,
+    .init          = isartc_init,
+    .close         = isartc_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = mplus2_config
+};
+
+static const device_config_t mm58167_config[] = {
+  // clang-format off
+    {
+        .name           = "base",
+        .description    = "Address",
+        .type           = CONFIG_HEX16,
+        .default_string = NULL,
+        .default_int    = 0x02C0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "240H", .value = 0x0240 },
+            { .description = "2C0H", .value = 0x02c0 },
+            { .description = "340H", .value = 0x0340 },
+            { .description = ""                      }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "irq",
+        .description    = "IRQ",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = -1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "Disabled", .value = -1 },
+            { .description = "IRQ2",     .value =  2 },
+            { .description = "IRQ5",     .value =  5 },
+            { .description = "IRQ7",     .value =  7 },
+            { .description = ""                      }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "bios_addr",
+        .description    = "BIOS address",
+        .type           = CONFIG_HEX20,
+        .default_string = NULL,
+        .default_int    = 0xcc000,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "Disabled", .value = 0x00000 },
+            { .description = "C800H",    .value = 0xc8000 },
+            { .description = "CA00H",    .value = 0xca000 },
+            { .description = "CC00H",    .value = 0xcc000 },
+            { .description = "CE00H",    .value = 0xce000 },
+            { .description = "D000H",    .value = 0xd0000 },
+            { .description = "D200H",    .value = 0xd2000 },
+            { .description = "D400H",    .value = 0xd4000 },
+            { .description = "D600H",    .value = 0xd6000 },
+            { .description = "D800H",    .value = 0xd8000 },
+            { .description = "DA00H",    .value = 0xda000 },
+            { .description = "DC00H",    .value = 0xdc000 },
+            { .description = "DE00H",    .value = 0xde000 },
+            { .description = "E000H",    .value = 0xe0000 },
+            { .description = "E200H",    .value = 0xe2000 },
+            { .description = "E400H",    .value = 0xe4000 },
+            { .description = "E600H",    .value = 0xe6000 },
+            { .description = "E800H",    .value = 0xe8000 },
+            { .description = "EA00H",    .value = 0xea000 },
+            { .description = "EC00H",    .value = 0xec000 },
+            { .description = "EE00H",    .value = 0xee000 },
+            { .description = ""                           }
+        },
+        .bios           = { { 0 } }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+  // clang-format on
+};
+
+static const device_t mm58167_device = {
+    .name          = "Generic MM58167 RTC",
+    .internal_name = "rtc_mm58167",
+    .flags         = DEVICE_ISA | DEVICE_SIDECAR,
+    .local         = ISARTC_MM58167,
+    .init          = isartc_init,
+    .close         = isartc_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = mm58167_config
 };
 
 /* Onboard RTC devices */
@@ -746,21 +1021,21 @@ const device_t vendex_xt_rtc_onboard_device = {
     .init          = isartc_init,
     .close         = isartc_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
 };
 
-static const device_t isartc_none_device = {
-    .name          = "None",
-    .internal_name = "none",
-    .flags         = 0,
-    .local         = 0,
-    .init          = NULL,
-    .close         = NULL,
+const device_t rtc58167_device = {
+    .name          = "RTC 58167 IC (Multitech)",
+    .internal_name = "rtc58167_xt_rtc",
+    .flags         = DEVICE_ISA,
+    .local         = ISARTC_RTC58167,
+    .init          = isartc_init,
+    .close         = isartc_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -770,12 +1045,14 @@ static const struct {
     const device_t *dev;
 } boards[] = {
     // clang-format off
-    { &isartc_none_device },
-    { &ev170_device       },
-    { &pii147_device      },
-    { &p5pak_device       },
-    { &a6pak_device       },
-    { NULL                },
+    { &device_none     },
+    { &ev170_device    },
+    { &pii147_device   },
+    { &p5pak_device    },
+    { &a6pak_device    },
+    { &mplus2_device   },
+    { &mm58167_device  },
+    { NULL             }
     // clang-format on
 };
 
@@ -789,19 +1066,19 @@ isartc_reset(void)
     device_add(boards[isartc_type].dev);
 }
 
-char *
+const char *
 isartc_get_internal_name(int board)
 {
     return device_get_internal_name(boards[board].dev);
 }
 
 int
-isartc_get_from_internal_name(char *s)
+isartc_get_from_internal_name(const char *str)
 {
     int c = 0;
 
     while (boards[c].dev != NULL) {
-        if (!strcmp(boards[c].dev->internal_name, s))
+        if (!strcmp(boards[c].dev->internal_name, str))
             return c;
         c++;
     }
@@ -814,4 +1091,13 @@ const device_t *
 isartc_get_device(int board)
 {
     return (boards[board].dev);
+}
+
+int
+isartc_has_config(int board)
+{
+    if (boards[board].dev == NULL)
+        return 0;
+
+    return (boards[board].dev->config ? 1 : 0);
 }

@@ -1,5 +1,5 @@
 #define PUSH_W_OP(reg)                         \
-    static int opPUSH_##reg(uint32_t fetchdat) \
+    static int opPUSH_##reg(UNUSED(uint32_t fetchdat)) \
     {                                          \
         PUSH_W(reg);                           \
         CLOCK_CYCLES((is486) ? 1 : 2);         \
@@ -8,7 +8,7 @@
     }
 
 #define PUSH_L_OP(reg)                         \
-    static int opPUSH_##reg(uint32_t fetchdat) \
+    static int opPUSH_##reg(UNUSED(uint32_t fetchdat)) \
     {                                          \
         PUSH_L(reg);                           \
         CLOCK_CYCLES((is486) ? 1 : 2);         \
@@ -17,7 +17,7 @@
     }
 
 #define POP_W_OP(reg)                          \
-    static int opPOP_##reg(uint32_t fetchdat)  \
+    static int opPOP_##reg(UNUSED(uint32_t fetchdat)) \
     {                                          \
         reg = POP_W();                         \
         CLOCK_CYCLES((is486) ? 1 : 4);         \
@@ -26,7 +26,7 @@
     }
 
 #define POP_L_OP(reg)                          \
-    static int opPOP_##reg(uint32_t fetchdat)  \
+    static int opPOP_##reg(UNUSED(uint32_t fetchdat)) \
     {                                          \
         reg = POP_L();                         \
         CLOCK_CYCLES((is486) ? 1 : 4);         \
@@ -71,7 +71,7 @@ POP_L_OP(EBP)
 POP_L_OP(ESP)
 
 static int
-opPUSHA_w(uint32_t fetchdat)
+opPUSHA_w(UNUSED(uint32_t fetchdat))
 {
     if (stack32) {
         writememw(ss, ESP - 2, AX);
@@ -101,7 +101,7 @@ opPUSHA_w(uint32_t fetchdat)
     return cpu_state.abrt;
 }
 static int
-opPUSHA_l(uint32_t fetchdat)
+opPUSHA_l(UNUSED(uint32_t fetchdat))
 {
     if (stack32) {
         writememl(ss, ESP - 4, EAX);
@@ -132,7 +132,7 @@ opPUSHA_l(uint32_t fetchdat)
 }
 
 static int
-opPOPA_w(uint32_t fetchdat)
+opPOPA_w(UNUSED(uint32_t fetchdat))
 {
     if (stack32) {
         DI = readmemw(ss, ESP);
@@ -186,25 +186,53 @@ opPOPA_w(uint32_t fetchdat)
     return 0;
 }
 static int
-opPOPA_l(uint32_t fetchdat)
+opPOPA_l(UNUSED(uint32_t fetchdat))
 {
     if (stack32) {
-        EDI = readmeml(ss, ESP);                        if (cpu_state.abrt) return 1;
-        ESI = readmeml(ss, ESP +  4);                   if (cpu_state.abrt) return 1;
-        EBP = readmeml(ss, ESP +  8);                   if (cpu_state.abrt) return 1;
-        EBX = readmeml(ss, ESP + 16);                   if (cpu_state.abrt) return 1;
-        EDX = readmeml(ss, ESP + 20);                   if (cpu_state.abrt) return 1;
-        ECX = readmeml(ss, ESP + 24);                   if (cpu_state.abrt) return 1;
-        EAX = readmeml(ss, ESP + 28);                   if (cpu_state.abrt) return 1;
+        EDI = readmeml(ss, ESP);
+        if (cpu_state.abrt)
+            return 1;
+        ESI = readmeml(ss, ESP + 4);
+        if (cpu_state.abrt)
+            return 1;
+        EBP = readmeml(ss, ESP + 8);
+        if (cpu_state.abrt)
+            return 1;
+        EBX = readmeml(ss, ESP + 16);
+        if (cpu_state.abrt)
+            return 1;
+        EDX = readmeml(ss, ESP + 20);
+        if (cpu_state.abrt)
+            return 1;
+        ECX = readmeml(ss, ESP + 24);
+        if (cpu_state.abrt)
+            return 1;
+        EAX = readmeml(ss, ESP + 28);
+        if (cpu_state.abrt)
+            return 1;
         ESP += 32;
     } else {
-        EDI = readmeml(ss, ((SP)      & 0xFFFF));       if (cpu_state.abrt) return 1;
-        ESI = readmeml(ss, ((SP +  4) & 0xFFFF));       if (cpu_state.abrt) return 1;
-        EBP = readmeml(ss, ((SP +  8) & 0xFFFF));       if (cpu_state.abrt) return 1;
-        EBX = readmeml(ss, ((SP + 16) & 0xFFFF));       if (cpu_state.abrt) return 1;
-        EDX = readmeml(ss, ((SP + 20) & 0xFFFF));       if (cpu_state.abrt) return 1;
-        ECX = readmeml(ss, ((SP + 24) & 0xFFFF));       if (cpu_state.abrt) return 1;
-        EAX = readmeml(ss, ((SP + 28) & 0xFFFF));       if (cpu_state.abrt) return 1;
+        EDI = readmeml(ss, ((SP) &0xFFFF));
+        if (cpu_state.abrt)
+            return 1;
+        ESI = readmeml(ss, ((SP + 4) & 0xFFFF));
+        if (cpu_state.abrt)
+            return 1;
+        EBP = readmeml(ss, ((SP + 8) & 0xFFFF));
+        if (cpu_state.abrt)
+            return 1;
+        EBX = readmeml(ss, ((SP + 16) & 0xFFFF));
+        if (cpu_state.abrt)
+            return 1;
+        EDX = readmeml(ss, ((SP + 20) & 0xFFFF));
+        if (cpu_state.abrt)
+            return 1;
+        ECX = readmeml(ss, ((SP + 24) & 0xFFFF));
+        if (cpu_state.abrt)
+            return 1;
+        EAX = readmeml(ss, ((SP + 28) & 0xFFFF));
+        if (cpu_state.abrt)
+            return 1;
         SP += 32;
     }
     CLOCK_CYCLES((is486) ? 9 : 24);
@@ -222,7 +250,7 @@ opPUSH_imm_w(uint32_t fetchdat)
     return cpu_state.abrt;
 }
 static int
-opPUSH_imm_l(uint32_t fetchdat)
+opPUSH_imm_l(UNUSED(uint32_t fetchdat))
 {
     uint32_t val = getlong();
     if (cpu_state.abrt)
@@ -379,9 +407,13 @@ opENTER_w(uint32_t fetchdat)
 {
     uint16_t offset;
     int      count;
-    uint32_t tempEBP, tempESP, frame_ptr;
+    uint32_t tempEBP;
+    uint32_t tempESP;
+    uint32_t frame_ptr;
 #ifndef IS_DYNAREC
-    int reads = 0, writes = 1, instr_cycles = 0;
+    int reads        = 0;
+    int writes       = 1;
+    int instr_cycles = 0;
 #endif
     uint16_t tempw;
 
@@ -448,9 +480,13 @@ opENTER_l(uint32_t fetchdat)
 {
     uint16_t offset;
     int      count;
-    uint32_t tempEBP, tempESP, frame_ptr;
+    uint32_t tempEBP;
+    uint32_t tempESP;
+    uint32_t frame_ptr;
 #ifndef IS_DYNAREC
-    int reads = 0, writes = 1, instr_cycles = 0;
+    int reads        = 0;
+    int writes       = 1;
+    int instr_cycles = 0;
 #endif
     uint32_t templ;
 
@@ -514,7 +550,7 @@ opENTER_l(uint32_t fetchdat)
 }
 
 static int
-opLEAVE_w(uint32_t fetchdat)
+opLEAVE_w(UNUSED(uint32_t fetchdat))
 {
     uint32_t tempESP = ESP;
     uint16_t temp;
@@ -532,7 +568,7 @@ opLEAVE_w(uint32_t fetchdat)
     return 0;
 }
 static int
-opLEAVE_l(uint32_t fetchdat)
+opLEAVE_l(UNUSED(uint32_t fetchdat))
 {
     uint32_t tempESP = ESP;
     uint32_t temp;
@@ -551,14 +587,14 @@ opLEAVE_l(uint32_t fetchdat)
 }
 
 #define PUSH_SEG_OPS(seg)                          \
-    static int opPUSH_##seg##_w(uint32_t fetchdat) \
+    static int opPUSH_##seg##_w(UNUSED(uint32_t fetchdat)) \
     {                                              \
         PUSH_W(seg);                               \
         CLOCK_CYCLES(2);                           \
         PREFETCH_RUN(2, 1, -1, 0, 0, 1, 0, 0);     \
         return cpu_state.abrt;                     \
     }                                              \
-    static int opPUSH_##seg##_l(uint32_t fetchdat) \
+    static int opPUSH_##seg##_l(UNUSED(uint32_t fetchdat)) \
     {                                              \
         PUSH_L(seg);                               \
         CLOCK_CYCLES(2);                           \
@@ -567,28 +603,28 @@ opLEAVE_l(uint32_t fetchdat)
     }
 
 #define POP_SEG_OPS(seg, realseg)                          \
-    static int opPOP_##seg##_w(uint32_t fetchdat)          \
+    static int opPOP_##seg##_w(UNUSED(uint32_t fetchdat))  \
     {                                                      \
         uint16_t temp_seg;                                 \
         uint32_t temp_esp = ESP;                           \
         temp_seg          = POP_W();                       \
         if (cpu_state.abrt)                                \
             return 1;                                      \
-        loadseg(temp_seg, realseg);                        \
+        op_loadseg(temp_seg, realseg);                     \
         if (cpu_state.abrt)                                \
             ESP = temp_esp;                                \
         CLOCK_CYCLES(is486 ? 3 : 7);                       \
         PREFETCH_RUN(is486 ? 3 : 7, 1, -1, 0, 0, 1, 0, 0); \
         return cpu_state.abrt;                             \
     }                                                      \
-    static int opPOP_##seg##_l(uint32_t fetchdat)          \
+    static int opPOP_##seg##_l(UNUSED(uint32_t fetchdat))  \
     {                                                      \
         uint32_t temp_seg;                                 \
         uint32_t temp_esp = ESP;                           \
         temp_seg          = POP_L();                       \
         if (cpu_state.abrt)                                \
             return 1;                                      \
-        loadseg(temp_seg & 0xffff, realseg);               \
+        op_loadseg(temp_seg & 0xffff, realseg);            \
         if (cpu_state.abrt)                                \
             ESP = temp_esp;                                \
         CLOCK_CYCLES(is486 ? 3 : 7);                       \
@@ -615,7 +651,7 @@ opPOP_SS_w(uint32_t fetchdat)
     temp_seg          = POP_W();
     if (cpu_state.abrt)
         return 1;
-    loadseg(temp_seg, &cpu_state.seg_ss);
+    op_loadseg(temp_seg, &cpu_state.seg_ss);
     if (cpu_state.abrt) {
         ESP = temp_esp;
         return 1;
@@ -631,7 +667,11 @@ opPOP_SS_w(uint32_t fetchdat)
     cpu_state.pc++;
     if (cpu_state.abrt)
         return 1;
+#ifdef OPS_286_386
+    x86_2386_opcodes[(fetchdat & 0xff) | cpu_state.op32](fetchdat >> 8);
+#else
     x86_opcodes[(fetchdat & 0xff) | cpu_state.op32](fetchdat >> 8);
+#endif
 
     return 1;
 }
@@ -643,7 +683,7 @@ opPOP_SS_l(uint32_t fetchdat)
     temp_seg          = POP_L();
     if (cpu_state.abrt)
         return 1;
-    loadseg(temp_seg & 0xffff, &cpu_state.seg_ss);
+    op_loadseg(temp_seg & 0xffff, &cpu_state.seg_ss);
     if (cpu_state.abrt) {
         ESP = temp_esp;
         return 1;
@@ -659,7 +699,11 @@ opPOP_SS_l(uint32_t fetchdat)
     cpu_state.pc++;
     if (cpu_state.abrt)
         return 1;
+#ifdef OPS_286_386
+    x86_2386_opcodes[(fetchdat & 0xff) | cpu_state.op32](fetchdat >> 8);
+#else
     x86_opcodes[(fetchdat & 0xff) | cpu_state.op32](fetchdat >> 8);
+#endif
 
     return 1;
 }

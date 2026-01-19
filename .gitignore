@@ -8,6 +8,8 @@ Makefile
 /src/*.exe
 /src/86Box
 /src/include/86box/version.h
+/src/.vs
+/src/out
 
 # Legacy Makefile
 /src/*.o
@@ -59,3 +61,9 @@ CMakeLists.txt.user
 
 # MacOS Finder stuff
 .DS_Store
+
+# clangd
+.cache
+
+# Jetbrains CLion
+.idea

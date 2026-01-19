@@ -26,12 +26,6 @@ then
 fi
 shift
 
-# Extract version components.
-newversion_maj=$(echo "$newversion" | cut -d. -f1)
-newversion_min=$(echo "$newversion" | cut -d. -f2)
-newversion_patch=$(echo "$newversion" | cut -d. -f3)
-[ -z "$newversion_patch" ] && newversion_patch=0
-
 if [ -z "${romversion}" ]; then
 	# Get the latest ROM release from the GitHub API.
 	romversion=$(curl --silent "https://api.github.com/repos/86Box/roms/releases/latest" |
@@ -49,29 +43,33 @@ pretty_date() {
 
 # Patch files.
 patch_file() {
-	# Stop if the file doesn't exist.
-	[ ! -e "$1" ] && return
+	# Parse arguments.
+	desc="$1"
+	shift
+	pattern="$1"
+	shift
 
-	# Patch file.
-	if sed -i -r -e "$3" "$1"
-	then
-		echo "[-] Patched $2 on $1"
-	else
-		echo "[!] Patching $2 on $1 failed"
-	fi
+	# Patch the specified files.
+	for file in "$@"
+	do
+		# Skip file if it doesn't exist.
+		[ ! -e "$file" ] && continue
+
+		# Patch file.
+		if sed -i -r -e "$pattern" "$file"
+		then
+			echo "[-] Patched $desc in $file"
+		else
+			echo "[!] Patching $desc in $file failed"
+		fi
+	done
 }
-patch_file CMakeLists.txt VERSION 's/^(\s*VERSION ).+/\1'"$newversion"'/'
-patch_file vcpkg.json version-string 's/(^\s*"version-string"\s*:\s*")[^"]+/\1'"$newversion"'/'
-patch_file src/include_make/*/version.h EMU_VERSION 's/(#\s*define\s+EMU_VERSION\s+")[^"]+/\1'"$newversion"'/'
-patch_file src/include_make/*/version.h EMU_VERSION_MAJ 's/(#\s*define\s+EMU_VERSION_MAJ\s+)[0-9]+/\1'"$newversion_maj"'/'
-patch_file src/include_make/*/version.h EMU_VERSION_MIN 's/(#\s*define\s+EMU_VERSION_MIN\s+)[0-9]+/\1'"$newversion_min"'/'
-patch_file src/include_make/*/version.h EMU_VERSION_PATCH 's/(#\s*define\s+EMU_VERSION_PATCH\s+)[0-9]+/\1'"$newversion_patch"'/'
-patch_file src/include_make/*/version.h COPYRIGHT_YEAR 's/(#\s*define\s+COPYRIGHT_YEAR\s+)[0-9]+/\1'"$(date +%Y)"'/'
-patch_file src/include_make/*/version.h EMU_DOCS_URL 's/(#\s*define\s+EMU_DOCS_URL\s+"https:\/\/[^\/]+\/en\/v)[^\/]+/\1'"$newversion_maj.$newversion_min"'/'
-patch_file src/unix/assets/*.spec Version 's/(Version:\s+)[0-9].+/\1'"$newversion"'/'
-patch_file src/unix/assets/*.spec '%global romver' 's/(^%global\ romver\s+)[0-9]{8}/\1'"$romversion"'/'
-patch_file src/unix/assets/*.spec 'changelog version' 's/(^[*]\s.*>\s+)[0-9].+/\1'"$newversion"-1'/'
-patch_file src/unix/assets/*.spec 'changelog date' 's/(^[*]\s)[a-zA-Z]{3}\s[a-zA-Z]{3}\s[0-9]{2}\s[0-9]{4}/\1'"$(pretty_date)"'/'
-patch_file src/unix/assets/*.metainfo.xml release 's/(<release version=")[^"]+(" date=")[^"]+/\1'"$newversion"'\2'"$(date +%Y-%m-%d)"'/'
-patch_file debian/changelog 'changelog date' 's/>  .+/>  '"$(date -R)"'/'
-patch_file debian/changelog 'changelog version' 's/86box \(.+\)/86box \('"$newversion"'\)/'
+patch_file VERSION 's/^(\s*VERSION ).+/\1'"$newversion"'/' CMakeLists.txt
+patch_file version-string 's/(^\s*"version-string"\s*:\s*")[^"]+/\1'"$newversion"'/' vcpkg.json
+patch_file Version 's/(Version:\s+)[0-9].+/\1'"$newversion"'/' src/unix/assets/*.spec
+patch_file '%global romver' 's/(^%global\ romver\s+)[^\s]+/\1'"$romversion"'/' src/unix/assets/*.spec
+patch_file 'changelog version' 's/(^[*]\s.*>\s+)[0-9].+/\1'"$newversion"-1'/' src/unix/assets/*.spec
+patch_file 'changelog date' 's/(^[*]\s)[a-zA-Z]{3}\s[a-zA-Z]{3}\s[0-9]{2}\s[0-9]{4}/\1'"$(pretty_date)"'/' src/unix/assets/*.spec
+patch_file release 's/(<release version=")[^"]+(" date=")[^"]+/\1'"$newversion"'\2'"$(date +%Y-%m-%d)"'/' src/unix/assets/*.metainfo.xml
+patch_file 'changelog date' 's/>  .+/>  '"$(date -R)"'/' debian/changelog
+patch_file 'changelog version' 's/86box \(.+\)/86box \('"$newversion"'\)/' debian/changelog

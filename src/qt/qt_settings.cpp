@@ -8,8 +8,6 @@
  *
  *          Program settings UI module.
  *
- *
- *
  * Authors: Joakim L. Gilje <jgilje@jgilje.net>
  *          Cacodemon345
  *
@@ -50,6 +48,11 @@ public:
     SettingsModel(QObject *parent)
         : QAbstractListModel(parent)
     {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        fontHeight = QFontMetrics(qApp->font()).height();
+#else
+        fontHeight = QApplication::fontMetrics().height();
+#endif
     }
 
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
@@ -82,6 +85,7 @@ private:
         "other_removable_devices",
         "other_peripherals",
     };
+    int fontHeight;
 };
 
 QVariant
@@ -93,7 +97,9 @@ SettingsModel::data(const QModelIndex &index, int role) const
         case Qt::DisplayRole:
             return tr(pages.at(index.row()).toUtf8().data());
         case Qt::DecorationRole:
-            return QIcon(QString("%1/%2.ico").arg(ProgSettings::getIconSetPath(), page_icons[index.row()]));
+            return QIcon(QString(":/settings/qt/icons/%1.ico").arg(page_icons[index.row()]));
+        case Qt::SizeHintRole:
+            return QSize(-1, fontHeight * 2);
         default:
             return {};
     }
@@ -113,7 +119,8 @@ Settings::Settings(QWidget *parent)
     , ui(new Ui::Settings)
 {
     ui->setupUi(this);
-    ui->listView->setModel(new SettingsModel(this));
+    auto *model = new SettingsModel(this);
+    ui->listView->setModel(model);
 
     Harddrives::busTrackClass = new SettingsBusTracking;
     machine                   = new SettingsMachine(this);
@@ -140,18 +147,49 @@ Settings::Settings(QWidget *parent)
     ui->stackedWidget->addWidget(otherRemovable);
     ui->stackedWidget->addWidget(otherPeripherals);
 
-    connect(machine, &SettingsMachine::currentMachineChanged, display, &SettingsDisplay::onCurrentMachineChanged);
-    connect(machine, &SettingsMachine::currentMachineChanged, input, &SettingsInput::onCurrentMachineChanged);
-    connect(machine, &SettingsMachine::currentMachineChanged, sound, &SettingsSound::onCurrentMachineChanged);
-    connect(machine, &SettingsMachine::currentMachineChanged, network, &SettingsNetwork::onCurrentMachineChanged);
-    connect(machine, &SettingsMachine::currentMachineChanged, storageControllers, &SettingsStorageControllers::onCurrentMachineChanged);
-    connect(machine, &SettingsMachine::currentMachineChanged, otherPeripherals, &SettingsOtherPeripherals::onCurrentMachineChanged);
+    connect(machine, &SettingsMachine::currentMachineChanged, display,
+            &SettingsDisplay::onCurrentMachineChanged);
+    connect(machine, &SettingsMachine::currentMachineChanged, input,
+            &SettingsInput::onCurrentMachineChanged);
+    connect(machine, &SettingsMachine::currentMachineChanged, sound,
+            &SettingsSound::onCurrentMachineChanged);
+    connect(machine, &SettingsMachine::currentMachineChanged, network,
+            &SettingsNetwork::onCurrentMachineChanged);
+    connect(machine, &SettingsMachine::currentMachineChanged, ports,
+            &SettingsPorts::onCurrentMachineChanged);
+    connect(machine, &SettingsMachine::currentMachineChanged, storageControllers,
+            &SettingsStorageControllers::onCurrentMachineChanged);
+    connect(machine, &SettingsMachine::currentMachineChanged, otherPeripherals,
+            &SettingsOtherPeripherals::onCurrentMachineChanged);
+    connect(floppyCdrom, &SettingsFloppyCDROM::cdromChannelChanged, harddisks,
+            &SettingsHarddisks::reloadBusChannels);
+    connect(floppyCdrom, &SettingsFloppyCDROM::cdromChannelChanged, otherRemovable,
+            &SettingsOtherRemovable::reloadBusChannels_MO);
+    connect(floppyCdrom, &SettingsFloppyCDROM::cdromChannelChanged, otherRemovable,
+            &SettingsOtherRemovable::reloadBusChannels_RDisk);
+    connect(harddisks, &SettingsHarddisks::driveChannelChanged, floppyCdrom,
+            &SettingsFloppyCDROM::reloadBusChannels);
+    connect(harddisks, &SettingsHarddisks::driveChannelChanged, otherRemovable,
+            &SettingsOtherRemovable::reloadBusChannels_MO);
+    connect(harddisks, &SettingsHarddisks::driveChannelChanged, otherRemovable,
+            &SettingsOtherRemovable::reloadBusChannels_RDisk);
+    connect(otherRemovable, &SettingsOtherRemovable::moChannelChanged, harddisks,
+            &SettingsHarddisks::reloadBusChannels);
+    connect(otherRemovable, &SettingsOtherRemovable::moChannelChanged, floppyCdrom,
+            &SettingsFloppyCDROM::reloadBusChannels);
+    connect(otherRemovable, &SettingsOtherRemovable::moChannelChanged, otherRemovable,
+            &SettingsOtherRemovable::reloadBusChannels_RDisk);
+    connect(otherRemovable, &SettingsOtherRemovable::rdiskChannelChanged, harddisks,
+            &SettingsHarddisks::reloadBusChannels);
+    connect(otherRemovable, &SettingsOtherRemovable::rdiskChannelChanged, floppyCdrom,
+            &SettingsFloppyCDROM::reloadBusChannels);
+    connect(otherRemovable, &SettingsOtherRemovable::rdiskChannelChanged, otherRemovable,
+            &SettingsOtherRemovable::reloadBusChannels_MO);
 
-    connect(ui->listView->selectionModel(), &QItemSelectionModel::currentChanged, this, [this](const QModelIndex &current, const QModelIndex &previous) {
-        ui->stackedWidget->setCurrentIndex(current.row());
-    });
+    connect(ui->listView->selectionModel(), &QItemSelectionModel::currentChanged, this,
+            [this](const QModelIndex &current, const QModelIndex &previous) { ui->stackedWidget->setCurrentIndex(current.row()); });
 
-    ui->listView->setMinimumWidth(ui->listView->sizeHintForColumn(0) + qApp->style()->pixelMetric(QStyle::PM_ScrollBarExtent));
+    ui->listView->setCurrentIndex(model->index(0, 0));
 
     Settings::settings = this;
 }
@@ -184,13 +222,13 @@ void
 Settings::accept()
 {
     if (confirm_save && !settings_only) {
-        QMessageBox questionbox(QMessageBox::Icon::Question, "86Box", QStringLiteral("%1\n\n%2").arg(tr("Do you want to save the settings?"), tr("This will hard reset the emulated machine.")), QMessageBox::Save | QMessageBox::Cancel, this);
+        QMessageBox questionbox(QMessageBox::Icon::Question, "86Box",
+                                QStringLiteral("%1\n\n%2").arg(tr("Do you want to save the settings?"), tr("This will hard reset the emulated machine.")),
+                                QMessageBox::Save | QMessageBox::Cancel, this);
         QCheckBox  *chkbox = new QCheckBox(tr("Don't show this message again"));
         questionbox.setCheckBox(chkbox);
         chkbox->setChecked(!confirm_save);
-        QObject::connect(chkbox, &QCheckBox::stateChanged, [](int state) {
-            confirm_save = (state == Qt::CheckState::Unchecked);
-        });
+        QObject::connect(chkbox, &QCheckBox::stateChanged, [](int state) { confirm_save = (state == Qt::CheckState::Unchecked); });
         questionbox.exec();
         if (questionbox.result() == QMessageBox::Cancel) {
             confirm_save = true;

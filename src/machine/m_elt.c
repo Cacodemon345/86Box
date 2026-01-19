@@ -30,13 +30,12 @@
  *   Boston, MA 02111-1307
  *   USA.
  */
-
 #include <stdint.h>
 #include <stdio.h>
 #include <time.h>
+#include <86box/86box.h>
 #include <86box/timer.h>
 #include <86box/fdd.h>
-#include <86box/86box.h>
 #include <86box/device.h>
 #include <86box/fdc.h>
 #include <86box/fdc_ext.h>
@@ -50,6 +49,7 @@
 #include <86box/rom.h>
 #include <86box/video.h>
 #include <86box/vid_cga.h>
+#include <86box/hdc.h>
 #include <86box/plat_fallthrough.h>
 #include <86box/plat_unused.h>
 
@@ -57,13 +57,13 @@ static void
 elt_vid_off_poll(void *priv)
 {
     cga_t  *cga   = priv;
-    uint8_t hdisp = cga->crtc[1];
+    uint8_t hdisp = cga->crtc[CGA_CRTC_HDISP];
 
     /* Don't display anything.
      * TODO: Do something less stupid to emulate backlight off. */
-    cga->crtc[1] = 0;
+    cga->crtc[CGA_CRTC_HDISP] = 0;
     cga_poll(cga);
-    cga->crtc[1] = hdisp;
+    cga->crtc[CGA_CRTC_HDISP] = hdisp;
 }
 
 static void
@@ -92,8 +92,8 @@ sysstat_out(UNUSED(uint16_t port), uint8_t val, void *priv)
 static uint8_t
 sysstat_in(UNUSED(uint16_t port), void *priv)
 {
-    const cga_t  *cga = priv;
-    uint8_t       ret = 0x0a; /* No idea what these bits are */
+    const cga_t *cga = priv;
+    uint8_t      ret = 0x0a; /* No idea what these bits are */
 
     /* External CRT. We don't emulate the LCD/CRT switching, let's just
      * frivolously use this bit to indicate we're using the LCD if the
@@ -124,9 +124,7 @@ elt_vid_out(uint16_t addr, uint8_t val, void *priv)
         case 0x3d1:
             if (cga->crtcreg >= 32)
                 return;
-#ifdef FALLTHROUGH_ANNOTATION
-            [[fallthrough]];
-#endif
+            fallthrough;
 
         default:
             cga->crtcreg &= 31;
@@ -179,7 +177,7 @@ machine_elt_init(const machine_t *model)
 
     pit_devs[0].set_out_func(pit_devs[0].data, 1, pit_refresh_timer_xt);
 
-    if (fdc_type == FDC_INTERNAL)
+    if (fdc_current[0] == FDC_INTERNAL)
         device_add(&fdc_xt_device);
 
     if (gfxcard[0] == VID_INTERNAL) {
@@ -191,7 +189,7 @@ machine_elt_init(const machine_t *model)
     /* Keyboard goes after the video, because on XT compatibles it's dealt
      * with by the same PPI as the config switches and we need them to
      * indicate the correct display type */
-    device_add(&keyboard_xt_device);
+    device_add(&kbc_xt_device);
 
     device_add(&elt_nvr_device);
 

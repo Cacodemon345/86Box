@@ -11,8 +11,6 @@
  *          series of SCSI Host Adapters made by Mylex.
  *          These controllers were designed for various buses.
  *
- *
- *
  * Authors: TheCollector1995, <mariogplayer@gmail.com>
  *          Miran Grca, <mgrca8@gmail.com>
  *          Fred N. van Kempen, <decwiz@yahoo.com>
@@ -83,22 +81,26 @@ x54x_irq(x54x_t *dev, int set)
     if (dev->card_bus & DEVICE_PCI) {
         x54x_log("PCI IRQ: %02X, PCI_INTA\n", dev->pci_slot);
         if (set)
-            pci_set_irq(dev->pci_slot, PCI_INTA);
+            pci_set_irq(dev->pci_slot, PCI_INTA, &dev->irq_state);
         else
-            pci_clear_irq(dev->pci_slot, PCI_INTA);
+            pci_clear_irq(dev->pci_slot, PCI_INTA, &dev->irq_state);
     } else {
         x54x_log("%sing IRQ %i\n", set ? "Rais" : "Lower", irq);
 
-        if (set) {
-            if (dev->interrupt_type)
-                int_type = dev->interrupt_type(dev);
+        if (dev->interrupt_type)
+            int_type = dev->interrupt_type(dev);
 
+        if (set) {
             if (int_type)
-                picintlevel(1 << irq);
+                picintlevel(1 << irq, &dev->irq_state);
             else
                 picint(1 << irq);
-        } else
-            picintc(1 << irq);
+        } else {
+            if (int_type)
+                picintclevel(1 << irq, &dev->irq_state);
+            else
+                picintc(1 << irq);
+        }
     }
 }
 
@@ -283,10 +285,9 @@ x54x_bios_scsi_command(scsi_device_t *dev, uint8_t *cdb, uint8_t *buf, int len, 
 static uint8_t
 x54x_bios_read_capacity(scsi_device_t *sd, uint8_t *buf, int transfer_size)
 {
-    uint8_t *cdb;
+    uint8_t *cdb = (uint8_t *) malloc(12);;
     uint8_t  ret;
 
-    cdb = (uint8_t *) malloc(12);
     memset(cdb, 0, 12);
     cdb[0] = GPCMD_READ_CDROM_CAPACITY;
 
@@ -301,10 +302,9 @@ x54x_bios_read_capacity(scsi_device_t *sd, uint8_t *buf, int transfer_size)
 static uint8_t
 x54x_bios_inquiry(scsi_device_t *sd, uint8_t *buf, int transfer_size)
 {
-    uint8_t *cdb;
+    uint8_t *cdb = (uint8_t *) malloc(12);
     uint8_t  ret;
 
-    cdb = (uint8_t *) malloc(12);
     memset(cdb, 0, 12);
     cdb[0] = GPCMD_INQUIRY;
     cdb[4] = 36;
@@ -320,14 +320,13 @@ x54x_bios_inquiry(scsi_device_t *sd, uint8_t *buf, int transfer_size)
 static uint8_t
 x54x_bios_command_08(scsi_device_t *sd, uint8_t *buffer, int transfer_size)
 {
-    uint8_t *rcbuf;
+    uint8_t *rcbuf = (uint8_t *) malloc(8);
     uint8_t  ret;
     int      i;
 
     memset(buffer, 0x00, 6);
 
-    rcbuf = (uint8_t *) malloc(8);
-    ret   = x54x_bios_read_capacity(sd, rcbuf, transfer_size);
+    ret = x54x_bios_read_capacity(sd, rcbuf, transfer_size);
     if (ret) {
         free(rcbuf);
         return ret;
@@ -349,13 +348,12 @@ x54x_bios_command_08(scsi_device_t *sd, uint8_t *buffer, int transfer_size)
 static int
 x54x_bios_command_15(scsi_device_t *sd, uint8_t *buffer, int transfer_size)
 {
-    uint8_t *inqbuf;
+    uint8_t *inqbuf = (uint8_t *) malloc(36);
     uint8_t *rcbuf;
     uint8_t  ret;
 
     memset(buffer, 0x00, 6);
 
-    inqbuf = (uint8_t *) malloc(36);
     ret    = x54x_bios_inquiry(sd, inqbuf, transfer_size);
     if (ret) {
         free(inqbuf);
@@ -486,9 +484,7 @@ x54x_bios_command(x54x_t *x54x, uint8_t max_id, BIOSCMD *cmd, int8_t islba)
 
             default:
                 x54x_log("BIOS: Unimplemented command: %02X\n", cmd->command);
-#ifdef FALLTHROUGH_ANNOTATION
-                [[fallthrough]];
-#endif
+                fallthrough;
             case 0x05: /* Format Track, invalid since SCSI has no tracks */
             case 0x0a: /* ???? */
             case 0x0b: /* ???? */
@@ -1291,7 +1287,7 @@ x54x_cmd_callback(void *priv)
     }
 
     period = (1000000.0 / dev->ha_bps) * ((double) dev->temp_period);
-    timer_on(&dev->timer, dev->media_period + period + 10.0, 0);
+    timer_on_auto(&dev->timer, dev->media_period + period + 10.0);
 #if 0
     x54x_log("Temporary period: %lf us (%" PRIi64 " periods)\n", dev->timer.period, dev->temp_period);
 #endif
@@ -1340,24 +1336,27 @@ x54x_in(uint16_t port, void *priv)
             if (dev->flags & X54X_INT_GEOM_WRITABLE)
                 ret = dev->Geometry;
             else {
-                switch (dev->Geometry) {
-                    default:
-                    case 0:
-                        ret = 'A';
-                        break;
-                    case 1:
-                        ret = 'D';
-                        break;
-                    case 2:
-                        ret = 'A';
-                        break;
-                    case 3:
-                        ret = 'P';
-                        break;
-                }
-                ret ^= 1;
-                dev->Geometry++;
-                dev->Geometry &= 0x03;
+                if (dev->flags & X54X_HAS_SIGNATURE) {
+                    switch (dev->Geometry) {
+                        default:
+                        case 0:
+                            ret = 'A';
+                            break;
+                        case 1:
+                            ret = 'D';
+                            break;
+                        case 2:
+                            ret = 'A';
+                            break;
+                        case 3:
+                            ret = 'P';
+                            break;
+                    }
+                    ret ^= 1;
+                    dev->Geometry++;
+                    dev->Geometry &= 0x03;
+                } else
+                    ret = 0xff;
                 break;
             }
             break;
@@ -1415,6 +1414,7 @@ static void
 x54x_reset(x54x_t *dev)
 {
     clear_irq(dev);
+    dev->irq_state = 0;
     if (dev->flags & X54X_INT_GEOM_WRITABLE)
         dev->Geometry = 0x90;
     else
@@ -1464,7 +1464,7 @@ x54x_out(uint16_t port, uint8_t val, void *priv)
 {
     ReplyInquireSetupInformation *ReplyISI;
     x54x_t                       *dev = (x54x_t *) priv;
-    MailboxInit_t                *mbi;
+    const MailboxInit_t          *mbi;
     int                           i = 0;
     BIOSCMD                      *cmd;
     uint16_t                      cyl      = 0;
@@ -1771,6 +1771,9 @@ x54x_out(uint16_t port, uint8_t val, void *priv)
             if (dev->flags & X54X_INT_GEOM_WRITABLE)
                 dev->Geometry = val;
             break;
+
+        default:
+            break;
     }
 }
 
@@ -1887,13 +1890,11 @@ x54x_mem_disable(x54x_t *dev)
 void *
 x54x_init(const device_t *info)
 {
-    x54x_t *dev;
+    x54x_t *dev = calloc(1, sizeof(x54x_t));
 
     /* Allocate control block and set up basic stuff. */
-    dev = malloc(sizeof(x54x_t));
     if (dev == NULL)
         return dev;
-    memset(dev, 0x00, sizeof(x54x_t));
     dev->type = info->local;
 
     dev->card_bus       = info->flags;

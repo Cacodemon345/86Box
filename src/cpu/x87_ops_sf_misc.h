@@ -2,8 +2,10 @@ static int
 sf_FXCH_sti(uint32_t fetchdat)
 {
     const floatx80 floatx80_default_nan = packFloatx80(0, floatx80_default_nan_exp, floatx80_default_nan_fraction);
-    floatx80 st0_reg, sti_reg;
-    int st0_tag, sti_tag;
+    floatx80       st0_reg;
+    floatx80       sti_reg;
+    int            st0_tag;
+    int            sti_tag;
 
     FP_ENTER();
     FPU_check_pending_exceptions();
@@ -48,7 +50,7 @@ sf_FCHS(uint32_t fetchdat)
     else {
         clear_C1();
         st0_reg = FPU_read_regi(0);
-        result = floatx80_chs(st0_reg);
+        result  = floatx80_chs(st0_reg);
         FPU_save_regi(result, 0);
     }
     CLOCK_CYCLES_FPU((fpu_type >= FPU_487SX) ? (x87_timings.fchs) : (x87_timings.fchs * cpu_multi));
@@ -70,7 +72,7 @@ sf_FABS(uint32_t fetchdat)
     else {
         clear_C1();
         st0_reg = FPU_read_regi(0);
-        result = floatx80_abs(st0_reg);
+        result  = floatx80_abs(st0_reg);
         FPU_save_regi(result, 0);
     }
     CLOCK_CYCLES_FPU((fpu_type >= FPU_487SX) ? (x87_timings.fabs) : (x87_timings.fabs * cpu_multi));
@@ -79,7 +81,7 @@ sf_FABS(uint32_t fetchdat)
 }
 
 static int
-sf_FDECSTP(uint32_t fetchdat)
+sf_FDECSTP(UNUSED(uint32_t fetchdat))
 {
     FP_ENTER();
     FPU_check_pending_exceptions();
@@ -92,7 +94,7 @@ sf_FDECSTP(uint32_t fetchdat)
 }
 
 static int
-sf_FINCSTP(uint32_t fetchdat)
+sf_FINCSTP(UNUSED(uint32_t fetchdat))
 {
     FP_ENTER();
     FPU_check_pending_exceptions();
@@ -127,6 +129,7 @@ sf_FFREEP_sti(uint32_t fetchdat)
     FPU_settagi(X87_TAG_EMPTY, fetchdat & 7);
     if (cpu_state.abrt)
         return 1;
+
     FPU_pop();
     CLOCK_CYCLES_FPU((fpu_type >= FPU_487SX) ? (x87_timings.ffree) : (x87_timings.ffree * cpu_multi));
     CONCURRENCY_CYCLES((fpu_type >= FPU_487SX) ? (x87_concurrency.ffree) : (x87_concurrency.ffree * cpu_multi));

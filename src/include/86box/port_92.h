@@ -9,13 +9,10 @@
  *          Header for the implementation of Port 92 used by PS/2
  *          machines and 386+ clones.
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *
  *          Copyright 2019 Miran Grca.
  */
-
 #ifndef EMU_PORT_92_H
 #define EMU_PORT_92_H
 
@@ -37,6 +34,7 @@ extern void port_92_add(void *priv);
 extern void port_92_remove(void *priv);
 
 extern const device_t port_92_device;
+extern const device_t port_92_key_device;
 extern const device_t port_92_inv_device;
 extern const device_t port_92_word_device;
 extern const device_t port_92_pci_device;

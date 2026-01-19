@@ -8,17 +8,17 @@
  *
  *          Implementation of the SMC FDC37C669 Super I/O Chip.
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *
- *          Copyright 2016-2018 Miran Grca.
+ *          Copyright 2016-2024 Miran Grca.
  */
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#define HAVE_STDARG_H
 #include <86box/86box.h>
 #include <86box/io.h>
 #include <86box/timer.h>
@@ -31,49 +31,119 @@
 #include <86box/fdd.h>
 #include <86box/fdc.h>
 #include <86box/sio.h>
+#include "cpu.h"
 
 typedef struct fdc37c669_t {
     uint8_t   id;
     uint8_t   tries;
-    uint8_t   regs[42];
+    uint8_t   has_ide;
+    uint8_t   dma_map[4];
+    uint8_t   irq_map[16];
+    uint8_t   regs[256];
     int       locked;
     int       rw_locked;
     int       cur_reg;
     fdc_t    *fdc;
+    lpt_t    *lpt;
     serial_t *uart[2];
 } fdc37c669_t;
 
 static int next_id = 0;
 
-static uint16_t
-make_port(fdc37c669_t *dev, uint8_t reg)
+#ifdef ENABLE_FDC37C669_LOG
+int fdc37c669_do_log = ENABLE_FDC37C669_LOG;
+
+static void
+fdc37c669_log(const char *fmt, ...)
 {
-    uint16_t p    = 0;
-    uint16_t mask = 0;
+    va_list ap;
 
-    switch (reg) {
-        case 0x20:
-        case 0x21:
-        case 0x22:
-            mask = 0xfc;
-            break;
-        case 0x23:
-            mask = 0xff;
-            break;
-        case 0x24:
-        case 0x25:
-            mask = 0xfe;
-            break;
+    if (fdc37c669_do_log) {
+        va_start(ap, fmt);
+        pclog_ex(fmt, ap);
+        va_end(ap);
+    }
+}
+#else
+#    define fdc37c669_log(fmt, ...)
+#endif
 
-        default:
-            break;
+static void
+fdc37c669_fdc_handler(fdc37c669_t *dev)
+{
+    fdc_remove(dev->fdc);
+
+    if (dev->regs[0x20] & 0xc0)
+        fdc_set_base(dev->fdc, ((uint16_t) dev->regs[0x20]) << 2);
+}
+
+static void
+fdc37c669_uart_handler(fdc37c669_t *dev, uint8_t uart)
+{
+    uint8_t uart_reg   = 0x24 + uart;
+    uint8_t pwrdn_mask = 0x08 << (uart << 2);
+    uint8_t uart_shift = ((uart ^ 1) << 2);
+
+    serial_remove(dev->uart[uart]);
+
+    if ((dev->regs[0x02] & pwrdn_mask) && (dev->regs[uart_reg] & 0xc0))
+        serial_setup(dev->uart[0], ((uint16_t) dev->regs[0x24]) << 2,
+                     (dev->regs[0x28] >> uart_shift) & 0x0f);
+}
+
+static double
+fdc37c669_uart_get_clock_src(fdc37c669_t *dev, uint8_t uart)
+{
+    double clock_srcs[4] = { 24000000.0 / 13.0, 24000000.0 / 12.0, 24000000.0 / 3.0, 24000000.0 / 3.0 };
+    double ret;
+    uint8_t clock_src_0 = !!(dev->regs[0x04] & (0x10 << uart));
+    uint8_t clock_src_1 = !!(dev->regs[0x0c] & (0x40 << uart));
+    uint8_t clock_src = clock_src_0 | (clock_src_1 << 1);
+
+    ret = clock_srcs[clock_src];
+
+    return ret;
+}
+
+static void
+fdc37c669_lpt_handler(fdc37c669_t *dev)
+{
+    uint8_t mask = ~(dev->regs[0x04] & 0x01);
+
+    lpt_port_remove(dev->lpt);
+
+    if (dev->regs[0x01] & 0x08) {
+        lpt_set_ext(dev->lpt, 0);
+
+        lpt_set_epp(dev->lpt, 0);
+        lpt_set_ecp(dev->lpt, 0);
+    } else {
+        lpt_set_ext(dev->lpt, 1);
+
+        lpt_set_epp(dev->lpt, dev->regs[0x04] & 0x01);
+        lpt_set_ecp(dev->lpt, dev->regs[0x04] & 0x02);
     }
 
-    p = ((uint16_t) (dev->regs[reg] & mask)) << 2;
-    if (reg == 0x22)
-        p |= 6;
+    lpt_set_fifo_threshold(dev->lpt, dev->regs[0x0a] & 0x0f);
 
-    return p;
+    if ((dev->regs[0x01] & 0x04) && (dev->regs[0x23] >= 0x40))
+        lpt_port_setup(dev->lpt, ((uint16_t) (dev->regs[0x23] & mask)) << 2);
+}
+
+static void
+ide_handler(fdc37c669_t *dev)
+{
+    if (dev->has_ide > 0) {
+        int ide_id = dev->has_ide - 1;
+
+        ide_handlers(ide_id, 0);
+
+        ide_set_base_addr(ide_id, 0, ((uint16_t) (dev->regs[0x21] & 0xfc)) << 2);
+        ide_set_base_addr(ide_id, 1, (((uint16_t) (dev->regs[0x22] & 0xfc)) << 2) | 0x0006);
+
+        if ((dev->regs[0x00] & 0x03) == 0x02)
+            ide_handlers(ide_id, 1);
+    }
 }
 
 static void
@@ -81,149 +151,174 @@ fdc37c669_write(uint16_t port, uint8_t val, void *priv)
 {
     fdc37c669_t *dev    = (fdc37c669_t *) priv;
     uint8_t      index  = (port & 1) ? 0 : 1;
-    uint8_t      valxor = 0;
-    uint8_t      max    = 42;
+    uint8_t      valxor = val ^ dev->regs[dev->cur_reg];
+
+    fdc37c669_log("[%04X:%08X] [W] %04X = %02X (%i, %i)\n", CS, cpu_state.pc, port, val,
+                  dev->tries, dev->locked);
 
     if (index) {
         if ((val == 0x55) && !dev->locked) {
-            if (dev->tries) {
+            dev->tries = (dev->tries + 1) & 1;
+
+            if (!dev->tries)
                 dev->locked = 1;
-                dev->tries  = 0;
-            } else
-                dev->tries++;
         } else {
             if (dev->locked) {
-                if (val < max)
-                    dev->cur_reg = val;
                 if (val == 0xaa)
                     dev->locked = 0;
-            } else {
-                if (dev->tries)
-                    dev->tries = 0;
-            }
+                else
+                    dev->cur_reg = val;
+            } else
+                dev->tries = 0;
         }
-        return;
-    } else {
-        if (dev->locked) {
-            if ((dev->cur_reg < 0x18) && (dev->rw_locked))
-                return;
-            if ((dev->cur_reg >= 0x26) && (dev->cur_reg <= 0x27))
-                return;
-            if (dev->cur_reg == 0x29)
-                return;
-            valxor                  = val ^ dev->regs[dev->cur_reg];
-            dev->regs[dev->cur_reg] = val;
-        } else
-            return;
-    }
-
-    switch (dev->cur_reg) {
-        case 0:
-            if (!dev->id && (valxor & 8)) {
-                fdc_remove(dev->fdc);
-                if ((dev->regs[0] & 8) && (dev->regs[0x20] & 0xc0))
-                    fdc_set_base(dev->fdc, make_port(dev, 0x20));
-            }
+    } else if (!dev->rw_locked || (dev->cur_reg > 0x0f))  switch (dev->cur_reg) {
+        case 0x00:
+            dev->regs[dev->cur_reg] = (dev->regs[dev->cur_reg] & 0x74) | (val & 0x8b);
+            if (!dev->id && (valxor & 0x08))
+                fdc_set_power_down(dev->fdc, !(val & 0x08));
+            if (!dev->id && (valxor & 0x03))
+                ide_handler(dev);
             break;
-        case 1:
-            if (valxor & 4) {
-                if (dev->id) {
-                    lpt2_remove();
-                    if ((dev->regs[1] & 4) && (dev->regs[0x23] >= 0x40))
-                        lpt2_init(make_port(dev, 0x23));
-                } else {
-                    lpt1_remove();
-                    if ((dev->regs[1] & 4) && (dev->regs[0x23] >= 0x40))
-                        lpt1_init(make_port(dev, 0x23));
+        case 0x01:
+            dev->regs[dev->cur_reg] = (dev->regs[dev->cur_reg] & 0x73) | (val & 0x8c);
+            if (valxor & 0x0c)
+                fdc37c669_lpt_handler(dev);
+            if (valxor & 0x80)
+                dev->rw_locked = !(val & 0x80);
+            break;
+        case 0x02:
+            dev->regs[dev->cur_reg] = (dev->regs[dev->cur_reg] & 0x77) | (val & 0x88);
+            if (valxor & 0x08)
+                fdc37c669_uart_handler(dev, 0);
+            if (valxor & 0x80)
+                fdc37c669_uart_handler(dev, 1);
+            break;
+        case 0x03:
+            dev->regs[dev->cur_reg] = (dev->regs[dev->cur_reg] & 0x08) | (val & 0xf7);
+            if ((valxor & 0x60) && (dev->fdc != NULL)) {
+                fdc_clear_flags(dev->fdc, FDC_FLAG_PS2 | FDC_FLAG_PS2_MCA);
+                switch (val & 0x0c) {
+                    case 0x00:
+                        fdc_set_flags(dev->fdc, FDC_FLAG_PS2);
+                        break;
+                    case 0x20:
+                        fdc_set_flags(dev->fdc, FDC_FLAG_PS2_MCA);
+                        break;
                 }
             }
-            if (valxor & 7)
-                dev->rw_locked = (val & 8) ? 0 : 1;
+            if (!dev->id && (valxor & 0x02))
+                fdc_update_enh_mode(dev->fdc, !!(val & 0x02));
             break;
-        case 2:
-            if (valxor & 8) {
-                serial_remove(dev->uart[0]);
-                if ((dev->regs[2] & 8) && (dev->regs[0x24] >= 0x40))
-                    serial_setup(dev->uart[0], make_port(dev, 0x24), (dev->regs[0x28] & 0xf0) >> 4);
-            }
-            if (valxor & 0x80) {
-                serial_remove(dev->uart[1]);
-                if ((dev->regs[2] & 0x80) && (dev->regs[0x25] >= 0x40))
-                    serial_setup(dev->uart[1], make_port(dev, 0x25), dev->regs[0x28] & 0x0f);
-            }
+        case 0x04:
+            dev->regs[dev->cur_reg] = val;
+            if (valxor & 0x03)
+                fdc37c669_lpt_handler(dev);
+            if (valxor & 0x10)
+                serial_set_clock_src(dev->uart[0], fdc37c669_uart_get_clock_src(dev, 0));
+            if (valxor & 0x20)
+                serial_set_clock_src(dev->uart[1], fdc37c669_uart_get_clock_src(dev, 1));
             break;
-        case 3:
-            if (!dev->id && (valxor & 2))
-                fdc_update_enh_mode(dev->fdc, (val & 2) ? 1 : 0);
-            break;
-        case 5:
+        case 0x05:
+            dev->regs[dev->cur_reg] = (dev->regs[dev->cur_reg] & 0x83) | (val & 0x7c);
             if (!dev->id && (valxor & 0x18))
                 fdc_update_densel_force(dev->fdc, (val & 0x18) >> 3);
             if (!dev->id && (valxor & 0x20))
                 fdc_set_swap(dev->fdc, (val & 0x20) >> 5);
             break;
-        case 0xB:
-            if (!dev->id && (valxor & 3))
-                fdc_update_rwc(dev->fdc, 0, val & 3);
-            if (!dev->id && (valxor & 0xC))
-                fdc_update_rwc(dev->fdc, 1, (val & 0xC) >> 2);
+        case 0x06:
+            dev->regs[dev->cur_reg] = val;
+            break;
+        case 0x07:
+            dev->regs[dev->cur_reg] = (dev->regs[dev->cur_reg] & 0x06) | (val & 0xf9);
+            break;
+        case 0x08:
+            dev->regs[dev->cur_reg] = (dev->regs[dev->cur_reg] & 0x0f) | (val & 0xf0);
+            break;
+        case 0x09:
+            dev->regs[dev->cur_reg] = (dev->regs[dev->cur_reg] & 0x38) | (val & 0xc7);
+            break;
+        case 0x0a:
+            dev->regs[dev->cur_reg] = (dev->regs[dev->cur_reg] & 0xf0) | (val & 0x0f);
+            if (valxor & 0x0f)
+                fdc37c669_lpt_handler(dev);
+            break;
+        case 0x0b:
+            dev->regs[dev->cur_reg] = val;
+            if (!dev->id && (valxor & 0x03))
+                fdc_update_rwc(dev->fdc, 0, val & 0x03);
+            if (!dev->id && (valxor & 0x0c))
+                fdc_update_rwc(dev->fdc, 1, (val & 0x0c) >> 2);
+            break;
+        case 0x0c:
+            dev->regs[dev->cur_reg] = val;
+            if (valxor & 0x40)
+                serial_set_clock_src(dev->uart[0], fdc37c669_uart_get_clock_src(dev, 0));
+            if (valxor & 0x80)
+                serial_set_clock_src(dev->uart[1], fdc37c669_uart_get_clock_src(dev, 1));
+            break;
+        case 0x0f:
+        case 0x12 ... 0x1f:
+            dev->regs[dev->cur_reg] = val;
+            break;
+        case 0x10:
+            dev->regs[dev->cur_reg] = (dev->regs[dev->cur_reg] & 0x07) | (val & 0xf8);
+            break;
+        case 0x11:
+            dev->regs[dev->cur_reg] = (dev->regs[dev->cur_reg] & 0xfc) | (val & 0x03);
             break;
         case 0x20:
-            if (!dev->id && (valxor & 0xfc)) {
-                fdc_remove(dev->fdc);
-                if ((dev->regs[0] & 8) && (dev->regs[0x20] & 0xc0))
-                    fdc_set_base(dev->fdc, make_port(dev, 0x20));
-            }
+            dev->regs[dev->cur_reg] = val & 0xfc;
+            if (!dev->id && (valxor & 0xfc))
+                fdc37c669_fdc_handler(dev);
+            break;
+        case 0x21:
+            dev->regs[dev->cur_reg] = val & 0xfc;
+            if (!dev->id && (valxor & 0xfc))
+                ide_handler(dev);
+            break;
+        case 0x22:
+            dev->regs[dev->cur_reg] = (dev->regs[dev->cur_reg] & 0x03) | (val & 0xfc);
+            if (!dev->id && (valxor & 0xfc))
+                ide_handler(dev);
             break;
         case 0x23:
-            if (valxor) {
-                if (dev->id) {
-                    lpt2_remove();
-                    if ((dev->regs[1] & 4) && (dev->regs[0x23] >= 0x40))
-                        lpt2_init(make_port(dev, 0x23));
-                } else {
-                    lpt1_remove();
-                    if ((dev->regs[1] & 4) && (dev->regs[0x23] >= 0x40))
-                        lpt1_init(make_port(dev, 0x23));
-                }
-            }
+            dev->regs[dev->cur_reg] = val;
+            if (valxor)
+                fdc37c669_lpt_handler(dev);
             break;
         case 0x24:
-            if (valxor & 0xfe) {
-                serial_remove(dev->uart[0]);
-                if ((dev->regs[2] & 8) && (dev->regs[0x24] >= 0x40))
-                    serial_setup(dev->uart[0], make_port(dev, 0x24), (dev->regs[0x28] & 0xf0) >> 4);
-            }
+            dev->regs[dev->cur_reg] = val & 0xfe;
+            if (valxor & 0xfe)
+                fdc37c669_uart_handler(dev, 0);
             break;
         case 0x25:
-            if (valxor & 0xfe) {
-                serial_remove(dev->uart[1]);
-                if ((dev->regs[2] & 0x80) && (dev->regs[0x25] >= 0x40))
-                    serial_setup(dev->uart[1], make_port(dev, 0x25), dev->regs[0x28] & 0x0f);
-            }
+            dev->regs[dev->cur_reg] = val & 0xfe;
+            if (valxor & 0xfe)
+                fdc37c669_uart_handler(dev, 1);
+            break;
+        case 0x26:
+            dev->regs[dev->cur_reg] = val;
+            if (valxor & 0xf0)
+                fdc_set_dma_ch(dev->fdc, val >> 4);
+            if (valxor & 0x0f)
+                lpt_port_dma(dev->lpt, val & 0x0f);
             break;
         case 0x27:
-            if (valxor & 0xf) {
-                if (dev->id)
-                    lpt2_irq(val & 0xf);
-                else
-                    lpt1_irq(val & 0xf);
-            }
+            dev->regs[dev->cur_reg] = val;
+            if (valxor & 0xf0)
+                fdc_set_irq(dev->fdc, val >> 4);
+            if (valxor & 0x0f)
+                lpt_port_irq(dev->lpt, val & 0x0f);
             break;
         case 0x28:
-            if (valxor & 0xf) {
-                serial_remove(dev->uart[1]);
-                if ((dev->regs[2] & 0x80) && (dev->regs[0x25] >= 0x40))
-                    serial_setup(dev->uart[1], make_port(dev, 0x25), dev->regs[0x28] & 0x0f);
-            }
-            if (valxor & 0xf0) {
-                serial_remove(dev->uart[0]);
-                if ((dev->regs[2] & 8) && (dev->regs[0x24] >= 0x40))
-                    serial_setup(dev->uart[0], make_port(dev, 0x24), (dev->regs[0x28] & 0xf0) >> 4);
-            }
+            dev->regs[dev->cur_reg] = val;
+            if (valxor & 0xf0)
+                fdc37c669_uart_handler(dev, 0);
+            if (valxor & 0x0f)
+                fdc37c669_uart_handler(dev, 1);
             break;
-
-        default:
+        case 0x29:
+            dev->regs[dev->cur_reg] = val & 0x0f;
             break;
     }
 }
@@ -231,30 +326,30 @@ fdc37c669_write(uint16_t port, uint8_t val, void *priv)
 static uint8_t
 fdc37c669_read(uint16_t port, void *priv)
 {
-    fdc37c669_t *dev   = (fdc37c669_t *) priv;
-    uint8_t      index = (port & 1) ? 0 : 1;
-    uint8_t      ret   = 0xff;
+    const fdc37c669_t *dev   = (fdc37c669_t *) priv;
+    uint8_t            index = (port & 1) ? 0 : 1;
+    uint8_t            ret   = 0xff;
 
     if (dev->locked) {
         if (index)
             ret = dev->cur_reg;
-        else if ((dev->cur_reg >= 0x18) || !dev->rw_locked)
+        else if (!dev->rw_locked || (dev->cur_reg > 0x0f))
             ret = dev->regs[dev->cur_reg];
     }
+
+    fdc37c669_log("[%04X:%08X] [R] %04X = %02X (%i, %i)\n", CS, cpu_state.pc, port, ret,
+                  dev->tries, dev->locked);
 
     return ret;
 }
 
 static void
-fdc37c669_reset(fdc37c669_t *dev)
+fdc37c669_reset(void *priv)
 {
-    serial_remove(dev->uart[0]);
-    serial_setup(dev->uart[0], COM1_ADDR, COM1_IRQ);
+    fdc37c669_t *dev = (fdc37c669_t *) priv;
 
-    serial_remove(dev->uart[1]);
-    serial_setup(dev->uart[1], COM2_ADDR, COM2_IRQ);
+    memset(dev->regs, 0x00, 42);
 
-    memset(dev->regs, 0, 42);
     dev->regs[0x00] = 0x28;
     dev->regs[0x01] = 0x9c;
     dev->regs[0x02] = 0x88;
@@ -262,32 +357,27 @@ fdc37c669_reset(fdc37c669_t *dev)
     dev->regs[0x06] = 0xff;
     dev->regs[0x0d] = 0x03;
     dev->regs[0x0e] = 0x02;
-    dev->regs[0x1e] = 0x80; /* Gameport controller. */
-    dev->regs[0x20] = (FDC_PRIMARY_ADDR >> 2) & 0xfc;
-    dev->regs[0x21] = (0x1f0 >> 2) & 0xfc;
-    dev->regs[0x22] = ((0x3f6 >> 2) & 0xfc) | 1;
-    if (dev->id == 1) {
-        dev->regs[0x23] = (LPT2_ADDR >> 2);
+    dev->regs[0x1e] = 0x3c;    /* Gameport controller. */
+    dev->regs[0x20] = 0x3c;
+    dev->regs[0x21] = 0x3c;
+    dev->regs[0x22] = 0x3d;
 
-        lpt2_remove();
-        lpt2_init(LPT2_ADDR);
-
-        dev->regs[0x24] = (COM3_ADDR >> 2) & 0xfe;
-        dev->regs[0x25] = (COM4_ADDR >> 2) & 0xfe;
-    } else {
+    if (!dev->id) {
         fdc_reset(dev->fdc);
 
-        lpt1_remove();
-        lpt1_init(LPT1_ADDR);
+        fdc37c669_fdc_handler(dev);
+        fdc_clear_flags(dev->fdc, FDC_FLAG_PS2 | FDC_FLAG_PS2_MCA);
 
-        dev->regs[0x23] = (LPT1_ADDR >> 2);
-
-        dev->regs[0x24] = (COM1_ADDR >> 2) & 0xfe;
-        dev->regs[0x25] = (COM2_ADDR >> 2) & 0xfe;
+        ide_handler(dev);
     }
-    dev->regs[0x26] = (2 << 4) | 3;
-    dev->regs[0x27] = (6 << 4) | (dev->id ? 5 : 7);
-    dev->regs[0x28] = (4 << 4) | 3;
+
+    fdc37c669_uart_handler(dev, 0);
+    serial_set_clock_src(dev->uart[0], fdc37c669_uart_get_clock_src(dev, 0));
+
+    fdc37c669_uart_handler(dev, 1);
+    serial_set_clock_src(dev->uart[1], fdc37c669_uart_get_clock_src(dev, 1));
+
+    fdc37c669_lpt_handler(dev);
 
     dev->locked    = 0;
     dev->rw_locked = 0;
@@ -306,19 +396,38 @@ fdc37c669_close(void *priv)
 static void *
 fdc37c669_init(const device_t *info)
 {
-    fdc37c669_t *dev = (fdc37c669_t *) malloc(sizeof(fdc37c669_t));
-    memset(dev, 0, sizeof(fdc37c669_t));
+    fdc37c669_t *dev = (fdc37c669_t *) calloc(1, sizeof(fdc37c669_t));
 
     dev->id = next_id;
 
-    if (next_id != 1)
-        dev->fdc = device_add(&fdc_at_smc_device);
+    if (next_id != 1) {
+        dev->fdc     = device_add(&fdc_at_smc_device);
+        dev->has_ide = (info->local >> 8) & 0xff;
+    }
 
     dev->uart[0] = device_add_inst(&ns16550_device, (next_id << 1) + 1);
     dev->uart[1] = device_add_inst(&ns16550_device, (next_id << 1) + 2);
 
-    io_sethandler(info->local ? FDC_SECONDARY_ADDR : (next_id ? FDC_SECONDARY_ADDR : FDC_PRIMARY_ADDR), 0x0002,
-                  fdc37c669_read, NULL, NULL, fdc37c669_write, NULL, NULL, dev);
+    dev->lpt     = device_add_inst(&lpt_port_device, next_id + 1);
+    lpt_set_cnfgb_readout(dev->lpt, 0x00);
+
+    io_sethandler((info->local & FDC37C6XX_370) ? FDC_SECONDARY_ADDR : (next_id ? FDC_SECONDARY_ADDR : FDC_PRIMARY_ADDR),
+                  0x0002, fdc37c669_read, NULL, NULL, fdc37c669_write, NULL, NULL, dev);
+
+    dev->dma_map[0] = 4;
+    for (int i = 1; i < 4; i++)
+        dev->dma_map[i] = i;
+
+    memset(dev->irq_map, 0xff, 16);
+    dev->irq_map[0]  = 0xff;
+    for (int i = 1; i < 7; i++)
+         dev->irq_map[i] = i;
+    dev->irq_map[1]  = 5;
+    dev->irq_map[5]  = 7;
+    dev->irq_map[7]  = 0xff;    /* Reserved. */
+    dev->irq_map[8]  = 10;
+    dev->irq_map[9]  = 9;       /* This is used by the Acrosser PJ-A511M for IRQ 9. */
+    dev->irq_map[11] = 11;      /* This is used by the Acrosser PJ-A511M for IRQ 11. */
 
     fdc37c669_reset(dev);
 
@@ -334,22 +443,8 @@ const device_t fdc37c669_device = {
     .local         = 0,
     .init          = fdc37c669_init,
     .close         = fdc37c669_close,
-    .reset         = NULL,
-    { .available = NULL },
-    .speed_changed = NULL,
-    .force_redraw  = NULL,
-    .config        = NULL
-};
-
-const device_t fdc37c669_370_device = {
-    .name          = "SMC FDC37C669 Super I/O (Port 370h)",
-    .internal_name = "fdc37c669_370",
-    .flags         = 0,
-    .local         = 1,
-    .init          = fdc37c669_init,
-    .close         = fdc37c669_close,
-    .reset         = NULL,
-    { .available = NULL },
+    .reset         = fdc37c669_reset,
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL

@@ -51,7 +51,7 @@
         return 0;                                                       \
     }                                                                   \
                                                                         \
-    static int opJ##condition##_l(uint32_t fetchdat)                    \
+    static int opJ##condition##_l(UNUSED(uint32_t fetchdat))            \
     {                                                                   \
         uint32_t offset = getlong();                                    \
         if (cpu_state.abrt)                                             \
@@ -86,9 +86,10 @@ opJ(L)
 opJ(NL)
 opJ(LE)
 opJ(NLE)
-// clang-format on
+    // clang-format on
 
-    static int opLOOPNE_w(uint32_t fetchdat)
+static int
+opLOOPNE_w(uint32_t fetchdat)
 {
     int8_t offset = (int8_t) getbytef();
     CX--;
@@ -255,7 +256,7 @@ opJMP_r16(uint32_t fetchdat)
     return 0;
 }
 static int
-opJMP_r32(uint32_t fetchdat)
+opJMP_r32(UNUSED(uint32_t fetchdat))
 {
     int32_t offset = (int32_t) getlong();
     if (cpu_state.abrt)
@@ -271,32 +272,36 @@ opJMP_r32(uint32_t fetchdat)
 static int
 opJMP_far_a16(uint32_t fetchdat)
 {
-    uint16_t addr, seg;
+    uint16_t addr;
+    uint16_t seg;
     uint32_t old_pc;
+
     addr = getwordf();
     seg  = getword();
     if (cpu_state.abrt)
         return 1;
     old_pc       = cpu_state.pc;
     cpu_state.pc = addr;
-    loadcsjmp(seg, old_pc);
+    op_loadcsjmp(seg, old_pc);
     CPU_BLOCK_END();
     PREFETCH_RUN(11, 5, -1, 0, 0, 0, 0, 0);
     PREFETCH_FLUSH();
     return 0;
 }
 static int
-opJMP_far_a32(uint32_t fetchdat)
+opJMP_far_a32(UNUSED(uint32_t fetchdat))
 {
     uint16_t seg;
-    uint32_t addr, old_pc;
+    uint32_t addr;
+    uint32_t old_pc;
+
     addr = getlong();
     seg  = getword();
     if (cpu_state.abrt)
         return 1;
     old_pc       = cpu_state.pc;
     cpu_state.pc = addr;
-    loadcsjmp(seg, old_pc);
+    op_loadcsjmp(seg, old_pc);
     CPU_BLOCK_END();
     PREFETCH_RUN(11, 7, -1, 0, 0, 0, 0, 0);
     PREFETCH_FLUSH();
@@ -307,6 +312,7 @@ static int
 opCALL_r16(uint32_t fetchdat)
 {
     int16_t addr = (int16_t) getwordf();
+
     PUSH_W(cpu_state.pc);
     cpu_state.pc += addr;
     cpu_state.pc &= 0xffff;
@@ -317,9 +323,10 @@ opCALL_r16(uint32_t fetchdat)
     return 0;
 }
 static int
-opCALL_r32(uint32_t fetchdat)
+opCALL_r32(UNUSED(uint32_t fetchdat))
 {
     int32_t addr = getlong();
+
     if (cpu_state.abrt)
         return 1;
     PUSH_L(cpu_state.pc);
@@ -332,7 +339,7 @@ opCALL_r32(uint32_t fetchdat)
 }
 
 static int
-opRET_w(uint32_t fetchdat)
+opRET_w(UNUSED(uint32_t fetchdat))
 {
     uint16_t ret;
 
@@ -348,7 +355,7 @@ opRET_w(uint32_t fetchdat)
     return 0;
 }
 static int
-opRET_l(uint32_t fetchdat)
+opRET_l(UNUSED(uint32_t fetchdat))
 {
     uint32_t ret;
 

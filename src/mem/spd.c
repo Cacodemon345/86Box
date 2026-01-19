@@ -8,8 +8,6 @@
  *
  *          Emulation of SPD (Serial Presence Detect) devices.
  *
- *
- *
  * Authors: RichardG, <richardg867@gmail.com>
  *
  *          Copyright 2020 RichardG.
@@ -136,7 +134,7 @@ spd_populate(uint16_t *rows, uint8_t slot_count, uint16_t total_size, uint16_t m
         /* Look for a module to split. */
         split = 0;
         for (row = 0; row < slot_count; row++) {
-            if ((rows[row] < (min_module_size << 1)) || (rows[row] != (1 << log2i(rows[row]))))
+            if ((rows[row] <= (min_module_size << 1)) || (rows[row] != (1 << log2i(rows[row]))))
                 continue; /* no module here, module is too small to be split, or asymmetric module */
 
             /* Find next empty row. */
@@ -221,8 +219,7 @@ spd_register(uint8_t ram_type, uint8_t slot_mask, uint16_t max_module_size)
         if (!(slot_mask & (1 << slot)))
             continue; /* slot disabled */
 
-        spd_modules[slot] = (spd_t *) malloc(sizeof(spd_t));
-        memset(spd_modules[slot], 0, sizeof(spd_t));
+        spd_modules[slot] = (spd_t *) calloc(1, sizeof(spd_t));
         spd_modules[slot]->slot = slot;
         spd_modules[slot]->size = rows[row];
 
@@ -349,8 +346,11 @@ spd_write_drbs(uint8_t *regs, uint8_t reg_min, uint8_t reg_max, uint8_t drb_unit
     uint8_t  dimm;
     uint8_t  drb;
     uint8_t  apollo = 0;
+    uint8_t  two_step = !!(drb_unit & 0x80);
     uint16_t size;
     uint16_t rows[SPD_MAX_SLOTS];
+
+    drb_unit &= 0x7f;
 
     /* Special case for VIA Apollo Pro family, which jumps from 5F to 56. */
     if (reg_max < reg_min) {
@@ -384,7 +384,10 @@ spd_write_drbs(uint8_t *regs, uint8_t reg_min, uint8_t reg_max, uint8_t drb_unit
         }
 
         /* Determine the DRB register to write. */
-        drb = reg_min + row;
+        if (two_step)
+            drb = reg_min + (row << 1);
+        else
+            drb = reg_min + row;
         if (apollo && ((drb & 0xf) < 0xa))
             drb = apollo + (drb & 0xf);
 
@@ -589,7 +592,7 @@ static const device_t spd_device = {
     .init          = spd_init,
     .close         = spd_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL

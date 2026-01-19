@@ -2,6 +2,7 @@
 #include <86box/86box.h>
 #include "cpu.h"
 #include <86box/mem.h>
+#include <86box/plat_unused.h>
 
 #include "codegen.h"
 #include "codegen_allocator.h"
@@ -37,7 +38,7 @@ codegen_ir_set_unroll(int count, int start, int first_instruction)
 static void
 duplicate_uop(ir_data_t *ir, uop_t *uop, int offset)
 {
-    uop_t *new_uop = uop_alloc(ir, uop->type);
+    uop_t *new_uop = uop_alloc_unroll(ir, uop->type);
 
     if (!ir_reg_is_invalid(uop->src_reg_a))
         new_uop->src_reg_a = codegen_reg_read(uop->src_reg_a.reg);
@@ -52,6 +53,9 @@ duplicate_uop(ir_data_t *ir, uop_t *uop, int offset)
     new_uop->imm_data = uop->imm_data;
     new_uop->p        = uop->p;
     new_uop->pc       = uop->pc;
+#if defined __ARM_EABI__ || defined _ARM_ || defined _M_ARM || defined __aarch64__ || defined _M_ARM64
+    new_uop->is_a16   = uop->is_a16;
+#endif
 
     if (uop->jump_dest_uop != -1) {
         new_uop->jump_dest_uop = uop->jump_dest_uop + offset;
@@ -189,6 +193,8 @@ codegen_ir_compile(ir_data_t *ir, codeblock_t *block)
 
     codegen_backend_epilogue(block);
     block_write_data = NULL;
-    //        if (has_ea)
-    //                fatal("IR compilation complete\n");
+#if 0
+    if (has_ea)
+        fatal("IR compilation complete\n");
+#endif
 }

@@ -8,8 +8,6 @@
  *
  *          Implementation of the IMS 8848/8849 chipset.
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *          Tiseno100,
  *
@@ -122,6 +120,9 @@
 typedef struct ims8848_t {
     uint8_t idx;
     uint8_t access_data;
+    uint8_t pci_slot;
+    uint8_t pad;
+
     uint8_t regs[256];
     uint8_t pci_conf[256];
 
@@ -378,8 +379,7 @@ ims8848_close(void *priv)
 static void *
 ims8848_init(UNUSED(const device_t *info))
 {
-    ims8848_t *dev = (ims8848_t *) malloc(sizeof(ims8848_t));
-    memset(dev, 0, sizeof(ims8848_t));
+    ims8848_t *dev = (ims8848_t *) calloc(1, sizeof(ims8848_t));
 
     device_add(&port_92_device);
 
@@ -392,7 +392,7 @@ ims8848_init(UNUSED(const device_t *info))
                 PCI Device 0: IMS 8849 Dummy for compatibility reasons
     */
     io_sethandler(0x0022, 0x0003, ims8848_read, NULL, NULL, ims8848_write, NULL, NULL, dev);
-    pci_add_card(PCI_ADD_NORTHBRIDGE, ims8849_pci_read, ims8849_pci_write, dev);
+    pci_add_card(PCI_ADD_NORTHBRIDGE, ims8849_pci_read, ims8849_pci_write, dev, &dev->pci_slot);
 
     dev->smram = smram_add();
     smram_set_separate_smram(1);
@@ -413,7 +413,7 @@ const device_t ims8848_device = {
     .init          = ims8848_init,
     .close         = ims8848_close,
     .reset         = ims8848_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL

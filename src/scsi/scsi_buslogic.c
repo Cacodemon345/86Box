@@ -11,8 +11,6 @@
  *            1 - BT-545S ISA;
  *            2 - BT-958D PCI
  *
- *
- *
  * Authors: TheCollector1995, <mariogplayer@gmail.com>
  *          Miran Grca, <mgrca8@gmail.com>
  *          Fred N. van Kempen, <decwiz@yahoo.com>
@@ -255,6 +253,8 @@ buslogic_log(const char *fmt, ...)
 #else
 #    define buslogic_log(fmt, ...)
 #endif
+
+static x54x_t reset_state = { 0 };
 
 static char *
 BuslogicGetNVRFileName(buslogic_data_t *bl)
@@ -675,7 +675,7 @@ buslogic_cmds(void *priv)
 
     const HALocalRAM *HALR = &bl->LocalRAM;
 
-    FILE                                 *f;
+    FILE                                 *fp;
     uint16_t                              TargetsPresentMask = 0;
     uint32_t                              Offset;
     int                                   i = 0;
@@ -872,6 +872,7 @@ buslogic_cmds(void *priv)
                 dev->Status |= STAT_INVCMD;
                 break;
             }
+            fallthrough;
         case 0x92:
             if ((bl->chip == CHIP_BUSLOGIC_ISA_542B_1991_12_14) || (bl->chip == CHIP_BUSLOGIC_ISA_545S_1992_10_05) || (bl->chip == CHIP_BUSLOGIC_ISA_542BH_1993_05_23) || (bl->chip == CHIP_BUSLOGIC_MCA_640A_1993_05_23)) {
                 dev->DataReplyLeft = 0;
@@ -890,11 +891,11 @@ buslogic_cmds(void *priv)
                     BuslogicAutoSCSIRamSetDefaults(dev, 3);
                     break;
                 case 1:
-                    f = nvr_fopen(BuslogicGetNVRFileName(bl), "wb");
-                    if (f) {
-                        fwrite(&(bl->LocalRAM.structured.autoSCSIData), 1, 64, f);
-                        fclose(f);
-                        f = NULL;
+                    fp = nvr_fopen(BuslogicGetNVRFileName(bl), "wb");
+                    if (fp) {
+                        fwrite(&(bl->LocalRAM.structured.autoSCSIData), 1, 64, fp);
+                        fclose(fp);
+                        fp = NULL;
                     }
                     break;
                 default:
@@ -1083,7 +1084,7 @@ buslogic_interrupt_type(void *priv)
 }
 
 static void
-buslogic_reset(void *priv)
+buslogic_ven_reset(void *priv)
 {
     x54x_t          *dev = (x54x_t *) priv;
     buslogic_data_t *bl  = (buslogic_data_t *) dev->ven_data;
@@ -1232,9 +1233,7 @@ BuslogicPCIWrite(UNUSED(int func), int addr, uint8_t val, void *priv)
         case 0x10:
             val &= 0xe0;
             val |= 1;
-#ifdef FALLTHROUGH_ANNOTATION
-            [[fallthrough]];
-#endif
+            fallthrough;
 
         case 0x11:
         case 0x12:
@@ -1258,9 +1257,7 @@ BuslogicPCIWrite(UNUSED(int func), int addr, uint8_t val, void *priv)
 
         case 0x14:
             val &= 0xe0;
-#ifdef FALLTHROUGH_ANNOTATION
-            [[fallthrough]];
-#endif
+            fallthrough;
 
         case 0x15:
         case 0x16:
@@ -1528,20 +1525,55 @@ BuslogicDeviceReset(void *priv)
     BuslogicInitializeAutoSCSIRam(dev);
 }
 
+static void
+buslogic_reset(void *priv)
+{
+    x54x_t          *dev = (x54x_t *) priv;
+    buslogic_data_t *bl  = (buslogic_data_t *) dev->ven_data;
+
+    x54x_io_remove(dev, dev->Base, 4);
+
+    if (bl->chip == CHIP_BUSLOGIC_PCI_958D_1995_12_30) {
+        x54x_mem_init(dev, 0xfffd0000);
+        x54x_mem_disable(dev);
+    }
+
+    timer_disable(&dev->timer);
+    timer_disable(&dev->ResetCB);
+
+    reset_state.mmio_mapping     = dev->mmio_mapping;
+
+    reset_state.bios.mapping     = dev->bios.mapping;
+    reset_state.uppersck.mapping = dev->uppersck.mapping;
+
+    reset_state.timer            = dev->timer;
+    reset_state.ResetCB          = dev->ResetCB;
+
+    reset_state.pci_slot         = dev->pci_slot;
+
+    memcpy(dev, &reset_state, sizeof(x54x_t));
+
+    dev->timer.period            = 10.0;
+    timer_set_delay_u64(&dev->timer, (uint64_t) (dev->timer.period * ((double) TIMER_USEC)));
+
+    if ((dev->Base != 0) && !(dev->card_bus & DEVICE_MCA) && !(dev->card_bus & DEVICE_PCI))
+        x54x_io_set(dev, dev->Base, 4);
+}
+
 static void *
 buslogic_init(const device_t *info)
 {
     x54x_t          *dev;
-    char            *bios_rom_name;
+    const char      *bios_rom_name;
     uint16_t         bios_rom_size = 0;
     uint16_t         bios_rom_mask = 0;
     uint8_t          has_autoscsi_rom;
-    char            *autoscsi_rom_name = NULL;
+    const char      *autoscsi_rom_name = NULL;
     uint16_t         autoscsi_rom_size = 0;
     uint8_t          has_scam_rom;
-    char            *scam_rom_name = NULL;
+    const char      *scam_rom_name = NULL;
     uint16_t         scam_rom_size = 0;
-    FILE            *f;
+    FILE            *fp;
     buslogic_data_t *bl;
     uint32_t         bios_rom_addr;
 
@@ -1549,8 +1581,7 @@ buslogic_init(const device_t *info)
     dev      = x54x_init(info);
     dev->bus = scsi_get_bus();
 
-    dev->ven_data = malloc(sizeof(buslogic_data_t));
-    memset(dev->ven_data, 0x00, sizeof(buslogic_data_t));
+    dev->ven_data = calloc(1, sizeof(buslogic_data_t));
 
     bl = (buslogic_data_t *) dev->ven_data;
 
@@ -1590,7 +1621,7 @@ buslogic_init(const device_t *info)
     dev->interrupt_type     = buslogic_interrupt_type;
     dev->is_aggressive_mode = buslogic_is_aggressive_mode;
     dev->get_ven_data       = buslogic_setup_data;
-    dev->ven_reset          = buslogic_reset;
+    dev->ven_reset          = buslogic_ven_reset;
 
     strcpy(dev->vendor, "BusLogic");
 
@@ -1709,9 +1740,10 @@ buslogic_init(const device_t *info)
             break;
     }
 
-    if ((dev->Base != 0) && !(dev->card_bus & DEVICE_MCA) && !(dev->card_bus & DEVICE_PCI)) {
+    scsi_bus_set_speed(dev->bus, dev->ha_bps);
+
+    if ((dev->Base != 0) && !(dev->card_bus & DEVICE_MCA) && !(dev->card_bus & DEVICE_PCI))
         x54x_io_set(dev, dev->Base, 4);
-    }
 
     memset(bl->AutoSCSIROM, 0xff, 32768);
 
@@ -1725,20 +1757,20 @@ buslogic_init(const device_t *info)
         rom_init(&bl->bios, bios_rom_name, bios_rom_addr, bios_rom_size, bios_rom_mask, 0, MEM_MAPPING_EXTERNAL);
 
         if (has_autoscsi_rom) {
-            f = rom_fopen(autoscsi_rom_name, "rb");
-            if (f) {
-                (void) !fread(bl->AutoSCSIROM, 1, autoscsi_rom_size, f);
-                fclose(f);
-                f = NULL;
+            fp = rom_fopen(autoscsi_rom_name, "rb");
+            if (fp) {
+                (void) !fread(bl->AutoSCSIROM, 1, autoscsi_rom_size, fp);
+                fclose(fp);
+                fp = NULL;
             }
         }
 
         if (has_scam_rom) {
-            f = rom_fopen(scam_rom_name, "rb");
-            if (f) {
-                (void) !fread(bl->SCAMData, 1, scam_rom_size, f);
-                fclose(f);
-                f = NULL;
+            fp = rom_fopen(scam_rom_name, "rb");
+            if (fp) {
+                (void) !fread(bl->SCAMData, 1, scam_rom_size, fp);
+                fclose(fp);
+                fp = NULL;
             }
         }
     } else {
@@ -1748,7 +1780,7 @@ buslogic_init(const device_t *info)
     }
 
     if (bl->chip == CHIP_BUSLOGIC_PCI_958D_1995_12_30) {
-        dev->pci_slot = pci_add_card(PCI_ADD_NORMAL, BuslogicPCIRead, BuslogicPCIWrite, dev);
+        pci_add_card(PCI_ADD_NORMAL, BuslogicPCIRead, BuslogicPCIWrite, dev, &dev->pci_slot);
 
         buslogic_pci_bar[0].addr_regs[0] = 1;
         buslogic_pci_bar[1].addr_regs[0] = 0;
@@ -1777,20 +1809,22 @@ buslogic_init(const device_t *info)
         BuslogicInitializeAutoSCSIRam(dev);
     }
 
+    memcpy(&reset_state, dev, sizeof(x54x_t));
+
     return dev;
 }
 
 // clang-format off
 static const device_config_t BT_ISA_Config[] = {
     {
-        .name = "base",
-        .description = "Address",
-        .type = CONFIG_HEX16,
-        .default_string = "",
-        .default_int = 0x334,
-        .file_filter = "",
-        .spinner = { 0 },
-        .selection = {
+        .name           = "base",
+        .description    = "Address",
+        .type           = CONFIG_HEX16,
+        .default_string = NULL,
+        .default_int    = 0x334,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
             { .description = "0x330", .value = 0x330 },
             { .description = "0x334", .value = 0x334 },
             { .description = "0x230", .value = 0x230 },
@@ -1799,16 +1833,17 @@ static const device_config_t BT_ISA_Config[] = {
             { .description = "0x134", .value = 0x134 },
             { .description = "",      .value =     0 }
         },
+        .bios           = { { 0 } }
     },
     {
-        .name = "irq",
-        .description = "IRQ",
-        .type = CONFIG_SELECTION,
-        .default_string = "",
-        .default_int = 11,
-        .file_filter = "",
-        .spinner = { 0 },
-        .selection = {
+        .name           = "irq",
+        .description    = "IRQ",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 11,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
             { .description = "IRQ 9",  .value =  9 },
             { .description = "IRQ 10", .value = 10 },
             { .description = "IRQ 11", .value = 11 },
@@ -1817,48 +1852,55 @@ static const device_config_t BT_ISA_Config[] = {
             { .description = "IRQ 15", .value = 15 },
             { .description = "", 0                 }
         },
+        .bios           = { { 0 } }
     },
     {
-        .name = "dma",
-        .description = "DMA channel",
-        .type = CONFIG_SELECTION,
-        .default_string = "",
-        .default_int = 6,
-        .file_filter = "",
-        .spinner = { 0 },
-        .selection = {
+        .name           = "dma",
+        .description    = "DMA",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 6,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
             { .description = "DMA 5", .value = 5 },
             { .description = "DMA 6", .value = 6 },
             { .description = "DMA 7", .value = 7 },
             { .description = "",      .value = 0 }
         },
+        .bios           = { { 0 } }
     },
     {
-        .name = "bios_addr",
-        .description = "BIOS Address",
-        .type = CONFIG_HEX20,
-        .default_string = "",
-        .default_int = 0,
-        .file_filter = "",
-        .spinner = { 0 },
-        .selection = {
+        .name           = "bios_addr",
+        .description    = "BIOS address",
+        .type           = CONFIG_HEX20,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
             { .description = "Disabled", .value =       0 },
             { .description = "C800H",    .value = 0xc8000 },
             { .description = "D000H",    .value = 0xd0000 },
             { .description = "D800H",    .value = 0xd8000 },
             { .description = "",         .value =       0 }
         },
+        .bios           = { { 0 } }
     },
     { .name = "", .description = "", .type = CONFIG_END }
 };
 
 static const device_config_t BT958D_Config[] = {
     {
-        .name = "bios",
-        .description = "Enable BIOS",
-        .type = CONFIG_BINARY,
-        .default_string = "",
-        .default_int = 0
+        .name           = "bios",
+        .description    = "Enable BIOS",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
     },
     { .name = "", .description = "", .type = CONFIG_END }
 };
@@ -1867,12 +1909,12 @@ static const device_config_t BT958D_Config[] = {
 const device_t buslogic_542b_device = {
     .name          = "BusLogic BT-542B ISA",
     .internal_name = "bt542b",
-    .flags         = DEVICE_ISA | DEVICE_AT,
+    .flags         = DEVICE_ISA16,
     .local         = CHIP_BUSLOGIC_ISA_542B_1991_12_14,
     .init          = buslogic_init,
     .close         = x54x_close,
-    .reset         = NULL,
-    { .available = NULL },
+    .reset         = buslogic_reset,
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = BT_ISA_Config
@@ -1881,12 +1923,12 @@ const device_t buslogic_542b_device = {
 const device_t buslogic_545s_device = {
     .name          = "BusLogic BT-545S ISA",
     .internal_name = "bt545s",
-    .flags         = DEVICE_ISA | DEVICE_AT,
+    .flags         = DEVICE_ISA16,
     .local         = CHIP_BUSLOGIC_ISA_545S_1992_10_05,
     .init          = buslogic_init,
     .close         = x54x_close,
-    .reset         = NULL,
-    { .available = NULL },
+    .reset         = buslogic_reset,
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = BT_ISA_Config
@@ -1895,12 +1937,12 @@ const device_t buslogic_545s_device = {
 const device_t buslogic_542bh_device = {
     .name          = "BusLogic BT-542BH ISA",
     .internal_name = "bt542bh",
-    .flags         = DEVICE_ISA | DEVICE_AT,
+    .flags         = DEVICE_ISA16,
     .local         = CHIP_BUSLOGIC_ISA_542BH_1993_05_23,
     .init          = buslogic_init,
     .close         = x54x_close,
-    .reset         = NULL,
-    { .available = NULL },
+    .reset         = buslogic_reset,
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = BT_ISA_Config
@@ -1909,12 +1951,12 @@ const device_t buslogic_542bh_device = {
 const device_t buslogic_545c_device = {
     .name          = "BusLogic BT-545C ISA",
     .internal_name = "bt545c",
-    .flags         = DEVICE_ISA | DEVICE_AT,
+    .flags         = DEVICE_ISA16,
     .local         = CHIP_BUSLOGIC_ISA_545C_1994_12_01,
     .init          = buslogic_init,
     .close         = x54x_close,
-    .reset         = NULL,
-    { .available = NULL },
+    .reset         = buslogic_reset,
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = BT_ISA_Config
@@ -1927,8 +1969,8 @@ const device_t buslogic_640a_device = {
     .local         = CHIP_BUSLOGIC_MCA_640A_1993_05_23,
     .init          = buslogic_init,
     .close         = x54x_close,
-    .reset         = NULL,
-    { .available = NULL },
+    .reset         = buslogic_reset,
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -1941,8 +1983,8 @@ const device_t buslogic_445s_device = {
     .local         = CHIP_BUSLOGIC_VLB_445S_1993_11_16,
     .init          = buslogic_init,
     .close         = x54x_close,
-    .reset         = NULL,
-    { .available = NULL },
+    .reset         = buslogic_reset,
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = BT_ISA_Config
@@ -1955,8 +1997,8 @@ const device_t buslogic_445c_device = {
     .local         = CHIP_BUSLOGIC_VLB_445C_1994_12_01,
     .init          = buslogic_init,
     .close         = x54x_close,
-    .reset         = NULL,
-    { .available = NULL },
+    .reset         = buslogic_reset,
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = BT_ISA_Config
@@ -1969,8 +2011,8 @@ const device_t buslogic_958d_pci_device = {
     .local         = CHIP_BUSLOGIC_PCI_958D_1995_12_30,
     .init          = buslogic_init,
     .close         = x54x_close,
-    .reset         = NULL,
-    { .available = NULL },
+    .reset         = buslogic_reset,
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = BT958D_Config

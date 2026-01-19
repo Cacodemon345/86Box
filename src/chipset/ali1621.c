@@ -8,8 +8,6 @@
  *
  *          Implementation of the ALi M1621/2 CPU-to-PCI Bridge.
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *
  *          Copyright 2021 Miran Grca.
@@ -36,6 +34,11 @@
 #include <86box/chipset.h>
 
 typedef struct ali1621_t {
+    uint8_t pci_slot;
+    uint8_t pad;
+    uint8_t pad0;
+    uint8_t pad1;
+
     uint8_t pci_conf[256];
 
     smram_t *smram[2];
@@ -109,9 +112,7 @@ ali1621_smram_recalc(uint8_t val, ali1621_t *dev)
             switch (val & 0x30) {
                 case 0x10: /* Open. */
                     access_normal = ACCESS_SMRAM_RX;
-#ifdef FALLTHROUGH_ANNOTATION
-                    [[fallthrough]];
-#endif
+                    fallthrough;
                 case 0x30: /* Protect. */
                     access_smm |= ACCESS_SMRAM_R;
                     break;
@@ -124,9 +125,7 @@ ali1621_smram_recalc(uint8_t val, ali1621_t *dev)
             switch (val & 0x30) {
                 case 0x10: /* Open. */
                     access_normal |= ACCESS_SMRAM_W;
-#ifdef FALLTHROUGH_ANNOTATION
-                    [[fallthrough]];
-#endif
+                    fallthrough;
                 case 0x30: /* Protect. */
                     access_smm |= ACCESS_SMRAM_W;
                     break;
@@ -668,10 +667,9 @@ ali1621_close(void *priv)
 static void *
 ali1621_init(UNUSED(const device_t *info))
 {
-    ali1621_t *dev = (ali1621_t *) malloc(sizeof(ali1621_t));
-    memset(dev, 0, sizeof(ali1621_t));
+    ali1621_t *dev = (ali1621_t *) calloc(1, sizeof(ali1621_t));
 
-    pci_add_card(PCI_ADD_NORTHBRIDGE, ali1621_read, ali1621_write, dev);
+    pci_add_card(PCI_ADD_NORTHBRIDGE, ali1621_read, ali1621_write, dev, &dev->pci_slot);
 
     dev->smram[0] = smram_add();
     dev->smram[1] = smram_add();
@@ -691,7 +689,7 @@ const device_t ali1621_device = {
     .init          = ali1621_init,
     .close         = ali1621_close,
     .reset         = ali1621_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL

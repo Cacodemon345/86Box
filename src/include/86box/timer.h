@@ -5,25 +5,23 @@
 #include "cpu.h"
 #endif
 
+#ifndef int128_t
+#define int128_t __int128
+#endif
+
+#ifndef uint128_t
+#define uint128_t unsigned __int128
+#endif
+
+extern uint64_t tsc;
+
 /* Maximum period, currently 1 second. */
 #define MAX_USEC64    1000000ULL
 #define MAX_USEC      1000000.0
 
+#define TIMER_PROCESS 4
 #define TIMER_SPLIT   2
 #define TIMER_ENABLED 1
-
-#pragma pack(push, 1)
-typedef struct ts_struct_t
-{
-    uint32_t frac;
-    uint32_t integer;
-} ts_struct_t;
-#pragma pack(pop)
-
-typedef union ts_t {
-    uint64_t    ts64;
-    ts_struct_t ts32;
-} ts_t;
 
 /*Timers are based on the CPU Time Stamp Counter. Timer timestamps are in a
   32:32 fixed point format, with the integer part compared against the TSC. The
@@ -38,14 +36,10 @@ typedef union ts_t {
   to repeat, the callback must call timer_advance_u64(). This is a change from
   the old timer API.*/
 typedef struct pc_timer_t {
-#ifdef USE_PCEM_TIMER
-    uint32_t ts_integer;
+    uint64_t ts_integer;
     uint32_t ts_frac;
-#else
-    ts_t ts;
-#endif
     int    flags;  /* The flags are defined above. */
-    int    pad;
+    int    in_callback;
     double period; /* This is used for large period timers to count
                       the microseconds and split the period. */
 
@@ -62,7 +56,7 @@ extern "C" {
 
 /*Timestamp of nearest enabled timer. CPU emulation must call timer_process()
   when TSC matches or exceeds this.*/
-extern uint32_t timer_target;
+extern uint64_t timer_target;
 
 /*Enable timer, without updating timestamp*/
 extern void timer_enable(pc_timer_t *timer);
@@ -84,18 +78,31 @@ extern void timer_add(pc_timer_t *timer, void (*callback)(void *priv), void *pri
 extern uint64_t TIMER_USEC;
 
 /*True if timer a expires before timer b*/
-#define TIMER_LESS_THAN(a, b) ((int64_t) ((a)->ts.ts64 - (b)->ts.ts64) <= 0)
+#define TIMER_LESS_THAN(a, b) ((int64_t) ((a)->ts_integer - (b)->ts_integer) <= 0)
 /*True if timer a expires before 32 bit integer timestamp b*/
-#define TIMER_LESS_THAN_VAL(a, b) ((int32_t) ((a)->ts.ts32.integer - (b)) <= 0)
+#define TIMER_LESS_THAN_VAL(a, b) ((int64_t) ((a)->ts_integer - (b)) <= 0)
 /*True if 32 bit integer timestamp a expires before 32 bit integer timestamp b*/
-#define TIMER_VAL_LESS_THAN_VAL(a, b) ((int32_t) ((a) - (b)) <= 0)
+#define TIMER_VAL_LESS_THAN_VAL(a, b) ((int64_t) ((a) - (b)) <= 0)
+
+#ifndef printf
+#include <stdio.h>
+#endif
 
 /*Advance timer by delay, specified in 32:32 format. This should be used to
   resume a recurring timer in a callback routine*/
 static __inline void
 timer_advance_u64(pc_timer_t *timer, uint64_t delay)
 {
-    timer->ts.ts64 += delay;
+    uint64_t int_delay = delay >> 32;
+    uint32_t frac_delay = delay & 0xffffffff;
+
+    if (int_delay & 0x0000000080000000ULL)
+        int_delay |= 0xffffffff00000000ULL;
+
+    if ((frac_delay + timer->ts_frac) < frac_delay)
+            timer->ts_integer++;
+    timer->ts_frac += frac_delay;
+    timer->ts_integer += int_delay;
 
     timer_enable(timer);
 }
@@ -105,9 +112,14 @@ timer_advance_u64(pc_timer_t *timer, uint64_t delay)
 static __inline void
 timer_set_delay_u64(pc_timer_t *timer, uint64_t delay)
 {
-    timer->ts.ts64         = 0ULL;
-    timer->ts.ts32.integer = tsc;
-    timer->ts.ts64 += delay;
+    uint64_t int_delay = delay >> 32;
+    uint32_t frac_delay = delay & 0xffffffff;
+
+    if (int_delay & 0x0000000080000000ULL)
+        int_delay |= 0xffffffff00000000ULL;
+
+    timer->ts_frac = frac_delay;
+    timer->ts_integer = int_delay + (uint64_t)tsc;
 
     timer_enable(timer);
 }
@@ -119,22 +131,27 @@ timer_is_enabled(pc_timer_t *timer)
     return !!(timer->flags & TIMER_ENABLED);
 }
 
+/*True if timer currently on*/
+static __inline int
+timer_is_on(pc_timer_t *timer)
+{
+    return ((timer->flags & TIMER_SPLIT) && (timer->flags & TIMER_ENABLED));
+}
+
 /*Return integer timestamp of timer*/
-static __inline uint32_t
+static __inline uint64_t
 timer_get_ts_int(pc_timer_t *timer)
 {
-    return timer->ts.ts32.integer;
+    return timer->ts_integer;
 }
 
 /*Return remaining time before timer expires, in us. If the timer has already
   expired then return 0*/
-static __inline uint32_t
+static __inline uint64_t
 timer_get_remaining_us(pc_timer_t *timer)
 {
-    int64_t remaining;
-
     if (timer->flags & TIMER_ENABLED) {
-        remaining = (int64_t) (timer->ts.ts64 - (uint64_t) (tsc << 32));
+        int128_t remaining = (((uint128_t)timer->ts_integer << 32) | timer->ts_frac) - ((uint128_t)tsc << 32);
 
         if (remaining < 0)
             return 0;
@@ -146,13 +163,11 @@ timer_get_remaining_us(pc_timer_t *timer)
 
 /*Return remaining time before timer expires, in 32:32 timestamp format. If the
   timer has already expired then return 0*/
-static __inline uint64_t
+static __inline uint128_t
 timer_get_remaining_u64(pc_timer_t *timer)
 {
-    int64_t remaining;
-
     if (timer->flags & TIMER_ENABLED) {
-        remaining = (int64_t) (timer->ts.ts64 - (uint64_t) (tsc << 32));
+        int128_t remaining = (((uint128_t)timer->ts_integer << 32) | timer->ts_frac) - ((uint128_t)tsc << 32);
 
         if (remaining < 0)
             return 0;
@@ -178,44 +193,10 @@ timer_set_p(pc_timer_t *timer, void *priv)
 
 /* The API for big timer periods starts here. */
 extern void timer_stop(pc_timer_t *timer);
-extern void timer_advance_ex(pc_timer_t *timer, int start);
-extern void timer_on(pc_timer_t *timer, double period, int start);
 extern void timer_on_auto(pc_timer_t *timer, double period);
 
-extern void timer_remove_head(void);
-
-extern pc_timer_t *timer_head;
-extern int         timer_inited;
-
-static __inline void
-timer_process_inline(void)
-{
-    pc_timer_t *timer;
-
-    if (!timer_head)
-        return;
-
-    while (1) {
-        timer = timer_head;
-
-        if (!TIMER_LESS_THAN_VAL(timer, (uint32_t) tsc))
-            break;
-
-        timer_head = timer->next;
-        if (timer_head)
-            timer_head->prev = NULL;
-
-        timer->next = timer->prev = NULL;
-        timer->flags &= ~TIMER_ENABLED;
-
-        if (timer->flags & TIMER_SPLIT)
-            timer_advance_ex(timer, 0);   /* We're splitting a > 1 s period into multiple <= 1 s periods. */
-        else if (timer->callback != NULL) /* Make sure it's no NULL, so that we can have a NULL callback when no operation is needed. */
-            timer->callback(timer->priv);
-    }
-
-    timer_target = timer_head->ts.ts32.integer;
-}
+/* Change TSC, taking into account the timers. */
+extern void timer_set_new_tsc(uint64_t new_tsc);
 
 #ifdef __cplusplus
 }

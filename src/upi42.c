@@ -8,8 +8,6 @@
  *
  *          Intel UPI-42/MCS-48 microcontroller emulation.
  *
- *
- *
  * Authors: RichardG, <richardg867@gmail.com>
  *
  *          Copyright 2022 RichardG.
@@ -875,7 +873,7 @@ upi42_exec(void *priv)
     }
 
     /* Fetch instruction. */
-    uint32_t fetchdat = *((uint32_t *) &upi42->rom[upi42->pc]);
+    uint32_t fetchdat = AS_U32(upi42->rom[upi42->pc]);
 
     /* Decode instruction. */
     uint8_t insn = fetchdat & 0xff;
@@ -916,7 +914,7 @@ timer:
 uint8_t
 upi42_port_read(void *priv, int port)
 {
-    upi42_t *upi42 = (upi42_t *) priv;
+    const upi42_t *upi42 = (upi42_t *) priv;
 
     /* Read base port value. */
     port &= 7;
@@ -1056,13 +1054,13 @@ main(int argc, char **argv)
 
     /* Load ROM. */
     uint8_t rom[4096] = { 0 };
-    FILE   *f         = fopen(argv[1], "rb");
-    if (!f) {
+    FILE   *fp        = fopen(argv[1], "rb");
+    if (!fp) {
         upi42_log("Could not read ROM file.\n");
         return 2;
     }
-    size_t rom_size = fread(rom, sizeof(rom[0]), sizeof(rom), f);
-    fclose(f);
+    size_t rom_size = fread(rom, sizeof(rom[0]), sizeof(rom), fp);
+    fclose(fp);
 
     /* Determine chip type from ROM. */
     upi42_log("%d-byte ROM, ", rom_size);

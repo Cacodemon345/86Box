@@ -193,10 +193,7 @@ smbus_ali7101_write(uint16_t addr, uint8_t val, void *priv)
 
                 case 0x4:          /* block R/W */
                     timer_bytes++; /* count the SMBus length byte now */
-
-#ifdef FALLTHROUGH_ANNOTATION
-                    [[fallthrough]];
-#endif
+                    fallthrough;
 
                 default:                   /* unknown */
                     dev->next_stat = 0x20; /* raise DEV_ERR */
@@ -276,7 +273,7 @@ smbus_ali7101_reset(void *priv)
 static void *
 smbus_ali7101_init(const device_t *info)
 {
-    smbus_ali7101_t *dev = (smbus_ali7101_t *) malloc(sizeof(smbus_ali7101_t));
+    smbus_ali7101_t *dev = (smbus_ali7101_t *) calloc(1, sizeof(smbus_ali7101_t));
     memset(dev, 0, sizeof(smbus_ali7101_t));
 
     dev->local = info->local;
@@ -305,12 +302,12 @@ smbus_ali7101_close(void *priv)
 const device_t ali7101_smbus_device = {
     .name          = "ALi M7101-compatible SMBus Host Controller",
     .internal_name = "ali7101_smbus",
-    .flags         = DEVICE_AT,
+    .flags         = DEVICE_ISA16,
     .local         = 0,
     .init          = smbus_ali7101_init,
     .close         = smbus_ali7101_close,
     .reset         = smbus_ali7101_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL

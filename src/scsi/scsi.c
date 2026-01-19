@@ -8,8 +8,6 @@
  *
  *          Handling of the SCSI controllers.
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *          Fred N. van Kempen, <decwiz@yahoo.com>
  *          TheCollector1995, <mariogplayer@gmail.com>
@@ -33,7 +31,7 @@
 #include <86box/scsi.h>
 #include <86box/scsi_device.h>
 #include <86box/cdrom.h>
-#include <86box/zip.h>
+#include <86box/rdisk.h>
 #include <86box/scsi_disk.h>
 #include <86box/scsi_aha154x.h>
 #include <86box/scsi_buslogic.h>
@@ -42,23 +40,10 @@
 #include <86box/scsi_pcscsi.h>
 #include <86box/scsi_spock.h>
 
-int scsi_card_current[SCSI_BUS_MAX] = { 0, 0 };
+int scsi_card_current[SCSI_CARD_MAX] = { 0, 0, 0, 0 };
+double scsi_bus_speed[SCSI_BUS_MAX] = { 0.0, 0.0, 0.0, 0.0 };
 
 static uint8_t next_scsi_bus = 0;
-
-static const device_t scsi_none_device = {
-    .name          = "None",
-    .internal_name = "none",
-    .flags         = 0,
-    .local         = 0,
-    .init          = NULL,
-    .close         = NULL,
-    .reset         = NULL,
-    { .available = NULL },
-    .speed_changed = NULL,
-    .force_redraw  = NULL,
-    .config        = NULL
-};
 
 typedef const struct {
     const device_t *device;
@@ -66,7 +51,15 @@ typedef const struct {
 
 static SCSI_CARD scsi_cards[] = {
   // clang-format off
-    { &scsi_none_device,         },
+    { &device_none,              },
+    /* ISA/Sidecar */
+    { &scsi_ls2000_device,       },
+    /* ISA */
+    { &scsi_lcs6821n_device,     },
+    { &scsi_rt1000b_device,      },
+    { &scsi_t128_device,         },
+    { &scsi_t130b_device,        },
+    /* ISA16 */
     { &aha154xa_device,          },
     { &aha154xb_device,          },
     { &aha154xc_device,          },
@@ -76,16 +69,20 @@ static SCSI_CARD scsi_cards[] = {
     { &buslogic_542bh_device,    },
     { &buslogic_545s_device,     },
     { &buslogic_545c_device,     },
-    { &scsi_ls2000_device,       },
-    { &scsi_lcs6821n_device,     },
-    { &scsi_rt1000b_device,      },
-    { &scsi_rt1000mc_device,     },
-    { &scsi_t128_device,         },
-    { &scsi_t130b_device,        },
+    /* MCA */
     { &aha1640_device,           },
     { &buslogic_640a_device,     },
-    { &ncr53c90_mca_device,      },
     { &spock_device,             },
+    { &tribble_device,           },
+    { &ncr53c90a_mca_device,     },
+    { &scsi_rt1000mc_device,     },
+    { &scsi_t228_device,         },
+    /* VLB */
+    { &buslogic_445s_device,     },
+    { &buslogic_445c_device,     },
+    /* PCI */
+    { &am53c974_pci_device,      },
+    { &am53c974a_pci_device,     },
     { &buslogic_958d_pci_device, },
     { &ncr53c810_pci_device,     },
     { &ncr53c815_pci_device,     },
@@ -94,8 +91,6 @@ static SCSI_CARD scsi_cards[] = {
     { &ncr53c860_pci_device,     },
     { &ncr53c875_pci_device,     },
     { &dc390_pci_device,         },
-    { &buslogic_445s_device,     },
-    { &buslogic_445c_device,     },
     { NULL,                      },
   // clang-format on
 };
@@ -143,7 +138,7 @@ scsi_card_has_config(int card)
     return (device_has_config(scsi_cards[card].device) ? 1 : 0);
 }
 
-char *
+const char *
 scsi_card_get_internal_name(int card)
 {
     return device_get_internal_name(scsi_cards[card].device);
@@ -155,7 +150,7 @@ scsi_card_get_from_internal_name(char *s)
     int c = 0;
 
     while (scsi_cards[c].device != NULL) {
-        if (!strcmp((char *) scsi_cards[c].device->internal_name, s))
+        if (!strcmp(scsi_cards[c].device->internal_name, s))
             return c;
         c++;
     }
@@ -166,21 +161,26 @@ scsi_card_get_from_internal_name(char *s)
 void
 scsi_card_init(void)
 {
-    int max = SCSI_BUS_MAX;
-
-    /* On-board SCSI controllers get the first bus, so if one is present,
-       increase our instance number here. */
-    if (machine_has_flags(machine, MACHINE_SCSI))
-        max--;
+    int max = SCSI_CARD_MAX;
 
     /* Do not initialize any controllers if we have do not have any SCSI
            bus left. */
     if (max > 0) {
         for (int i = 0; i < max; i++) {
-            if (!scsi_cards[scsi_card_current[i]].device)
-                continue;
-
-            device_add_inst(scsi_cards[scsi_card_current[i]].device, i + 1);
+            if ((scsi_card_current[i] > 0) && scsi_cards[scsi_card_current[i]].device)
+                device_add_inst(scsi_cards[scsi_card_current[i]].device, i + 1);
         }
     }
+}
+
+void
+scsi_bus_set_speed(uint8_t bus, double speed)
+{
+    scsi_bus_speed[bus] = speed;
+}
+
+double
+scsi_bus_get_speed(uint8_t bus)
+{
+    return scsi_bus_speed[bus];
 }

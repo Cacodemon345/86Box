@@ -8,15 +8,12 @@
  *
  *          Implementation of the VIA Apollo series of chips.
  *
- *
- *
- * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
- *          Miran Grca, <mgrca8@gmail.com>
- *          Melissa Goad, <mszoopers@protonmail.com>
+ * Authors: Miran Grca, <mgrca8@gmail.com>
+ *          RichardG, <richardg867@gmail.com>
  *          Tiseno100,
  *
  *          Copyright 2020 Miran Grca.
- *          Copyright 2020 Melissa Goad.
+ *          Copyright 2020 RichardG.
  *          Copyright 2020 Tiseno100.
  */
 #include <stdio.h>
@@ -45,9 +42,14 @@
 #define VIA_8601 0x86010500
 
 typedef struct via_apollo_t {
-    uint32_t id;
     uint8_t  drb_unit;
+    uint8_t  pci_slot;
+    uint8_t  pad;
+    uint8_t  pad0;
+
     uint8_t  pci_conf[256];
+
+    uint32_t id;
 
     smram_t   *smram;
     agpgart_t *agpgart;
@@ -346,7 +348,7 @@ via_apollo_host_bridge_write(int func, int addr, uint8_t val, void *priv)
             break;
 
         case 0x58:
-            if ((dev->id >= VIA_585) || (dev->id < VIA_597) || (dev->id == VIA_597) || ((dev->id >= VIA_693A) || (dev->id < VIA_8601)))
+            if ((dev->id >= VIA_585) || (dev->id < VIA_597) || (dev->id == VIA_597) || ((dev->id >= VIA_693A) && (dev->id < VIA_8601)))
                 dev->pci_conf[0x58] = (dev->pci_conf[0x58] & ~0xee) | (val & 0xee);
             else
                 dev->pci_conf[0x58] = val;
@@ -440,7 +442,7 @@ via_apollo_host_bridge_write(int func, int addr, uint8_t val, void *priv)
                         apollo_smram_map(dev, 0, 0x000a0000, 0x00020000, 0);
                         break;
                 }
-            else
+            else if (dev->id == VIA_595)
                 switch (val & 0x03) {
                     case 0x00:
                         apollo_smram_map(dev, 1, 0x000a0000, 0x00020000, 0);
@@ -464,6 +466,12 @@ via_apollo_host_bridge_write(int func, int addr, uint8_t val, void *priv)
                     default:
                         break;
                 }
+            else {
+                smram_enable(dev->smram, 0x000a0000, 0x000a0000, 0x00020000,
+                             (dev->pci_conf[0x6d] & 0x10) && (dev->pci_conf[0x63] & 0x01),
+                             dev->pci_conf[0x63] & 0x01);
+                flushmmucache();
+            }
             break;
         case 0x65:
             if (dev->id == VIA_585)
@@ -493,14 +501,14 @@ via_apollo_host_bridge_write(int func, int addr, uint8_t val, void *priv)
             break;
         case 0x69:
             if ((dev->id != VIA_585) || (dev->id != VIA_595)) {
-                if ((dev->id == VIA_693A) || (dev->id < VIA_8601))
+                if ((dev->id == VIA_693A) && (dev->id < VIA_8601))
                     dev->pci_conf[0x69] = (dev->pci_conf[0x69] & ~0xfe) | (val & 0xfe);
                 else
                     dev->pci_conf[0x69] = val;
             }
             break;
         case 0x6b:
-            if ((dev->id == VIA_693A) || (dev->id < VIA_8601))
+            if ((dev->id == VIA_693A) && (dev->id < VIA_8601))
                 dev->pci_conf[0x6b] = val;
             else if (dev->id == VIA_691)
                 dev->pci_conf[0x6b] = (dev->pci_conf[0x6b] & ~0xcf) | (val & 0xcf);
@@ -512,7 +520,7 @@ via_apollo_host_bridge_write(int func, int addr, uint8_t val, void *priv)
                 dev->pci_conf[0x6b] = (dev->pci_conf[0x6b] & ~0xc1) | (val & 0xc1);
             break;
         case 0x6c:
-            if ((dev->id == VIA_597) || ((dev->id == VIA_693A) || (dev->id < VIA_8601)))
+            if ((dev->id == VIA_597) || ((dev->id == VIA_693A) && (dev->id < VIA_8601)))
                 dev->pci_conf[0x6c] = (dev->pci_conf[0x6c] & ~0x1f) | (val & 0x1f);
             else if (dev->id == VIA_598)
                 dev->pci_conf[0x6c] = (dev->pci_conf[0x6c] & ~0x7f) | (val & 0x7f);
@@ -528,6 +536,13 @@ via_apollo_host_bridge_write(int func, int addr, uint8_t val, void *priv)
                 dev->pci_conf[0x6d] = (dev->pci_conf[0x6d] & ~0x7f) | (val & 0x7f);
             else
                 dev->pci_conf[0x6d] = val;
+            if (dev->id == VIA_585) {
+                smram_disable_all();
+                smram_enable(dev->smram, 0x000a0000, 0x000a0000, 0x00020000,
+                             (dev->pci_conf[0x6d] & 0x10) && (dev->pci_conf[0x63] & 0x01),
+                             dev->pci_conf[0x63] & 0x01);
+                flushmmucache();
+            }
             break;
         case 0x6e:
             if ((dev->id == VIA_595) || (dev->id == VIA_694))
@@ -708,14 +723,13 @@ via_apollo_reset(void *priv)
 static void *
 via_apollo_init(const device_t *info)
 {
-    via_apollo_t *dev = (via_apollo_t *) malloc(sizeof(via_apollo_t));
-    memset(dev, 0, sizeof(via_apollo_t));
+    via_apollo_t *dev = (via_apollo_t *) calloc(1, sizeof(via_apollo_t));
 
     dev->smram = smram_add();
     if (dev->id != VIA_8601)
         apollo_smram_map(dev, 1, 0x000a0000, 0x00020000, 1); /* SMM: Code DRAM, Data DRAM */
 
-    pci_add_card(PCI_ADD_NORTHBRIDGE, via_apollo_read, via_apollo_write, dev);
+    pci_add_card(PCI_ADD_NORTHBRIDGE, via_apollo_read, via_apollo_write, dev, &dev->pci_slot);
 
     dev->id = info->local;
 
@@ -776,7 +790,7 @@ const device_t via_vpx_device = {
     .init          = via_apollo_init,
     .close         = via_apollo_close,
     .reset         = via_apollo_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -790,7 +804,7 @@ const device_t amd640_device = {
     .init          = via_apollo_init,
     .close         = via_apollo_close,
     .reset         = via_apollo_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -804,7 +818,7 @@ const device_t via_vp3_device = {
     .init          = via_apollo_init,
     .close         = via_apollo_close,
     .reset         = via_apollo_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -818,7 +832,7 @@ const device_t via_mvp3_device = {
     .init          = via_apollo_init,
     .close         = via_apollo_close,
     .reset         = via_apollo_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -832,7 +846,7 @@ const device_t via_apro_device = {
     .init          = via_apollo_init,
     .close         = via_apollo_close,
     .reset         = via_apollo_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -846,7 +860,7 @@ const device_t via_apro133_device = {
     .init          = via_apollo_init,
     .close         = via_apollo_close,
     .reset         = via_apollo_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -860,7 +874,7 @@ const device_t via_apro133a_device = {
     .init          = via_apollo_init,
     .close         = via_apollo_close,
     .reset         = via_apollo_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -874,7 +888,7 @@ const device_t via_vt8601_device = {
     .init          = via_apollo_init,
     .close         = via_apollo_close,
     .reset         = via_apollo_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL

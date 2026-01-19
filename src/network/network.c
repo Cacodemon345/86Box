@@ -10,8 +10,6 @@
  *          it should be malloc'ed and then linked to the NETCARD def.
  *          Will be done later.
  *
- *
- *
  * Authors: Fred N. van Kempen, <decwiz@yahoo.com>
  *
  *          Copyright 2017-2019 Fred N. van Kempen.
@@ -54,9 +52,7 @@
 #include <stdlib.h>
 #include <wchar.h>
 #include <time.h>
-#ifndef _WIN32
-#    include <sys/time.h>
-#endif /* _WIN32 */
+#include <sys/time.h>
 #include <stdbool.h>
 #define HAVE_STDARG_H
 #include <86box/86box.h>
@@ -67,11 +63,8 @@
 #include <86box/ui.h>
 #include <86box/timer.h>
 #include <86box/network.h>
-#include <86box/net_3c501.h>
-#include <86box/net_3c503.h>
 #include <86box/net_ne2000.h>
 #include <86box/net_pcnet.h>
-#include <86box/net_plip.h>
 #include <86box/net_wd8003.h>
 
 #ifdef _WIN32
@@ -80,43 +73,53 @@
 #    include <winsock2.h>
 #endif
 
-static const device_t net_none_device = {
-    .name          = "None",
-    .internal_name = "none",
-    .flags         = 0,
-    .local         = NET_TYPE_NONE,
-    .init          = NULL,
-    .close         = NULL,
-    .reset         = NULL,
-    { .available = NULL },
-    .speed_changed = NULL,
-    .force_redraw  = NULL,
-    .config        = NULL
-};
+typedef struct {
+    const device_t *device;
+} NETWORK_CARD;
 
-static const device_t *net_cards[] = {
-    &net_none_device,
-    &threec501_device,
-    &threec503_device,
-    &pcnet_am79c960_device,
-    &pcnet_am79c961_device,
-    &ne1000_device,
-    &ne2000_device,
-    &pcnet_am79c960_eb_device,
-    &rtl8019as_device,
-    &wd8003e_device,
-    &wd8003eb_device,
-    &wd8013ebt_device,
-    &plip_device,
-    &ethernext_mc_device,
-    &wd8003eta_device,
-    &wd8003ea_device,
-    &wd8013epa_device,
-    &pcnet_am79c973_device,
-    &pcnet_am79c970a_device,
-    &rtl8029as_device,
-    &pcnet_am79c960_vlb_device,
-    NULL
+static const NETWORK_CARD net_cards[] = {
+    // clang-format off
+    { &device_none                },
+    { &device_internal            },
+    /* ISA */
+    { &threec501_device           },
+    { &threec503_device           },
+    { &ne1000_compat_device       },
+    { &ne2000_compat_8bit_device  },
+    { &ne1000_device              },
+    { &wd8003e_device             },
+    { &wd8003eb_device            },
+    { &wd8013ebt_device           },
+    /* COM */
+    { &modem_device               },
+    /* LPT */
+    { &plip_device                },
+    /* ISA16 */
+    { &pcnet_am79c960_device      },
+    { &pcnet_am79c961_device      },
+    { &de220p_device              },
+    { &ne2000_compat_device       },
+    { &ne2000_device              },
+    { &pcnet_am79c960_eb_device   },
+    { &rtl8019as_pnp_device       },
+    /* MCA */
+    { &ethernext_mc_device        },
+    { &wd8003eta_device           },
+    { &wd8003ea_device            },
+    { &wd8013epa_device           },
+    /* VLB */
+    { &pcnet_am79c960_vlb_device  },
+    /* PCI */
+    { &pcnet_am79c973_device      },
+    { &pcnet_am79c970a_device     },
+    { &dec_tulip_21140_device     },
+    { &dec_tulip_21040_device     },
+    { &dec_tulip_device           },
+    { &dec_tulip_21140_vpc_device },
+    { &rtl8029as_device           },
+    { &rtl8139c_plus_device       },
+    { NULL                        }
+    // clang-format on
 };
 
 netcard_conf_t net_cards_conf[NET_CARD_MAX];
@@ -128,8 +131,7 @@ int  network_ndev;
 netdev_t network_devs[NET_HOST_INTF_MAX];
 
 /* Local variables. */
-
-#if defined     ENABLE_NETWORK_LOG && !defined(_WIN32)
+#ifdef ENABLE_NETWORK_LOG
 int             network_do_log = ENABLE_NETWORK_LOG;
 static FILE    *network_dump   = NULL;
 static mutex_t *network_dump_mutex;
@@ -155,9 +157,15 @@ network_dump_packet(netpkt_t *pkt)
     struct timeval tv;
     gettimeofday(&tv, NULL);
     struct {
-        uint32_t ts_sec, ts_usec, incl_len, orig_len;
+        uint32_t ts_sec;
+        uint32_t ts_usec;
+        uint32_t incl_len;
+        uint32_t orig_len;
     } pcap_packet_hdr = {
-        tv.tv_sec, tv.tv_usec, pkt->len, pkt->len
+          .ts_sec = tv.tv_sec,
+         .ts_usec = tv.tv_usec,
+        .incl_len = pkt->len,
+        .orig_len = pkt->len
     };
 
     if (network_dump_mutex)
@@ -171,8 +179,9 @@ network_dump_packet(netpkt_t *pkt)
         if ((written = fwrite(pkt->data, 1, pkt->len, network_dump)) < pkt->len) {
             network_log("NETWORK: failed to write dump packet data\n");
             fseek(network_dump, -written - sizeof(pcap_packet_hdr), SEEK_CUR);
+        } else {
+            fflush(network_dump);
         }
-        fflush(network_dump);
     }
 
     if (network_dump_mutex)
@@ -225,28 +234,41 @@ network_init(void)
     
 #ifdef HAS_VDE
     // Try to load the VDE plug library
-    if(net_vde_prepare()==0) {
+    if (!net_vde_prepare())
         network_devmap.has_vde = 1;
-    }
 #endif
 
-#if defined ENABLE_NETWORK_LOG && !defined(_WIN32)
+#ifdef ENABLE_NETWORK_LOG
     /* Start packet dump. */
     network_dump = fopen("network.pcap", "wb");
-
-    struct {
-        uint32_t magic_number;
-        uint16_t version_major, version_minor;
-        int32_t  thiszone;
-        uint32_t sigfigs, snaplen, network;
-    } pcap_hdr = {
-        0xa1b2c3d4,
-        2, 4,
-        0,
-        0, 65535, 1
-    };
-    fwrite(&pcap_hdr, sizeof(pcap_hdr), 1, network_dump);
-    fflush(network_dump);
+    if (network_dump) {
+        struct {
+            uint32_t magic_number;
+            uint16_t version_major;
+            uint16_t version_minor;
+            int32_t  thiszone;
+            uint32_t sigfigs;
+            uint32_t snaplen;
+            uint32_t network;
+        } pcap_hdr = {
+             .magic_number = 0xa1b2c3d4,
+            .version_major = 2,
+            .version_minor = 4,
+                 .thiszone = 0,
+                  .sigfigs = 0,
+                  .snaplen = 65535,
+                  .network = 1
+        };
+        if (fwrite(&pcap_hdr, 1, sizeof(pcap_hdr), network_dump) < sizeof(pcap_hdr)) {
+            network_log("NETWORK: failed to write dump header\n");
+            fclose(network_dump);
+            network_dump = NULL;
+        } else {
+            fflush(network_dump);
+        }
+    } else {
+        network_log("NETWORK: failed to open dump file\n");
+    }
 #endif
 }
 
@@ -303,10 +325,8 @@ network_queue_put_swap(netqueue_t *queue, netpkt_t *src_pkt)
             network_log("Discarded zero length packet.\n");
         } else if (src_pkt->len > NET_MAX_FRAME) {
             network_log("Discarded oversized packet of len=%d.\n", src_pkt->len);
-            network_dump_packet(src_pkt);
         } else {
             network_log("Discarded %d bytes packet because the queue is full.\n", src_pkt->len);
-            network_dump_packet(src_pkt);
         }
 #endif
         return 0;
@@ -415,7 +435,8 @@ network_rx_queue(void *priv)
     bool activity = rx_bytes || tx_bytes;
     bool led_on   = card->led_timer & 0x80000000;
     if ((activity && !led_on) || (card->led_timer & 0x7fffffff) >= 150000) {
-        ui_sb_update_icon(SB_NETWORK | card->card_num, activity);
+        ui_sb_update_icon(SB_NETWORK | card->card_num, !!(rx_bytes));
+        ui_sb_update_icon_write(SB_NETWORK | card->card_num, !!(tx_bytes));
         card->led_timer = 0 | (activity << 31);
     }
 
@@ -433,6 +454,7 @@ netcard_t *
 network_attach(void *card_drv, uint8_t *mac, NETRXCB rx, NETSETLINKSTATE set_link_state)
 {
     netcard_t *card       = calloc(1, sizeof(netcard_t));
+    int net_type          = net_cards_conf[net_card_current].net_type;
     card->queued_pkt.data = calloc(1, NET_MAX_FRAME);
     card->card_drv        = card_drv;
     card->rx              = rx;
@@ -449,7 +471,13 @@ network_attach(void *card_drv, uint8_t *mac, NETRXCB rx, NETSETLINKSTATE set_lin
         network_queue_init(&card->queues[i]);
     }
 
-    switch (net_cards_conf[net_card_current].net_type) {
+    if ((!strcmp(network_card_get_internal_name(net_cards_conf[net_card_current].device_num), "modem") ||
+         !strcmp(network_card_get_internal_name(net_cards_conf[net_card_current].device_num), "plip")) && (net_type >= NET_TYPE_PCAP)) {
+        /* Force SLiRP here. Modem and PLIP only operate on non-Ethernet frames. */
+        net_type = NET_TYPE_SLIRP;
+    }
+
+    switch (net_type) {
         case NET_TYPE_SLIRP:
             card->host_drv      = net_slirp_drv;
             card->host_drv.priv = card->host_drv.init(card, mac, NULL, net_drv_error);
@@ -465,6 +493,17 @@ network_attach(void *card_drv, uint8_t *mac, NETRXCB rx, NETSETLINKSTATE set_lin
             card->host_drv.priv = card->host_drv.init(card, mac, net_cards_conf[net_card_current].host_dev_name, net_drv_error);
             break;
 #endif
+#ifdef HAS_TAP
+        case NET_TYPE_TAP:
+            card->host_drv      = net_tap_drv;
+            card->host_drv.priv = card->host_drv.init(card, mac, net_cards_conf[net_card_current].host_dev_name, net_drv_error);
+            break;
+#endif
+        case NET_TYPE_NLSWITCH:
+        case NET_TYPE_NRSWITCH:
+            card->host_drv      = net_switch_drv;
+            card->host_drv.priv = card->host_drv.init(card, mac, &net_cards_conf[net_card_current], net_drv_error);
+            break;
         default:
             card->host_drv.priv = NULL;
             break;
@@ -477,7 +516,7 @@ network_attach(void *card_drv, uint8_t *mac, NETRXCB rx, NETSETLINKSTATE set_lin
 
         if(net_cards_conf[net_card_current].net_type != NET_TYPE_NONE) {
             // We're here because of a failure
-            swprintf(tempmsg, sizeof_w(tempmsg), L"%ls:<br /><br />%s<br /><br />%ls", plat_get_string(IDS_2167), net_drv_error, plat_get_string(IDS_2168));
+            swprintf(tempmsg, sizeof_w(tempmsg), L"%ls:\n\n%s\n\n%ls", plat_get_string(STRING_NET_ERROR), net_drv_error, plat_get_string(STRING_NET_ERROR_DESC));
             ui_msgbox(MBX_ERROR, tempmsg);
             net_cards_conf[net_card_current].net_type = NET_TYPE_NONE;
         }
@@ -501,7 +540,7 @@ network_attach(void *card_drv, uint8_t *mac, NETRXCB rx, NETSETLINKSTATE set_lin
             free(card->queued_pkt.data);
             free(card);
             // Placeholder - insert the error message
-            fatal("Error initializing the network device: Null driver initialization failed");
+            fatal("Error initializing the network device: Null driver initialization failed\n");
             return NULL;
         }
 
@@ -533,7 +572,7 @@ netcard_close(netcard_t *card)
 void
 network_close(void)
 {
-#if defined ENABLE_NETWORK_LOG && !defined(_WIN32)
+#ifdef ENABLE_NETWORK_LOG
     thread_close_mutex(network_dump_mutex);
     network_dump_mutex = NULL;
 #endif
@@ -553,8 +592,10 @@ void
 network_reset(void)
 {
     ui_sb_update_icon(SB_NETWORK, 0);
+    ui_sb_update_icon_write(SB_NETWORK, 0);
 
-#if defined ENABLE_NETWORK_LOG && !defined(_WIN32)
+    slirp_card_num = 2;
+#ifdef ENABLE_NETWORK_LOG
     network_dump_mutex = thread_create_mutex();
 #endif
 
@@ -564,7 +605,8 @@ network_reset(void)
         }
 
         net_card_current = i;
-        device_add_inst(net_cards[net_cards_conf[i].device_num], i + 1);
+        if (net_cards_conf[i].device_num > NET_INTERNAL)
+            device_add_inst(net_cards[net_cards_conf[i].device_num].device, i + 1);
     }
 }
 
@@ -597,6 +639,7 @@ network_tx_popv(netcard_t *card, netpkt_t *pkt_vec, int vec_size)
     for (int i = 0; i < vec_size; i++) {
         if (!network_queue_get_swap(queue, pkt_vec))
             break;
+        network_dump_packet(pkt_vec);
         pkt_count++;
         pkt_vec++;
     }
@@ -613,6 +656,43 @@ network_rx_put(netcard_t *card, uint8_t *bufp, int len)
     thread_wait_mutex(card->rx_mutex);
     ret = network_queue_put(&card->queues[NET_QUEUE_RX], bufp, len);
     thread_release_mutex(card->rx_mutex);
+
+    return ret;
+}
+
+int
+network_rx_on_tx_popv(netcard_t *card, netpkt_t *pkt_vec, int vec_size)
+{
+    int pkt_count = 0;
+
+    netqueue_t *queue = &card->queues[NET_QUEUE_RX_ON_TX];
+    for (int i = 0; i < vec_size; i++) {
+        if (!network_queue_get_swap(queue, pkt_vec))
+            break;
+        network_dump_packet(pkt_vec);
+        pkt_count++;
+        pkt_vec++;
+    }
+
+    return pkt_count;
+}
+
+int
+network_rx_on_tx_put(netcard_t *card, uint8_t *bufp, int len)
+{
+    int ret = 0;
+
+    ret = network_queue_put(&card->queues[NET_QUEUE_RX_ON_TX], bufp, len);
+
+    return ret;
+}
+
+int
+network_rx_on_tx_put_pkt(netcard_t *card, netpkt_t *pkt)
+{
+    int ret = 0;
+
+    ret = network_queue_put_swap(&card->queues[NET_QUEUE_RX_ON_TX], pkt);
 
     return ret;
 }
@@ -669,7 +749,8 @@ network_dev_available(int id)
 {
     int available = (net_cards_conf[id].device_num > 0);
 
-    if (net_cards_conf[id].net_type == NET_TYPE_PCAP && (network_dev_to_id(net_cards_conf[id].host_dev_name) <= 0))
+    if ((net_cards_conf[id].net_type == NET_TYPE_PCAP) &&
+        (network_dev_to_id(net_cards_conf[id].host_dev_name) <= 0))
         available = 0;
 
     // TODO: Handle VDE device
@@ -693,8 +774,8 @@ network_available(void)
 int
 network_card_available(int card)
 {
-    if (net_cards[card])
-        return (device_available(net_cards[card]));
+    if (net_cards[card].device)
+        return (device_available(net_cards[card].device));
 
     return 1;
 }
@@ -703,24 +784,24 @@ network_card_available(int card)
 const device_t *
 network_card_getdevice(int card)
 {
-    return (net_cards[card]);
+    return (net_cards[card].device);
 }
 
 /* UI */
 int
 network_card_has_config(int card)
 {
-    if (!net_cards[card])
+    if (!net_cards[card].device)
         return 0;
 
-    return (device_has_config(net_cards[card]) ? 1 : 0);
+    return (device_has_config(net_cards[card].device) ? 1 : 0);
 }
 
 /* UI */
-char *
+const char *
 network_card_get_internal_name(int card)
 {
-    return device_get_internal_name(net_cards[card]);
+    return device_get_internal_name(net_cards[card].device);
 }
 
 /* UI */
@@ -729,8 +810,8 @@ network_card_get_from_internal_name(char *s)
 {
     int c = 0;
 
-    while (net_cards[c] != NULL) {
-        if (!strcmp((char *) net_cards[c]->internal_name, s))
+    while (net_cards[c].device != NULL) {
+        if (!strcmp(net_cards[c].device->internal_name, s))
             return c;
         c++;
     }

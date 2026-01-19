@@ -11,8 +11,6 @@
  *              word 0 - base address
  *              word 1 - bits 1-15 = byte count, bit 31 = end of transfer
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *
  *          Copyright 2016-2020 Miran Grca.
@@ -47,6 +45,7 @@
 #include <86box/hdc_ide.h>
 #include <86box/hdc_ide_sff8038i.h>
 #include <86box/usb.h>
+#include <86box/lpt.h>
 #include <86box/machine.h>
 #include <86box/smbus.h>
 #include <86box/chipset.h>
@@ -60,17 +59,13 @@ typedef struct piix_io_trap_t {
 } piix_io_trap_t;
 
 typedef struct _piix_ {
-    uint8_t        cur_readout_reg;
     uint8_t        rev;
     uint8_t        type;
     uint8_t        func_shift;
     uint8_t        max_func;
     uint8_t        pci_slot;
     uint8_t        no_mirq0;
-    uint8_t        pad;
     uint8_t        regs[4][256];
-    uint8_t        readout_regs[256];
-    uint8_t        board_config[2];
     uint16_t       func0_id;
     uint16_t       nvr_io_base;
     uint16_t       acpi_io_base;
@@ -85,7 +80,6 @@ typedef struct _piix_ {
     piix_io_trap_t io_traps[26];
     port_92_t     *port_92;
     pc_timer_t     fast_off_timer;
-    usb_params_t   usb_params;
 } piix_t;
 
 #ifdef ENABLE_PIIX_LOG
@@ -110,13 +104,13 @@ static void
 smsc_ide_irqs(piix_t *dev)
 {
     int irq_line = 3;
-    uint8_t irq_mode[2] = { 0, 0 };
+    uint8_t irq_mode[2] = { IRQ_MODE_LEGACY, IRQ_MODE_LEGACY };
 
     if (dev->regs[1][0x09] & 0x01)
-        irq_mode[0] = (dev->regs[0][0xe1] & 0x01) ? 3 : 1;
+        irq_mode[0] = (dev->regs[0][0xe1] & 0x01) ? IRQ_MODE_PCI_IRQ_LINE : IRQ_MODE_PCI_IRQ_PIN;
 
     if (dev->regs[1][0x09] & 0x04)
-        irq_mode[1] = (dev->regs[0][0xe1] & 0x01) ? 3 : 1;
+        irq_mode[1] = (dev->regs[0][0xe1] & 0x01) ? IRQ_MODE_PCI_IRQ_LINE : IRQ_MODE_PCI_IRQ_PIN;
 
     switch ((dev->regs[0][0xe1] >> 1) & 0x07) {
         case 0x00:
@@ -148,12 +142,10 @@ smsc_ide_irqs(piix_t *dev)
     }
 
     sff_set_irq_line(dev->bm[0], irq_line);
-    sff_set_irq_mode(dev->bm[0], 0, irq_mode[0]);
-    sff_set_irq_mode(dev->bm[0], 1, irq_mode[1]);
+    sff_set_irq_mode(dev->bm[0], irq_mode[0]);
 
     sff_set_irq_line(dev->bm[1], irq_line);
-    sff_set_irq_mode(dev->bm[1], 0, irq_mode[0]);
-    sff_set_irq_mode(dev->bm[1], 1, irq_mode[1]);
+    sff_set_irq_mode(dev->bm[1], irq_mode[1]);
 }
 
 static void
@@ -163,6 +155,7 @@ piix_ide_handlers(piix_t *dev, int bus)
     uint16_t side;
 
     if (bus & 0x01) {
+        piix_log("Disabling primary IDE...\n");
         ide_pri_disable();
 
         if (dev->type == 5) {
@@ -178,11 +171,14 @@ piix_ide_handlers(piix_t *dev, int bus)
             ide_set_side(0, side);
         }
 
-        if ((dev->regs[1][0x04] & 0x01) && (dev->regs[1][0x41] & 0x80))
+        if ((dev->regs[1][0x04] & 0x01) && (dev->regs[1][0x41] & 0x80)) {
+            piix_log("Enabling primary IDE...\n");
             ide_pri_enable();
+        }
     }
 
     if (bus & 0x02) {
+        piix_log("Disabling secondary IDE...\n");
         ide_sec_disable();
 
         if (dev->type == 5) {
@@ -198,8 +194,10 @@ piix_ide_handlers(piix_t *dev, int bus)
             ide_set_side(1, side);
         }
 
-        if ((dev->regs[1][0x04] & 0x01) && (dev->regs[1][0x43] & 0x80))
+        if ((dev->regs[1][0x04] & 0x01) && (dev->regs[1][0x43] & 0x80)) {
+            piix_log("Enabling secondary IDE...\n");
             ide_sec_enable();
+        }
     }
 }
 
@@ -473,6 +471,13 @@ piix_write(int func, int addr, uint8_t val, void *priv)
     uint8_t *fregs;
     uint16_t base;
 
+    /* Dell OptiPlex Gn+ shows that register 02:FF is aliased in 01:FF. */
+    if ((dev->type == 4) && (func == 1) && (addr == 0xff))
+        func = 2;
+
+    if ((func == 1) || (addr == 0xf8) || (addr == 0xf9))
+        piix_log("[W] %02X:%02X = %02X\n", func, addr, val);
+
     /* Return on unsupported function. */
     if (dev->max_func > 0) {
         if (func > dev->max_func)
@@ -603,10 +608,23 @@ piix_write(int func, int addr, uint8_t val, void *priv)
                         pci_set_mirq_routing(PCI_MIRQ0 + (addr & 0x01), PCI_IRQ_DISABLED);
                     else
                         pci_set_mirq_routing(PCI_MIRQ0 + (addr & 0x01), val & 0xf);
+                    if (dev->type == 3) {
+                        if (val & 0x20)
+                            sff_set_irq_mode(dev->bm[1], IRQ_MODE_LEGACY);
+                        else
+                            sff_set_irq_mode(dev->bm[1], IRQ_MODE_MIRQ_0);
+                    }
                     piix_log("MIRQ%i is %s\n", addr & 0x01, (val & 0x20) ? "disabled" : "enabled");
                 }
                 break;
             case 0x76:
+                if (dev->type > 1)
+                    fregs[addr] = val & 0x87;
+                else if (dev->type <= 4)
+                    fregs[addr] = val & 0x8f;
+                if ((dev->type == 1) && machine_has_jumpered_ecp_dma(machine, MACHINE_DMA_USE_MBDMA))
+                    lpt1_dma(((val & 0x08) || ((val & 0x07) == 0x04)) ? 0xff : (val & 0x07));
+                break;
             case 0x77:
                 if (dev->type > 1)
                     fregs[addr] = val & 0x87;
@@ -740,6 +758,8 @@ piix_write(int func, int addr, uint8_t val, void *priv)
                     fregs[addr] = val;
                 break;
             case 0xb0:
+                if (val & 0x10)
+                    warning("Write %02X to B0\n", val);
                 if (dev->type == 4)
                     fregs[addr] = (fregs[addr] & 0x8c) | (val & 0x73);
                 else if (dev->type == 5)
@@ -749,6 +769,8 @@ piix_write(int func, int addr, uint8_t val, void *priv)
                     alt_access = !!(val & 0x20);
                 break;
             case 0xb1:
+                if (val & 0x18)
+                    warning("Write %02X to B1\n", val);
                 if (dev->type > 3)
                     fregs[addr] = val & 0xdf;
                 break;
@@ -927,6 +949,12 @@ piix_write(int func, int addr, uint8_t val, void *priv)
                 if (dev->type > 4)
                     fregs[addr] = val;
                 break;
+            case 0xf8:
+            case 0xf9:
+                /* Undocumented! */
+                if (dev->type == 4)
+                    fregs[addr] = val;
+                break;
             default:
                 break;
         }
@@ -1014,11 +1042,11 @@ piix_write(int func, int addr, uint8_t val, void *priv)
                 break;
             case 0xc0:
                 if (dev->type <= 4)
-                    fregs[0xc0] = (fregs[0xc0] & ~(val & 0xbf)) | (val & 0x20);
+                    fregs[0xc0] = (fregs[0xc0] & 0x40) | (val & 0xbf);
                 break;
             case 0xc1:
                 if (dev->type <= 4)
-                    fregs[0xc1] &= ~val;
+                    fregs[0xc1] = (fregs[0xc0] & ~(val & 0x8f)) | (val & 0x20);
                 break;
             case 0xff:
                 if (dev->type == 4) {
@@ -1173,6 +1201,10 @@ piix_read(int func, int addr, void *priv)
     uint8_t        ret = 0xff;
     const uint8_t *fregs;
 
+    /* Dell OptiPlex Gn+ shows that register 02:FF is aliased in 01:FF. */
+    if ((dev->type == 4) && (func == 1) && (addr == 0xff))
+        func = 2;
+
     if ((dev->type == 3) && (func == 2) && (dev->max_func == 1) && (addr >= 0x40))
         ret = 0x00;
 
@@ -1180,42 +1212,9 @@ piix_read(int func, int addr, void *priv)
     if ((func <= dev->max_func) || ((func == 1) && (dev->max_func == 0))) {
         fregs = (uint8_t *) dev->regs[func];
         ret   = fregs[addr];
-        if ((func == 2) && (addr == 0xff))
-            ret |= 0xef;
 
         piix_log("PIIX function %i read: %02X from %02X\n", func, ret, addr);
     }
-
-    return ret;
-}
-
-static void
-board_write(uint16_t port, uint8_t val, void *priv)
-{
-    piix_t *dev = (piix_t *) priv;
-
-    if (port == 0x0078)
-        dev->board_config[0] = val;
-    else if (port == 0x00e0)
-        dev->cur_readout_reg = val;
-    else if (port == 0x00e1)
-        dev->readout_regs[dev->cur_readout_reg] = val;
-}
-
-static uint8_t
-board_read(uint16_t port, void *priv)
-{
-    const piix_t *dev = (piix_t *) priv;
-    uint8_t       ret = 0x64;
-
-    if (port == 0x0078)
-        ret = dev->board_config[0];
-    else if (port == 0x0079)
-        ret = dev->board_config[1];
-    else if (port == 0x00e0)
-        ret = dev->cur_readout_reg;
-    else if (port == 0x00e1)
-        ret = dev->readout_regs[dev->cur_readout_reg];
 
     return ret;
 }
@@ -1225,23 +1224,19 @@ piix_reset_hard(piix_t *dev)
 {
     uint8_t *fregs;
 
-    uint16_t old_base = (dev->regs[1][0x20] & 0xf0) | (dev->regs[1][0x21] << 8);
-
-    sff_bus_master_reset(dev->bm[0], old_base);
-    sff_bus_master_reset(dev->bm[1], old_base + 8);
+    sff_bus_master_reset(dev->bm[0]);
+    sff_bus_master_reset(dev->bm[1]);
 
     if (dev->type >= 4) {
         sff_set_slot(dev->bm[0], dev->pci_slot);
         sff_set_irq_pin(dev->bm[0], PCI_INTA);
         sff_set_irq_line(dev->bm[0], 14);
-        sff_set_irq_mode(dev->bm[0], 0, 0);
-        sff_set_irq_mode(dev->bm[0], 1, 0);
+        sff_set_irq_mode(dev->bm[0], IRQ_MODE_LEGACY);
 
         sff_set_slot(dev->bm[1], dev->pci_slot);
         sff_set_irq_pin(dev->bm[1], PCI_INTA);
-        sff_set_irq_line(dev->bm[1], 14);
-        sff_set_irq_mode(dev->bm[1], 0, 0);
-        sff_set_irq_mode(dev->bm[1], 1, 0);
+        sff_set_irq_line(dev->bm[1], 15);
+        sff_set_irq_mode(dev->bm[1], IRQ_MODE_LEGACY);
     }
 
 #ifdef ENABLE_PIIX_LOG
@@ -1356,6 +1351,10 @@ piix_reset_hard(piix_t *dev)
         fregs[0x45] = 0x55;
         fregs[0x46] = 0x01;
     }
+    if (dev->type == 4) {
+        fregs[0xf8] = 0x30;
+        fregs[0xf9] = 0x0f;
+    }
     if ((dev->type == 1) && (dev->rev == 2))
         dev->max_func = 0; /* It starts with IDE disabled, then enables it. */
     else
@@ -1380,13 +1379,12 @@ piix_reset_hard(piix_t *dev)
         if (dev->type < 5)
             fregs[0x20] = 0x01;
         fregs[0x3d] = 0x04;
-        if (dev->type > 4)
-            fregs[0x60] = (dev->type > 3) ? 0x10 : 0x00;
         if (dev->type < 5) {
+            fregs[0x60] = (dev->type > 3) ? 0x10 : 0x00;
             fregs[0x6a] = (dev->type == 3) ? 0x01 : 0x00;
             fregs[0xc1] = 0x20;
             fregs[0xff] = (dev->type > 3) ? 0x10 : 0x00;
-        }
+        } else
         dev->max_func = 2; /* It starts with USB disabled, then enables it. */
     }
 
@@ -1444,17 +1442,6 @@ piix_fast_off_count(void *priv)
 
     smi_raise();
     dev->regs[0][0xaa] |= 0x20;
-}
-
-static void
-piix_usb_update_interrupt(usb_t* usb, void *priv)
-{
-    const piix_t *dev = (piix_t *) priv;
-
-    if (usb->irq_level)
-        pci_set_irq(dev->pci_slot, PCI_INTD);
-    else
-        pci_clear_irq(dev->pci_slot, PCI_INTD);
 }
 
 static void
@@ -1527,16 +1514,12 @@ piix_reset(void *priv)
         piix_write(3, 0xd2, 0x00, priv);
     }
 
-    sff_set_irq_mode(dev->bm[0], 0, 0);
-    sff_set_irq_mode(dev->bm[1], 0, 0);
+    sff_set_irq_mode(dev->bm[0], IRQ_MODE_LEGACY);
 
-    if (dev->no_mirq0 || (dev->type >= 4)) {
-        sff_set_irq_mode(dev->bm[0], 1, 0);
-        sff_set_irq_mode(dev->bm[1], 1, 0);
-    } else {
-        sff_set_irq_mode(dev->bm[0], 1, 2);
-        sff_set_irq_mode(dev->bm[1], 1, 2);
-    }
+    if (dev->no_mirq0 || (dev->type >= 4))
+        sff_set_irq_mode(dev->bm[1], IRQ_MODE_LEGACY);
+    else
+        sff_set_irq_mode(dev->bm[1], IRQ_MODE_MIRQ_0);
 }
 
 static void
@@ -1557,18 +1540,17 @@ piix_speed_changed(void *priv)
     if (!dev)
         return;
 
-    int te = timer_is_enabled(&dev->fast_off_timer);
+    int to = timer_is_on(&dev->fast_off_timer);
 
     timer_stop(&dev->fast_off_timer);
-    if (te)
+    if (to)
         timer_on_auto(&dev->fast_off_timer, ((double) cpu_fast_off_val + 1) * dev->fast_off_period);
 }
 
 static void *
 piix_init(const device_t *info)
 {
-    piix_t *dev = (piix_t *) malloc(sizeof(piix_t));
-    memset(dev, 0, sizeof(piix_t));
+    piix_t *dev = (piix_t *) calloc(1, sizeof(piix_t));
 
     dev->type = info->local & 0x0f;
     /* If (dev->type == 4) and (dev->rev & 0x08), then this is PIIX4E. */
@@ -1577,7 +1559,7 @@ piix_init(const device_t *info)
     dev->no_mirq0   = (info->local >> 12) & 0x0f;
     dev->func0_id   = info->local >> 16;
 
-    dev->pci_slot = pci_add_card(PCI_ADD_SOUTHBRIDGE, piix_read, piix_write, dev);
+    pci_add_card(PCI_ADD_SOUTHBRIDGE, piix_read, piix_write, dev, &dev->pci_slot);
     piix_log("PIIX%i: Added to slot: %02X\n", dev->type, dev->pci_slot);
     piix_log("PIIX%i: Added to slot: %02X\n", dev->type, dev->pci_slot);
 
@@ -1590,32 +1572,36 @@ piix_init(const device_t *info)
         ide_board_set_force_ata3(1, 1);
     }
 
-    sff_set_irq_mode(dev->bm[0], 0, 0);
-    sff_set_irq_mode(dev->bm[1], 0, 0);
+    sff_set_irq_mode(dev->bm[0], IRQ_MODE_LEGACY);
 
-    if (dev->no_mirq0 || (dev->type >= 4)) {
-        sff_set_irq_mode(dev->bm[0], 1, 0);
-        sff_set_irq_mode(dev->bm[1], 1, 0);
-    } else {
-        sff_set_irq_mode(dev->bm[0], 1, 2);
-        sff_set_irq_mode(dev->bm[1], 1, 2);
-    }
+    if (dev->no_mirq0 || (dev->type >= 4))
+        sff_set_irq_mode(dev->bm[1], IRQ_MODE_LEGACY);
+    else
+        sff_set_irq_mode(dev->bm[1], IRQ_MODE_MIRQ_0);
 
-    if (dev->type >= 3) {
-        dev->usb_params.parent_priv      = dev;
-        dev->usb_params.smi_handle       = NULL;
-        dev->usb_params.update_interrupt = piix_usb_update_interrupt;
-        dev->usb                         = device_add_parameters(&usb_device, &dev->usb_params);
-    }
+    if (dev->type >= 3)
+        dev->usb   = device_add(&usb_device);
 
     if (dev->type > 3) {
-        dev->nvr   = device_add(&piix4_nvr_device);
+        if (!strcmp(machine_get_internal_name(), "ms5156"))
+            dev->nvr   = device_add(&piix4_ami_1995_nvr_device);
+        else
+            dev->nvr   = device_add(&piix4_nvr_device);
         dev->smbus = device_add(&piix4_smbus_device);
 
         dev->acpi = device_add(&acpi_intel_device);
         acpi_set_slot(dev->acpi, dev->pci_slot);
         acpi_set_nvr(dev->acpi, dev->nvr);
-        acpi_set_gpireg2_default(dev->acpi, (dev->type > 4) ? 0xf1 : 0xdd);
+        /*
+           TriGem Richmond:
+           - Bit 5: Manufacturing jumper, must be set;
+           - Bit 4: CMOS clear jumper, must be clear;
+           - Bit 0: Password switch, must be clear.
+         */
+        if (machines[machine].init == machine_at_richmond_init)
+            acpi_set_gpireg2_default(dev->acpi, 0xee);
+        else
+            acpi_set_gpireg2_default(dev->acpi, (dev->type > 4) ? 0xf1 : 0xdd);
         acpi_set_trap_update(dev->acpi, piix_trap_update, dev);
 
         dev->ddma = device_add(&ddma_device);
@@ -1641,77 +1627,20 @@ piix_init(const device_t *info)
 
     dev->port_92 = device_add(&port_92_pci_device);
 
-    cpu_set_isa_pci_div(4);
+    if (cpu_busspeed > 50000000)
+        cpu_set_isa_pci_div(4);
+    else
+        cpu_set_isa_pci_div(3);
 
-    dma_alias_set();
+    if (dev->type > 1)
+        dma_alias_set();
+    else
+        dma_alias_set_piix();
 
     if (dev->type < 4)
         pci_enable_mirq(0);
     if (dev->type < 3)
         pci_enable_mirq(1);
-
-    dev->readout_regs[0] = 0xff;
-    dev->readout_regs[1] = 0x40;
-    dev->readout_regs[2] = 0xff;
-
-    /* Port E1 register 01 (TODO: Find how multipliers > 3.0 are defined):
-
-        Bit 6: 1 = can boot, 0 = no;
-        Bit 7, 1 = multiplier (00 = 2.5, 01 = 2.0, 10 = 3.0, 11 = 1.5);
-        Bit 5, 4 = bus speed (00 = 50 MHz, 01 = 66 MHz, 10 = 60 MHz, 11 = ????):
-        Bit 7, 5, 4, 1: 0000 = 125 MHz, 0010 = 166 MHz, 0100 = 150 MHz, 0110 = ??? MHz;
-                        0001 = 100 MHz, 0011 = 133 MHz, 0101 = 120 MHz, 0111 = ??? MHz;
-                        1000 = 150 MHz, 1010 = 200 MHz, 1100 = 180 MHz, 1110 = ??? MHz;
-                        1001 =  75 MHz, 1011 = 100 MHz, 1101 =  90 MHz, 1111 = ??? MHz */
-
-    if (cpu_busspeed <= 40000000)
-        dev->readout_regs[1] |= 0x30;
-    else if ((cpu_busspeed > 40000000) && (cpu_busspeed <= 50000000))
-        dev->readout_regs[1] |= 0x00;
-    else if ((cpu_busspeed > 50000000) && (cpu_busspeed <= 60000000))
-        dev->readout_regs[1] |= 0x20;
-    else if (cpu_busspeed > 60000000)
-        dev->readout_regs[1] |= 0x10;
-
-    if (cpu_dmulti <= 1.5)
-        dev->readout_regs[1] |= 0x82;
-    else if ((cpu_dmulti > 1.5) && (cpu_dmulti <= 2.0))
-        dev->readout_regs[1] |= 0x02;
-    else if ((cpu_dmulti > 2.0) && (cpu_dmulti <= 2.5))
-        dev->readout_regs[1] |= 0x00;
-    else if (cpu_dmulti > 2.5)
-        dev->readout_regs[1] |= 0x80;
-
-    io_sethandler(0x0078, 0x0002, board_read, NULL, NULL, board_write, NULL, NULL, dev);
-    io_sethandler(0x00e0, 0x0002, board_read, NULL, NULL, board_write, NULL, NULL, dev);
-
-    dev->board_config[0] = 0xff;
-    /* Register 0x0079: */
-    /* Bit 7: 0 = Clear password, 1 = Keep password. */
-    /* Bit 6: 0 = NVRAM cleared by jumper, 1 = NVRAM normal. */
-    /* Bit 5: 0 = CMOS Setup disabled, 1 = CMOS Setup enabled. */
-    /* Bit 4: External CPU clock (Switch 8). */
-    /* Bit 3: External CPU clock (Switch 7). */
-    /*        50 MHz: Switch 7 = Off, Switch 8 = Off. */
-    /*        60 MHz: Switch 7 = On, Switch 8 = Off. */
-    /*        66 MHz: Switch 7 = Off, Switch 8 = On. */
-    /* Bit 2: 0 = On-board audio absent, 1 = On-board audio present. */
-    /* Bit 1: 0 = Soft-off capable power supply present, 1 = Soft-off capable power supply absent. */
-    /* Bit 0: 0 = 1.5x multiplier, 1 = 2x multiplier (Switch 6). */
-    /* NOTE: A bit is read as 1 if switch is off, and as 0 if switch is on. */
-    dev->board_config[1] = 0xe0;
-
-    if (cpu_busspeed <= 50000000)
-        dev->board_config[1] |= 0x10;
-    else if ((cpu_busspeed > 50000000) && (cpu_busspeed <= 60000000))
-        dev->board_config[1] |= 0x18;
-    else if (cpu_busspeed > 60000000)
-        dev->board_config[1] |= 0x00;
-
-    if (cpu_dmulti <= 1.5)
-        dev->board_config[1] |= 0x01;
-    else
-        dev->board_config[1] |= 0x00;
 
 #if 0
     device_add(&i8254_sec_device);
@@ -1728,7 +1657,7 @@ const device_t piix_device = {
     .init          = piix_init,
     .close         = piix_close,
     .reset         = piix_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = piix_speed_changed,
     .force_redraw  = NULL,
     .config        = NULL
@@ -1742,7 +1671,7 @@ const device_t piix_no_mirq_device = {
     .init          = piix_init,
     .close         = piix_close,
     .reset         = piix_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = piix_speed_changed,
     .force_redraw  = NULL,
     .config        = NULL
@@ -1756,7 +1685,7 @@ const device_t piix_rev02_device = {
     .init          = piix_init,
     .close         = piix_close,
     .reset         = piix_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = piix_speed_changed,
     .force_redraw  = NULL,
     .config        = NULL
@@ -1770,7 +1699,7 @@ const device_t piix3_device = {
     .init          = piix_init,
     .close         = piix_close,
     .reset         = piix_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = piix_speed_changed,
     .force_redraw  = NULL,
     .config        = NULL
@@ -1784,7 +1713,7 @@ const device_t piix3_ioapic_device = {
     .init          = piix_init,
     .close         = piix_close,
     .reset         = piix_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = piix_speed_changed,
     .force_redraw  = NULL,
     .config        = NULL
@@ -1798,7 +1727,7 @@ const device_t piix4_device = {
     .init          = piix_init,
     .close         = piix_close,
     .reset         = piix_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = piix_speed_changed,
     .force_redraw  = NULL,
     .config        = NULL
@@ -1812,7 +1741,7 @@ const device_t piix4e_device = {
     .init          = piix_init,
     .close         = piix_close,
     .reset         = piix_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = piix_speed_changed,
     .force_redraw  = NULL,
     .config        = NULL
@@ -1826,7 +1755,7 @@ const device_t slc90e66_device = {
     .init          = piix_init,
     .close         = piix_close,
     .reset         = piix_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = piix_speed_changed,
     .force_redraw  = NULL,
     .config        = NULL

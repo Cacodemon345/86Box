@@ -8,8 +8,6 @@
  *
  *          Header file for windows raw input native filter for QT
  *
- *
- *
  * Authors: Teemu Korhonen
  *
  *          Copyright 2021 Teemu Korhonen
@@ -28,7 +26,6 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
-
 #ifndef QT_WINDOWSRAWINPUTFILTER_HPP
 #define QT_WINDOWSRAWINPUTFILTER_HPP
 
@@ -38,6 +35,7 @@
 #include <QByteArray>
 
 #include <windows.h>
+#include <windns.h>
 
 #include <memory>
 
@@ -59,25 +57,20 @@ public:
 
     ~WindowsRawInputFilter();
 
-public slots:
-    void mousePoll();
+    static void mouse_handle(RAWMOUSE *raw);
 
 private:
     MainWindow *window;
-    uint16_t     scancode_map[768];
-    int          buttons    = 0;
-    int          dx         = 0;
-    int          dy         = 0;
-    int          dwheel     = 0;
-    int          menus_open = 0;
+    int         buttons    = 0;
+    int         dx         = 0;
+    int         dy         = 0;
+    int         dwheel     = 0;
+    int         menus_open = 0;
 
     WindowsRawInputFilter(MainWindow *window);
 
-    void          handle_input(HRAWINPUT input);
-    void          keyboard_handle(PRAWINPUT raw);
-    void          mouse_handle(PRAWINPUT raw);
-    static UINT16 convert_scan_code(UINT16 scan_code);
-    void          keyboard_getkeymap();
+    void handle_input(HRAWINPUT input);
+    void keyboard_handle(PRAWINPUT raw);
 };
 
 #endif

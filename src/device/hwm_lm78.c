@@ -8,8 +8,6 @@
  *
  *          Emulation of the National Semiconductor LM78 hardware monitoring chip.
  *
- *
- *
  * Authors: RichardG, <richardg867@gmail.com>
  *
  *          Copyright 2020 RichardG.
@@ -27,6 +25,7 @@
 #include <86box/timer.h>
 #include <86box/machine.h>
 #include <86box/nvr.h>
+#include <86box/plat_fallthrough.h>
 #include <86box/plat_unused.h>
 #include "cpu.h"
 #include <86box/i2c.h>
@@ -101,17 +100,17 @@ lm78_log(const char *fmt, ...)
 void
 lm78_nvram(lm78_t *dev, uint8_t save)
 {
-    size_t l        = strlen(machine_get_internal_name_ex(machine)) + 14;
+    size_t l        = strlen(machine_get_nvr_name_ex(machine)) + 14;
     char  *nvr_path = (char *) malloc(l);
-    sprintf(nvr_path, "%s_as99127f.nvr", machine_get_internal_name_ex(machine));
+    sprintf(nvr_path, "%s_as99127f.nvr", machine_get_nvr_name_ex(machine));
 
-    FILE *f = nvr_fopen(nvr_path, save ? "wb" : "rb");
-    if (f) {
+    FILE *fp = nvr_fopen(nvr_path, save ? "wb" : "rb");
+    if (fp) {
         if (save)
-            fwrite(&dev->as99127f.nvram, sizeof(dev->as99127f.nvram), 1, f);
+            fwrite(&dev->as99127f.nvram, sizeof(dev->as99127f.nvram), 1, fp);
         else
-            (void) !fread(&dev->as99127f.nvram, sizeof(dev->as99127f.nvram), 1, f);
-        fclose(f);
+            (void) !fread(&dev->as99127f.nvram, sizeof(dev->as99127f.nvram), 1, fp);
+        fclose(fp);
     }
 
     free(nvr_path);
@@ -136,7 +135,7 @@ lm78_nvram_read(UNUSED(void *bus), UNUSED(uint8_t addr), void *priv)
     switch (dev->as99127f.nvram_i2c_state) {
         case 0:
             dev->as99127f.nvram_i2c_state = 1;
-            /* fall-through */
+            fallthrough;
 
         case 1:
             ret = dev->as99127f.regs[0][0x0b] & 0x3f;
@@ -770,8 +769,7 @@ lm78_close(void *priv)
 static void *
 lm78_init(const device_t *info)
 {
-    lm78_t *dev = (lm78_t *) malloc(sizeof(lm78_t));
-    memset(dev, 0, sizeof(lm78_t));
+    lm78_t *dev = (lm78_t *) calloc(1, sizeof(lm78_t));
 
     dev->local = info->local;
 
@@ -856,7 +854,7 @@ const device_t lm78_device = {
     .init          = lm78_init,
     .close         = lm78_close,
     .reset         = lm78_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -871,7 +869,7 @@ const device_t w83781d_device = {
     .init          = lm78_init,
     .close         = lm78_close,
     .reset         = lm78_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -886,7 +884,7 @@ const device_t w83781d_p5a_device = {
     .init          = lm78_init,
     .close         = lm78_close,
     .reset         = lm78_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -902,7 +900,7 @@ const device_t as99127f_device = {
     .init          = lm78_init,
     .close         = lm78_close,
     .reset         = lm78_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -917,7 +915,7 @@ const device_t as99127f_rev2_device = {
     .init          = lm78_init,
     .close         = lm78_close,
     .reset         = lm78_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
@@ -932,7 +930,7 @@ const device_t w83782d_device = {
     .init          = lm78_init,
     .close         = lm78_close,
     .reset         = lm78_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL

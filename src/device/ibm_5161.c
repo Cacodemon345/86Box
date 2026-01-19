@@ -6,8 +6,6 @@
  *
  *          Emulation of the IBM Expansion Unit (5161).
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *
  *          Copyright 2016-2018 Miran Grca.
@@ -73,8 +71,8 @@ ibm_5161_in(uint16_t port, void *priv)
                                     02-03 = not used
                                     04-07 = switch position
                                             1 = Off
-                                            0 =On */
-            ret = dev->regs[3] & 0x01;
+                                            0 = On */
+            ret = (dev->regs[3] & 0x01) | (((~(0xf - ((mem_size + isa_mem_size) >> 6))) & 0xf) << 4);
             break;
 
         default:
@@ -95,8 +93,7 @@ ibm_5161_close(void *priv)
 static void *
 ibm_5161_init(UNUSED(const device_t *info))
 {
-    ibm_5161_t *dev = (ibm_5161_t *) malloc(sizeof(ibm_5161_t));
-    memset(dev, 0, sizeof(ibm_5161_t));
+    ibm_5161_t *dev = (ibm_5161_t *) calloc(1, sizeof(ibm_5161_t));
 
     /* Extender Card Registers */
     io_sethandler(0x0210, 0x0004,
@@ -117,7 +114,7 @@ const device_t ibm_5161_device = {
     .init          = ibm_5161_init,
     .close         = ibm_5161_close,
     .reset         = NULL,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL

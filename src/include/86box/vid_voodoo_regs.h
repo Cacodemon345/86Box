@@ -338,21 +338,27 @@ enum {
 };
 
 enum {
-    LFB_FORMAT_RGB565   = 0,
-    LFB_FORMAT_RGB555   = 1,
-    LFB_FORMAT_ARGB1555 = 2,
-    LFB_FORMAT_ARGB8888 = 5,
-    LFB_FORMAT_DEPTH    = 15,
-    LFB_FORMAT_MASK     = 15
+    LFB_FORMAT_RGB565         = 0,
+    LFB_FORMAT_RGB555         = 1,
+    LFB_FORMAT_ARGB1555       = 2,
+    LFB_FORMAT_XRGB8888       = 4,
+    LFB_FORMAT_ARGB8888       = 5,
+    LFB_FORMAT_DEPTH_RGB565   = 12,
+    LFB_FORMAT_DEPTH_RGB555   = 13,
+    LFB_FORMAT_DEPTH_ARGB1555 = 14,
+    LFB_FORMAT_DEPTH          = 15,
+    LFB_FORMAT_MASK           = 15
 };
 
 enum {
     LFB_WRITE_COLOUR = 1,
-    LFB_WRITE_DEPTH  = 2
+    LFB_WRITE_DEPTH  = 2,
+    LFB_WRITE_BOTH   = 4
 };
 
 enum {
     FBZ_CHROMAKEY    = (1 << 1),
+    FBZ_STIPPLE      = (1 << 2),
     FBZ_W_BUFFER     = (1 << 3),
     FBZ_DEPTH_ENABLE = (1 << 4),
 
@@ -361,11 +367,16 @@ enum {
     FBZ_DEPTH_WMASK = (1 << 10),
     FBZ_DITHER_2x2  = (1 << 11),
 
+    FBZ_STIPPLE_PATT = (1 << 12),
+
+    FBZ_ALPHA_MASK = (1 << 13),
+
     FBZ_DRAW_FRONT = 0x0000,
     FBZ_DRAW_BACK  = 0x4000,
     FBZ_DRAW_MASK  = 0xc000,
 
     FBZ_DEPTH_BIAS = (1 << 16),
+    FBZ_ALPHA_ENABLE = (1 << 18), 
     FBZ_DITHER_SUB = (1 << 19),
 
     FBZ_DEPTH_SOURCE = (1 << 20),
@@ -650,6 +661,8 @@ enum {
 
 #define src_afunc               ((params->alphaMode >> 8) & 0xf)
 #define dest_afunc              ((params->alphaMode >> 12) & 0xf)
+#define src_aafunc              ((params->alphaMode >> 16) & 0xf)
+#define dest_aafunc             ((params->alphaMode >> 20) & 0xf)
 #define alpha_func              ((params->alphaMode >> 1) & 7)
 #define a_ref                   (params->alphaMode >> 24)
 #define depth_op                ((params->fbzMode >> 5) & 7)

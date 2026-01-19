@@ -8,8 +8,6 @@
  *
  *          Definitions for hardware monitoring chips.
  *
- *
- *
  * Authors: RichardG, <richardg867@gmail.com>
  *
  *          Copyright 2020 RichardG.
@@ -68,6 +66,8 @@ extern const device_t w83782d_device;
 
 extern const device_t gl518sm_2c_device;
 extern const device_t gl518sm_2d_device;
+extern const device_t gl520sm_2c_device;
+extern const device_t gl520sm_2d_device;
 
 extern const device_t via_vt82c686_hwm_device;
 

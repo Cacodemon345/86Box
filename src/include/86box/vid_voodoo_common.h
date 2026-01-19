@@ -8,14 +8,11 @@
  *
  *          Voodoo Graphics, 2, Banshee, 3 emulation.
  *
- *
- *
  * Authors: Sarah Walker, <https://pcem-emulator.co.uk/>
  *          leilei
  *
  *          Copyright 2008-2020 Sarah Walker.
  */
-
 #ifndef VIDEO_VOODOO_COMMON_H
 #define VIDEO_VOODOO_COMMON_H
 
@@ -31,13 +28,6 @@
 #define TEX_DIRTY_SHIFT 10
 
 #define TEX_CACHE_MAX   64
-
-#ifdef __cplusplus
-#    include <atomic>
-using atomic_int = std::atomic<int>;
-#else
-#    include <stdatomic.h>
-#endif
 
 enum {
     VOODOO_1 = 0,
@@ -84,6 +74,13 @@ typedef union rgba_u {
 #define FIFO_FULL       ((voodoo->fifo_write_idx - voodoo->fifo_read_idx) >= FIFO_SIZE - 4)
 #define FIFO_EMPTY      (voodoo->fifo_read_idx == voodoo->fifo_write_idx)
 
+#define VOODOO_BUF_FRONT   0
+#define VOODOO_BUF_BACK    1
+#define VOODOO_BUF_AUX     2
+#define VOODOO_BUF_UNKNOWN 3
+#define VOODOO_BUF_COUNT   4
+#define VOODOO_BUF_NONE    0xff
+
 #define FIFO_TYPE       0xff000000
 #define FIFO_ADDR       0x00ffffff
 
@@ -108,6 +105,8 @@ typedef struct
 {
     uint32_t addr_type;
     uint32_t val;
+    uint8_t  target_buf;
+    uint8_t  pad[3];
 } fifo_entry_t;
 
 typedef struct voodoo_params_t {
@@ -233,8 +232,8 @@ typedef struct voodoo_params_t {
 typedef struct texture_t {
     uint32_t   base;
     uint32_t   tLOD;
-    atomic_int refcount;
-    atomic_int refcount_r[4];
+    ATOMIC_INT refcount;
+    ATOMIC_INT refcount_r[4];
     int        is16;
     uint32_t   palette_checksum;
     uint32_t   addr_start[4];
@@ -270,6 +269,8 @@ typedef struct voodoo_t {
     mem_mapping_t mapping;
 
     int pci_enable;
+
+    uint8_t  pci_slot;
 
     uint8_t  dac_data[8];
     int      dac_reg;
@@ -348,8 +349,7 @@ typedef struct voodoo_t {
     int h_disp;
     int v_retrace;
 
-    struct
-    {
+    struct {
         uint32_t y[4];
         uint32_t i[4];
         uint32_t q[4];
@@ -365,6 +365,8 @@ typedef struct voodoo_t {
     event_t  *wake_fifo_thread;
     event_t  *wake_main_thread;
     event_t  *fifo_not_full_event;
+    event_t  *fifo_empty_event;
+    ATOMIC_INT fifo_empty_signaled;
     event_t  *render_not_full_event[4];
     event_t  *wake_render_thread[4];
 
@@ -402,15 +404,18 @@ typedef struct voodoo_t {
     int type;
 
     fifo_entry_t fifo[FIFO_SIZE];
-    atomic_int   fifo_read_idx;
-    atomic_int   fifo_write_idx;
-    atomic_int   cmd_read;
-    atomic_int   cmd_written;
-    atomic_int   cmd_written_fifo;
+    ATOMIC_INT   fifo_read_idx;
+    ATOMIC_INT   fifo_write_idx;
+    ATOMIC_INT   cmd_read;
+    ATOMIC_INT   cmd_written;
+    ATOMIC_INT   cmd_written_fifo;
+    ATOMIC_INT   cmd_written_fifo_2;
+    ATOMIC_INT   pending_fb_writes_buf[VOODOO_BUF_COUNT];
+    ATOMIC_INT   pending_draw_cmds_buf[VOODOO_BUF_COUNT];
 
     voodoo_params_t params_buffer[PARAM_SIZE];
-    atomic_int      params_read_idx[4];
-    atomic_int      params_write_idx;
+    ATOMIC_INT      params_read_idx[4];
+    ATOMIC_INT      params_write_idx;
 
     uint32_t   cmdfifo_base;
     uint32_t   cmdfifo_end;
@@ -418,14 +423,29 @@ typedef struct voodoo_t {
     int        cmdfifo_rp;
     int        cmdfifo_ret_addr;
     int        cmdfifo_in_sub;
-    atomic_int cmdfifo_depth_rd;
-    atomic_int cmdfifo_depth_wr;
-    atomic_int cmdfifo_enabled;
+    int        cmdfifo_in_agp;
+    ATOMIC_INT cmdfifo_depth_rd;
+    ATOMIC_INT cmdfifo_depth_wr;
+    ATOMIC_INT cmdfifo_enabled;
     uint32_t   cmdfifo_amin;
     uint32_t   cmdfifo_amax;
     int        cmdfifo_holecount;
 
-    atomic_uint cmd_status;
+    uint32_t   cmdfifo_base_2;
+    uint32_t   cmdfifo_end_2;
+    uint32_t   cmdfifo_size_2;
+    int        cmdfifo_rp_2;
+    int        cmdfifo_ret_addr_2;
+    int        cmdfifo_in_sub_2;
+    int        cmdfifo_in_agp_2;
+    ATOMIC_INT cmdfifo_depth_rd_2;
+    ATOMIC_INT cmdfifo_depth_wr_2;
+    ATOMIC_INT cmdfifo_enabled_2;
+    uint32_t   cmdfifo_amin_2;
+    uint32_t   cmdfifo_amax_2;
+    int        cmdfifo_holecount_2;
+
+    ATOMIC_UINT cmd_status, cmd_status_2;
 
     uint32_t     sSetupMode;
     vert_t       verts[4];
@@ -487,8 +507,7 @@ typedef struct voodoo_t {
 
     uint32_t leftOverlayBuf;
 
-    struct
-    {
+    struct {
         int dst_x;
         int dst_y;
         int cur_x;
@@ -499,8 +518,7 @@ typedef struct voodoo_t {
         int dst_stride;
     } blt;
 
-    struct
-    {
+    struct {
         uint32_t bresError0;
         uint32_t bresError1;
         uint32_t clip0Min;
@@ -588,8 +606,7 @@ typedef struct voodoo_t {
         int line_bit_mask_size;
     } banshee_blt;
 
-    struct
-    {
+    struct {
         uint32_t vidOverlayStartCoords;
         uint32_t vidOverlayEndScreenCoords;
         uint32_t vidOverlayDudx;
@@ -623,6 +640,12 @@ typedef struct voodoo_t {
     int fb_write_buffer;
     int fb_draw_buffer;
     int buffer_cutoff;
+    int queued_disp_buffer;
+    int queued_draw_buffer;
+    int queued_fb_write_buffer;
+    int queued_fb_draw_buffer;
+    uint32_t queued_lfbMode;
+    uint32_t queued_fbzMode;
 
     uint32_t tile_base;
     uint32_t tile_stride;
@@ -653,6 +676,32 @@ typedef struct voodoo_t {
 
     uint64_t time;
     int      render_time[4];
+    uint64_t fifo_full_waits;
+    uint64_t fifo_full_wait_ticks;
+    uint64_t fifo_full_spin_checks;
+    uint64_t fifo_empty_waits;
+    uint64_t fifo_empty_wait_ticks;
+    uint64_t fifo_empty_spin_checks;
+    uint64_t render_waits;
+    uint64_t render_wait_ticks;
+    uint64_t render_wait_spin_checks;
+    uint64_t readl_fb_count;
+    uint64_t readl_fb_sync_count;
+    uint64_t readl_fb_nosync_count;
+    uint64_t readl_fb_relaxed_count;
+    uint64_t readl_fb_sync_buf[3];
+    uint64_t readl_fb_nosync_buf[3];
+    uint64_t readl_fb_relaxed_buf[3];
+    uint64_t readl_reg_count;
+    uint64_t readl_tex_count;
+    int      wait_stats_enabled;
+    int      wait_stats_explicit;
+    int      lfb_relax_enabled;
+    int      lfb_relax_full;
+    int      lfb_relax_ignore_cmdfifo;
+    int      lfb_relax_ignore_draw;
+    int      lfb_relax_ignore_fb_writes;
+    int      lfb_relax_front_sync;
 
     int      force_blit_count;
     int      can_blit;
@@ -663,13 +712,15 @@ typedef struct voodoo_t {
 
     struct voodoo_set_t *set;
 
+    uint32_t launch_pending;
+
     uint8_t fifo_thread_run;
     uint8_t render_thread_run[4];
 
     uint8_t *vram;
     uint8_t *changedvram;
 
-    void *p;
+    void   *priv;
     uint8_t monitor_index;
 } voodoo_t;
 

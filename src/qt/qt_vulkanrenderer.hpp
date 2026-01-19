@@ -31,12 +31,14 @@
 ** OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
 **
 ****************************************************************************/
+#ifndef VULKANRENDERER_HPP
+#    define VULKANRENDERER_HPP
 
-#include <QVulkanWindow>
-#include <QImage>
+#    include <QVulkanWindow>
+#    include <QImage>
 
-#if QT_CONFIG(vulkan)
-#    include "qt_vulkanwindowrenderer.hpp"
+#    if QT_CONFIG(vulkan)
+#        include "qt_vulkanwindowrenderer.hpp"
 
 class VulkanRenderer2 : public QVulkanWindowRenderer {
 public:
@@ -89,6 +91,7 @@ private:
     VkFormat       m_texFormat;
 
     QMatrix4x4 m_proj;
-    float      m_rotation = 0.0f;
 };
-#endif
+#    endif // QT_CONFIG(vulkan)
+
+#endif // VULKANRENDERER_HPP

@@ -8,8 +8,6 @@
  *
  *          Implementation of the VIA VT82C505 VL/PCI Bridge Controller.
  *
- *
- *
  * Authors: Tiseno100,
  *          Miran Grca, <mgrca8@gmail.com>
  *
@@ -32,6 +30,10 @@
 
 typedef struct vt82c505_t {
     uint8_t index;
+    uint8_t pci_slot;
+    uint8_t pad;
+    uint8_t pad0;
+
     uint8_t pci_conf[256];
 } vt82c505_t;
 
@@ -163,7 +165,7 @@ vt82c505_in(uint16_t addr, void *priv)
 static void
 vt82c505_reset(void *priv)
 {
-    vt82c505_t *dev = (vt82c505_t *) malloc(sizeof(vt82c505_t));
+    vt82c505_t *dev = (vt82c505_t *) calloc(1, sizeof(vt82c505_t));
 
     dev->pci_conf[0x04] = 0x07;
     dev->pci_conf[0x07] = 0x00;
@@ -200,10 +202,9 @@ vt82c505_close(void *priv)
 static void *
 vt82c505_init(UNUSED(const device_t *info))
 {
-    vt82c505_t *dev = (vt82c505_t *) malloc(sizeof(vt82c505_t));
-    memset(dev, 0, sizeof(vt82c505_t));
+    vt82c505_t *dev = (vt82c505_t *) calloc(1, sizeof(vt82c505_t));
 
-    pci_add_card(PCI_ADD_NORTHBRIDGE, vt82c505_read, vt82c505_write, dev);
+    pci_add_card(PCI_ADD_NORTHBRIDGE, vt82c505_read, vt82c505_write, dev, &dev->pci_slot);
 
     dev->pci_conf[0x00] = 0x06;
     dev->pci_conf[0x01] = 0x11;
@@ -228,7 +229,7 @@ const device_t via_vt82c505_device = {
     .init          = vt82c505_init,
     .close         = vt82c505_close,
     .reset         = vt82c505_reset,
-    { .available = NULL },
+    .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL

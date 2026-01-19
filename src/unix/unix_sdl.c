@@ -16,6 +16,7 @@
 #include <86box/video.h>
 #include <86box/ui.h>
 #include <86box/version.h>
+#include <86box/unix_osd.h>
 #include <86box/unix_sdl.h>
 
 #define RENDERER_FULL_SCREEN 1
@@ -45,16 +46,13 @@ static int          cur_wy      = 0;
 static int          cur_ww      = 0;
 static int          cur_wh      = 0;
 static volatile int sdl_enabled = 1;
-static SDL_mutex   *sdl_mutex   = NULL;
+SDL_mutex          *sdl_mutex   = NULL;
 int                 mouse_capture;
 int                 title_set         = 0;
 int                 resize_pending    = 0;
 int                 resize_w          = 0;
 int                 resize_h          = 0;
-double              mouse_sensitivity = 1.0;                  /* Unused. */
-double              mouse_x_error     = 0.0; /* Unused. */
-double              mouse_y_error     = 0.0; /* Unused. */
-static uint8_t      interpixels[17842176];
+static void        *pixeldata;
 
 extern void RenderImGui(void);
 static void
@@ -153,11 +151,15 @@ sdl_blit_shim(int x, int y, int w, int h, int monitor_index)
     params.y = y;
     params.w = w;
     params.h = h;
+
     if (!(!sdl_enabled || (x < 0) || (y < 0) || (w <= 0) || (h <= 0) || (w > 2048) || (h > 2048) || (buffer32 == NULL) || (sdl_render == NULL) || (sdl_tex == NULL)) || (monitor_index >= 1))
-        video_copy(interpixels, &(buffer32->line[y][x]), h * 2048 * sizeof(uint32_t));
-    if (screenshots)
-        video_screenshot(interpixels, 0, 0, 2048);
+        for (int row = 0; row < h; ++row)
+            video_copy(&(((uint8_t *) pixeldata)[row * 2048 * sizeof(uint32_t)]), &(buffer32->line[y + row][x]), w * sizeof(uint32_t));
+
+    if (monitors[monitor_index].mon_screenshots_raw)
+        video_screenshot((uint32_t *) pixeldata, 0, 0, 2048);
     blitreq = 1;
+
     video_blit_complete_monitor(monitor_index);
 }
 
@@ -170,6 +172,7 @@ sdl_real_blit(SDL_Rect *r_src)
     int      ret;
     int      winx;
     int      winy;
+
     SDL_GL_GetDrawableSize(sdl_win, &winx, &winy);
     SDL_RenderClear(sdl_render);
 
@@ -186,6 +189,9 @@ sdl_real_blit(SDL_Rect *r_src)
     ret = SDL_RenderCopy(sdl_render, sdl_tex, r_src, &r_dst);
     if (ret)
         fprintf(stderr, "SDL: unable to copy texture to renderer (%s)\n", SDL_GetError());
+
+    // give the osd an opportunity to draw itself
+    osd_present();
 
     SDL_RenderPresent(sdl_render);
 }
@@ -212,11 +218,12 @@ sdl_blit(int x, int y, int w, int h)
             sdl_resize(resize_w, resize_h);
         resize_pending = 0;
     }
+
     r_src.x = x;
     r_src.y = y;
     r_src.w = w;
     r_src.h = h;
-    SDL_UpdateTexture(sdl_tex, &r_src, interpixels, 2048 * 4);
+    SDL_UpdateTexture(sdl_tex, &r_src, pixeldata, 2048 * 4);
     blitreq = 0;
 
     sdl_real_blit(&r_src);
@@ -268,12 +275,15 @@ sdl_close(void)
     sdl_destroy_texture();
     sdl_destroy_window();
 
+    if (pixeldata != NULL) {
+        free(pixeldata);
+        pixeldata = NULL;
+    }
+
     /* Quit. */
     SDL_Quit();
     sdl_flags = -1;
 }
-
-static int old_capture = 0;
 
 void
 sdl_enable(int enable)
@@ -309,6 +319,7 @@ sdl_select_best_hw_driver(void)
 void
 sdl_reinit_texture(void)
 {
+    osd_deinit();
     sdl_destroy_texture();
 
     if (sdl_flags & RENDERER_HARDWARE) {
@@ -319,6 +330,7 @@ sdl_reinit_texture(void)
 
     sdl_tex = SDL_CreateTexture(sdl_render, SDL_PIXELFORMAT_ARGB8888,
                                 SDL_TEXTUREACCESS_STREAMING, 2048, 2048);
+    osd_init();
 }
 
 void
@@ -387,7 +399,7 @@ sdl_reload(void)
 }
 
 int
-plat_vidapi(char *api)
+plat_vidapi(UNUSED(const char *api))
 {
     return 0;
 }
@@ -395,7 +407,6 @@ plat_vidapi(char *api)
 static int
 sdl_init_common(int flags)
 {
-    wchar_t     temp[128];
     SDL_version ver;
 
     /* Get and log the version of the DLL we are using. */
@@ -407,6 +418,10 @@ sdl_init_common(int flags)
         fprintf(stderr, "SDL: initialization failed (%s)\n", SDL_GetError());
         return (0);
     }
+
+    // Ensure mouse and touchpads behaves the same for us, dunno if these really do something
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
+    SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "1");
 
     if (flags & RENDERER_HARDWARE) {
         if (flags & RENDERER_OPENGL) {
@@ -420,9 +435,9 @@ sdl_init_common(int flags)
     sdl_set_fs(video_fullscreen);
     if (!(video_fullscreen & 1)) {
         if (vid_resize & 2)
-            plat_resize(fixed_size_x, fixed_size_y);
+            plat_resize(fixed_size_x, fixed_size_y, 0);
         else
-            plat_resize(scrnsz_x, scrnsz_y);
+            plat_resize(scrnsz_x, scrnsz_y, 0);
     }
     if ((vid_resize < 2) && window_remember) {
         SDL_SetWindowSize(sdl_win, window_w, window_h);
@@ -430,6 +445,8 @@ sdl_init_common(int flags)
 
     /* Make sure we get a clean exit. */
     atexit(sdl_close);
+
+    pixeldata = malloc(2048 * 2048 * 4);
 
     /* Register our renderer! */
     video_setblit(sdl_blit_shim);
@@ -473,7 +490,7 @@ plat_mouse_capture(int on)
 }
 
 void
-plat_resize(int w, int h)
+plat_resize(int w, int h, UNUSED(int monitor_index))
 {
     SDL_LockMutex(sdl_mutex);
     resize_w       = w;
@@ -527,16 +544,19 @@ ui_window_title(wchar_t *str)
 }
 
 void
-ui_init_monitor(int monitor_index)
+ui_init_monitor(UNUSED(int monitor_index))
 {
-}
-void
-ui_deinit_monitor(int monitor_index)
-{
+    /* No-op. */
 }
 
 void
-plat_resize_request(int w, int h, int monitor_index)
+ui_deinit_monitor(UNUSED(int monitor_index))
+{
+    /* No-op. */
+}
+
+void
+plat_resize_request(UNUSED(int w), UNUSED(int h), int monitor_index)
 {
     atomic_store((&doresize_monitors[monitor_index]), 1);
 }

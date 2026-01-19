@@ -82,6 +82,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING  IN ANY  WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#include <inttypes.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -101,11 +102,15 @@
 #include <86box/ui.h>
 #include <86box/hdc.h>
 #include <86box/hdd.h>
+#include "cpu.h"
 
-#define HDC_TIME           (50 * TIMER_USEC)
+#define HDC_TIME           (250 * TIMER_USEC)
 
 #define WD_REV_1_BIOS_FILE "roms/hdd/xta/idexywd2.bin"
 #define WD_REV_2_BIOS_FILE "roms/hdd/xta/infowdbios.rom"
+#define PC3086_BIOS_FILE   "roms/machines/pc3086/c800.bin"
+#define ST50X_BIOS_FILE    "roms/hdd/xta/ST05XBIO.BIN"
+#define PC5086_BIOS_FILE   "roms/machines/pc5086/c800.bin"
 
 enum {
     STATE_IDLE = 0,
@@ -236,6 +241,7 @@ typedef struct hdc_t {
     const char *name; /* controller name */
 
     uint16_t base; /* controller base I/O address */
+    uint8_t  sw;   /* controller switches */
     int8_t   irq;  /* controller IRQ channel */
     int8_t   dma;  /* controller DMA channel */
     int8_t   type; /* controller type ID */
@@ -248,7 +254,6 @@ typedef struct hdc_t {
     uint8_t    sense;  /* current SENSE ERROR value    */
     uint8_t    status; /* current operational status    */
     uint8_t    intr;
-    uint64_t   callback;
     pc_timer_t timer;
 
     /* Data transfer. */
@@ -269,6 +274,10 @@ typedef struct hdc_t {
     uint8_t data[512];       /* data buffer */
     uint8_t sector_buf[512]; /* sector buffer */
 } hdc_t;
+
+typedef struct hdc_dual_t {
+    hdc_t  *hdc[2];
+} hdc_dual_t;
 
 #ifdef ENABLE_XTA_LOG
 int xta_do_log = ENABLE_XTA_LOG;
@@ -343,22 +352,6 @@ next_sector(hdc_t *dev, drive_t *drive)
     }
 }
 
-static void
-xta_set_callback(hdc_t *dev, uint64_t callback)
-{
-    if (!dev) {
-        return;
-    }
-
-    if (callback) {
-        dev->callback = callback;
-        timer_set_delay_u64(&dev->timer, dev->callback);
-    } else {
-        dev->callback = 0;
-        timer_disable(&dev->timer);
-    }
-}
-
 /* Perform the seek operation. */
 static void
 do_seek(hdc_t *dev, drive_t *drive, int cyl)
@@ -402,7 +395,7 @@ do_format(hdc_t *dev, drive_t *drive, dcb_t *dcb)
             dev->sector = 0;
 
             /* Activate the status icon. */
-            ui_sb_update_icon(SB_HDD | HDD_BUS_XTA, 1);
+            ui_sb_update_icon_write(SB_HDD | HDD_BUS_XTA, 1);
 
 do_fmt:
             /*
@@ -425,8 +418,9 @@ do_fmt:
                         break;
 
                     /* Write the block to the image. */
-                    hdd_image_write(drive->hdd_num, addr, 1,
-                                    (uint8_t *) dev->sector_buf);
+                    if (hdd_image_write(drive->hdd_num, addr, 1,
+                                        (uint8_t *) dev->sector_buf) < 0)
+                        dev->sense = ERR_BADTRK;
                 }
             }
 
@@ -442,23 +436,20 @@ do_fmt:
     }
 
     /* De-activate the status icon. */
-    ui_sb_update_icon(SB_HDD | HDD_BUS_XTA, 0);
+    ui_sb_update_icon_write(SB_HDD | HDD_BUS_XTA, 0);
 }
 
 /* Execute the DCB we just received. */
 static void
 hdc_callback(void *priv)
 {
-    hdc_t   *dev = (hdc_t *) priv;
-    dcb_t   *dcb = &dev->dcb;
-    drive_t *drive;
-    dprm_t  *params;
-    off64_t  addr;
-    int      no_data = 0;
-    int      val;
-
-    /* Cancel timer. */
-    xta_set_callback(dev, 0);
+    hdc_t        *dev = (hdc_t *) priv;
+    dcb_t        *dcb = &dev->dcb;
+    drive_t      *drive;
+    const dprm_t *params;
+    off64_t       addr;
+    int           no_data = 0;
+    int           val;
 
     drive     = &dev->drives[dcb->drvsel];
     dev->comp = (dcb->drvsel) ? COMP_DRIVE : 0x00;
@@ -509,9 +500,7 @@ hdc_callback(void *priv)
 
         case CMD_READ_VERIFY:
             no_data = 1;
-#ifdef FALLTHROUGH_ANNOTATION
-            [[fallthrough]];
-#endif
+            fallthrough;
 
         case CMD_READ_SECTORS:
             if (!drive->present) {
@@ -536,9 +525,7 @@ hdc_callback(void *priv)
                     dev->buf_len = 512;
 
                     dev->state = STATE_SEND;
-#ifdef FALLTHROUGH_ANNOTATION
-                    [[fallthrough]];
-#endif
+                    fallthrough;
 
                 case STATE_SEND:
                     /* Activate the status icon. */
@@ -546,6 +533,7 @@ hdc_callback(void *priv)
 do_send:
                     /* Get address of sector to load. */
                     if (get_sector(dev, drive, &addr)) {
+read_error:
                         /* De-activate the status icon. */
                         ui_sb_update_icon(SB_HDD | HDD_BUS_XTA, 0);
                         dev->comp |= COMP_ERR;
@@ -554,20 +542,23 @@ do_send:
                     }
 
                     /* Read the block from the image. */
-                    hdd_image_read(drive->hdd_num, addr, 1,
-                                   (uint8_t *) dev->sector_buf);
+                    if (hdd_image_read(drive->hdd_num, addr, 1,
+                                       (uint8_t *) dev->sector_buf) < 0) {
+                        dev->sense = ERR_BADTRK;
+                        goto read_error;
+                    }
 
                     /* Ready to transfer the data out. */
                     dev->state   = STATE_SDATA;
                     dev->buf_idx = 0;
                     if (no_data) {
                         /* Delay a bit, no actual transfer. */
-                        xta_set_callback(dev, HDC_TIME);
+                        timer_advance_u64(&dev->timer, HDC_TIME);
                     } else {
                         if (dev->intr & DMA_ENA) {
                             /* DMA enabled. */
                             dev->buf_ptr = dev->sector_buf;
-                            xta_set_callback(dev, HDC_TIME);
+                            timer_advance_u64(&dev->timer, HDC_TIME);
                         } else {
                             /* Copy from sector to data. */
                             memcpy(dev->data,
@@ -590,14 +581,14 @@ do_send:
                                 xta_log("%s: CMD_READ_SECTORS out of data (idx=%d, len=%d)!\n", dev->name, dev->buf_idx, dev->buf_len);
 
                                 dev->status |= (STAT_CD | STAT_IO | STAT_REQ);
-                                xta_set_callback(dev, HDC_TIME);
+                                timer_advance_u64(&dev->timer, HDC_TIME);
                                 return;
                             }
                             dev->buf_ptr++;
                             dev->buf_idx++;
                         }
                     }
-                    xta_set_callback(dev, HDC_TIME);
+                    timer_advance_u64(&dev->timer, HDC_TIME);
                     dev->state = STATE_SDONE;
                     break;
 
@@ -646,13 +637,11 @@ do_send:
                     dev->buf_len = 512;
 
                     dev->state = STATE_RECV;
-#ifdef FALLTHROUGH_ANNOTATION
-                    [[fallthrough]];
-#endif
+                    fallthrough;
 
                 case STATE_RECV:
                     /* Activate the status icon. */
-                    ui_sb_update_icon(SB_HDD | HDD_BUS_XTA, 1);
+                    ui_sb_update_icon_write(SB_HDD | HDD_BUS_XTA, 1);
 do_recv:
                     /* Ready to transfer the data in. */
                     dev->state   = STATE_RDATA;
@@ -660,7 +649,7 @@ do_recv:
                     if (dev->intr & DMA_ENA) {
                         /* DMA enabled. */
                         dev->buf_ptr = dev->sector_buf;
-                        xta_set_callback(dev, HDC_TIME);
+                        timer_advance_u64(&dev->timer, HDC_TIME);
                     } else {
                         /* No DMA, do PIO. */
                         dev->buf_ptr = dev->data;
@@ -679,7 +668,7 @@ do_recv:
 
                                 xta_log("%s: CMD_WRITE_SECTORS out of data!\n", dev->name);
                                 dev->status |= (STAT_CD | STAT_IO | STAT_REQ);
-                                xta_set_callback(dev, HDC_TIME);
+                                timer_advance_u64(&dev->timer, HDC_TIME);
                                 return;
                             }
 
@@ -687,7 +676,7 @@ do_recv:
                             dev->buf_idx++;
                         }
                         dev->state = STATE_RDONE;
-                        xta_set_callback(dev, HDC_TIME);
+                        timer_advance_u64(&dev->timer, HDC_TIME);
                     }
                     break;
 
@@ -699,8 +688,9 @@ do_recv:
 
                     /* Get address of sector to write. */
                     if (get_sector(dev, drive, &addr)) {
+write_error:
                         /* De-activate the status icon. */
-                        ui_sb_update_icon(SB_HDD | HDD_BUS_XTA, 0);
+                        ui_sb_update_icon_write(SB_HDD | HDD_BUS_XTA, 0);
 
                         dev->comp |= COMP_ERR;
                         set_intr(dev);
@@ -708,13 +698,16 @@ do_recv:
                     }
 
                     /* Write the block to the image. */
-                    hdd_image_write(drive->hdd_num, addr, 1,
-                                    (uint8_t *) dev->sector_buf);
+                    if (hdd_image_write(drive->hdd_num, addr, 1,
+                                        (uint8_t *) dev->sector_buf) < 0) {
+                        dev->sense = ERR_BADTRK;
+                        goto write_error;
+                    }
 
                     dev->buf_idx = 0;
                     if (--dev->count == 0) {
                         /* De-activate the status icon. */
-                        ui_sb_update_icon(SB_HDD | HDD_BUS_XTA, 0);
+                        ui_sb_update_icon_write(SB_HDD | HDD_BUS_XTA, 0);
 
                         set_intr(dev);
                         return;
@@ -791,7 +784,7 @@ do_recv:
                     dev->state   = STATE_RDATA;
                     if (dev->intr & DMA_ENA) {
                         dev->buf_ptr = dev->sector_buf;
-                        xta_set_callback(dev, HDC_TIME);
+                        timer_advance_u64(&dev->timer, HDC_TIME);
                     } else {
                         dev->buf_ptr = dev->data;
                         dev->status |= STAT_REQ;
@@ -806,7 +799,7 @@ do_recv:
                             if (val == DMA_NODATA) {
                                 xta_log("%s: CMD_WRITE_BUFFER out of data!\n", dev->name);
                                 dev->status |= (STAT_CD | STAT_IO | STAT_REQ);
-                                xta_set_callback(dev, HDC_TIME);
+                                timer_advance_u64(&dev->timer, HDC_TIME);
                                 return;
                             }
 
@@ -814,7 +807,7 @@ do_recv:
                             dev->buf_idx++;
                         }
                         dev->state = STATE_RDONE;
-                        xta_set_callback(dev, HDC_TIME);
+                        timer_advance_u64(&dev->timer, HDC_TIME);
                     }
                     break;
 
@@ -834,7 +827,7 @@ do_recv:
             switch (dev->state) {
                 case STATE_IDLE:
                     dev->state = STATE_RDONE;
-                    xta_set_callback(dev, 5 * HDC_TIME);
+                    timer_advance_u64(&dev->timer, 5 * HDC_TIME);
                     break;
 
                 case STATE_RDONE:
@@ -851,7 +844,7 @@ do_recv:
                 case STATE_IDLE:
                     if (drive->present) {
                         dev->state = STATE_RDONE;
-                        xta_set_callback(dev, 5 * HDC_TIME);
+                        timer_advance_u64(&dev->timer, 5 * HDC_TIME);
                     } else {
                         dev->comp |= COMP_ERR;
                         dev->sense = ERR_NOTRDY;
@@ -872,7 +865,7 @@ do_recv:
             switch (dev->state) {
                 case STATE_IDLE:
                     dev->state = STATE_RDONE;
-                    xta_set_callback(dev, 10 * HDC_TIME);
+                    timer_advance_u64(&dev->timer, 10 * HDC_TIME);
                     break;
 
                 case STATE_RDONE:
@@ -899,7 +892,7 @@ hdc_read(uint16_t port, void *priv)
     hdc_t  *dev = (hdc_t *) priv;
     uint8_t ret = 0xff;
 
-    switch (port & 7) {
+    switch (port & 3) {
         case 0: /* DATA register */
             dev->status &= ~STAT_IRQ;
 
@@ -917,7 +910,7 @@ hdc_read(uint16_t port, void *priv)
                     /* All data sent. */
                     dev->status &= ~STAT_REQ;
                     dev->state = STATE_SDONE;
-                    xta_set_callback(dev, HDC_TIME);
+                    timer_set_delay_u64(&dev->timer, HDC_TIME);
                 }
             } else if (dev->state == STATE_COMPL) {
                 xta_log("DCB=%02X  status=%02X comp=%02X\n", dev->dcb.cmd, dev->status, dev->comp);
@@ -932,7 +925,7 @@ hdc_read(uint16_t port, void *priv)
             break;
 
         case 2:         /* "read option jumpers" */
-            ret = 0xff; /* all switches off */
+            ret = dev->sw;
             break;
 
         default:
@@ -948,7 +941,7 @@ hdc_write(uint16_t port, uint8_t val, void *priv)
 {
     hdc_t *dev = (hdc_t *) priv;
 
-    switch (port & 7) {
+    switch (port & 3) {
         case 0: /* DATA register */
             if (dev->state == STATE_RDATA) {
                 if (!(dev->status & STAT_REQ)) {
@@ -975,7 +968,7 @@ hdc_write(uint16_t port, uint8_t val, void *priv)
                     else
                         dev->state = STATE_IDLE;
                     dev->status &= ~STAT_CD;
-                    xta_set_callback(dev, HDC_TIME);
+                    timer_set_delay_u64(&dev->timer, HDC_TIME);
                 }
             }
             break;
@@ -1006,39 +999,92 @@ hdc_write(uint16_t port, uint8_t val, void *priv)
     }
 }
 
-static void *
-xta_init(const device_t *info)
+void
+xta_handler(void *priv, int set)
 {
-    drive_t *drive;
-    char    *bios_rev = NULL;
-    char    *fn       = NULL;
-    hdc_t   *dev;
-    int      c;
-    int      max = XTA_NUM;
+    hdc_t      *dev = (hdc_t *) priv;
+
+    io_handler(set, dev->base, 4,
+               hdc_read, NULL, NULL, hdc_write, NULL, NULL, dev);
+}
+
+static void *
+xta_init_common(const device_t *info, int type)
+{
+    drive_t    *drive;
+    const char *bios_rev = NULL;
+    const char *fn       = NULL;
+    hdc_t      *dev;
+    int         c;
+    int         min      = 0;
+    int         max      = XTA_NUM;
 
     /* Allocate and initialize device block. */
-    dev = malloc(sizeof(hdc_t));
-    memset(dev, 0x00, sizeof(hdc_t));
-    dev->type = info->local;
+    dev = calloc(1, sizeof(hdc_t));
+
+    dev->sw   = 0xff;        /* all switches off */
+    dev->type = type;
 
     /* Do per-controller-type setup. */
     switch (dev->type) {
         case 0: /* WDXT-150, with BIOS */
             dev->name     = "WDXT-150";
+            bios_rev      = (char *) device_get_config_bios("bios_rev");
+            fn            = (char *) device_get_bios_file(info, bios_rev, 0);
+            /* Revision 2 actually supports 2 drives using drive select. */
+            if (!strcmp(bios_rev, "rev_1"))
+                max           = 1;
+#ifdef SELECTABLE_BASE
             dev->base     = device_get_config_hex16("base");
+#else
+            dev->base     = 0x0320;
+#endif
             dev->irq      = device_get_config_int("irq");
             dev->rom_addr = device_get_config_hex20("bios_addr");
             dev->dma      = 3;
-            bios_rev      = (char *) device_get_config_bios("bios_rev");
-            fn            = (char *) device_get_bios_file(info, (const char *) bios_rev, 0);
-            max           = 1;
+        case 1: /* Amstrad PC3086 */
+            dev->name     = "WDXT-150 PC3086";
+            dev->rom_addr = 0xc8000;
+            fn            = PC3086_BIOS_FILE;
+            dev->base     = 0x0320;
+            dev->irq      = 5;
+            dev->dma      = 3;
             break;
 
-        case 1: /* EuroPC */
-            dev->name = "HD20";
-            dev->base = 0x0320;
-            dev->irq  = 5;
-            dev->dma  = 3;
+        case 2: /* EuroPC */
+        case 5: /* Amstrad PC5086 */
+            switch (dev->type) {
+                case 2:
+                    dev->name     = "HD20";
+                    break;
+                case 5:
+                    dev->name     = "ST-50X PC5086";
+                    dev->rom_addr = 0xc8000;
+                    fn            = PC5086_BIOS_FILE;
+                    max           = 1;
+                    break;
+            }
+            dev->base     = 0x0320;
+            dev->irq      = 5;
+            dev->dma      = 3;
+            break;
+        case 3: /* Seagate ST-05X Standalone */
+        case 4: /* Seagate ST-05X Standalone secondary device */
+            switch (dev->type) {
+                case 3:
+                    dev->name     = "ST-50X PRI";
+                    dev->rom_addr = device_get_config_hex20("bios_addr");
+                    fn            = ST50X_BIOS_FILE;
+                    max           = 1;
+                    break;
+                case 4:
+                    dev->name     = "ST-50X SEC";
+                    min           = 1;
+                    break;
+            }
+            dev->base     = 0x0320 + (dev->type & 4);
+            dev->irq      = 5;
+            dev->dma      = 3;
             break;
 
         default:
@@ -1049,14 +1095,16 @@ xta_init(const device_t *info)
             dev->name, dev->base, dev->irq, dev->dma);
     if (dev->rom_addr != 0x000000)
         xta_log(", BIOS=%06X", dev->rom_addr);
-
     xta_log(")\n");
 
     /* Load any disks for this device class. */
     c = 0;
     for (uint8_t i = 0; i < HDD_NUM; i++) {
-        if ((hdd[i].bus == HDD_BUS_XTA) && (hdd[i].xta_channel < max)) {
-            drive = &dev->drives[hdd[i].xta_channel];
+        if ((hdd[i].bus_type == HDD_BUS_XTA) && (hdd[i].xta_channel >= min) && (hdd[i].xta_channel < max)) {
+            if (dev->type == 4)
+                drive = &dev->drives[0];
+            else
+                drive = &dev->drives[hdd[i].xta_channel];
 
             if (!hdd_image_load(i)) {
                 drive->present = 0;
@@ -1075,6 +1123,156 @@ xta_init(const device_t *info)
             drive->spt    = drive->cfg_spt;
             drive->hpc    = drive->cfg_hpc;
             drive->tracks = drive->cfg_tracks;
+
+            if (dev->type == 0) {
+                if (!strcmp(bios_rev, "rev_1")) {
+                    /*
+                       WDXT-150, Revision 1 switches:
+                           - Bit 6: 1 = IBM (INT 13h), 0 = Tandy (INT 0Ah).
+                           - Bit 5: 1 = 17 sectors per track, 0 = 27 sectors per track.
+                           - Drive 0, bits 1,0:
+                               - With bit 4 set:
+                                   - 0,0 = 820/4/17;
+                                   - 0,1 = 615/4/17;
+                                   - 1,0 = 782/4/17;
+                                   - 1,1 = 782/2/17.
+                               - With bit 4 clear:
+                                   - 0,0 = 1024/4/17;
+                                   - 0,1 = 940/4/17;
+                                   - 1,0 = 1024/4/17;
+                                   - 1,1 = 1024/2/17.
+                           - Drive 1, bits 3,2:
+                               - With bit 4 set:
+                                   - 0,0 = 820/4/17;
+                                   - 0,1 = 615/4/17;
+                                   - 1,0 = 782/4/17;
+                                   - 1,1 = 782/2/17.
+                               - With bit 4 clear:
+                                   - 0,0 = 1024/4/17;
+                                   - 0,1 = 940/4/17;
+                                   - 1,0 = 1024/4/17;
+                                   - 1,1 = 1024/2/17.
+                     */
+                    if (drive->tracks == 940)
+                        dev->sw = ((dev->sw & 0xef) & (c ? 0xf3 : 0xfc)) | (0x01 << (c << 1));
+                    else if (drive->tracks == 1024) {
+                        if (drive->hpc == 4)
+                            dev->sw = ((dev->sw & 0xef) & (c ? 0xf3 : 0xfc)) | (0x00 << (c << 1));
+                        else
+                            dev->sw = ((dev->sw & 0xef) & (c ? 0xf3 : 0xfc)) | (0x03 << (c << 1));
+                    } else if (drive->tracks == 782) {
+                        if (drive->hpc == 4)
+                            dev->sw = (dev->sw & (c ? 0xf3 : 0xfc)) | (0x02 << (c << 1));
+                        else
+                            dev->sw = (dev->sw & (c ? 0xf3 : 0xfc)) | (0x03 << (c << 1));
+                    } else if (drive->tracks == 820)
+                        dev->sw = (dev->sw & (c ? 0xf3 : 0xfc)) | (0x00 << (c << 1));
+                    else
+                        dev->sw = (dev->sw & (c ? 0xf3 : 0xfc)) | (0x01 << (c << 1));
+                } else {
+                    /*
+                       WDXT-150, Revision 2 switches:
+                           - Drive 0, bits 1,0:
+                               - With bit 4 set:
+                                   - 0,0 = 612/4/17;
+                                   - 0,1 = 615/6/17;
+                                   - 1,0 = 977/5/17;
+                                   - 1,1 = 615/4/17.
+                               - With bit 4 clear:
+                                   - 0,0 = 976/4/17;
+                                   - 0,1 = 1024/3/17;
+                                   - 1,0 = 1024/4/17;
+                                   - 1,1 = 1024/2/17.
+                           - Drive 1, bits 3,2:
+                               - With bit 4 set:
+                                   - 0,0 = 612/4/17;
+                                   - 0,1 = 615/6/17;
+                                   - 1,0 = 977/5/17;
+                                   - 1,1 = 615/4/17.
+                               - With bit 4 clear:
+                                   - 0,0 = 976/4/17;
+                                   - 0,1 = 1024/3/17;
+                                   - 1,0 = 1024/4/17;
+                                   - 1,1 = 1024/2/17.
+                     */
+                    if (drive->tracks == 976)
+                        dev->sw = ((dev->sw & 0xef) & (c ? 0xf3 : 0xfc)) | (0x00 << (c << 1));
+                    else if (drive->tracks == 1024) {
+                        if (drive->hpc == 3)
+                            dev->sw = ((dev->sw & 0xef) & (c ? 0xf3 : 0xfc)) | (0x01 << (c << 1));
+                        else if (drive->hpc == 4)
+                            dev->sw = ((dev->sw & 0xef) & (c ? 0xf3 : 0xfc)) | (0x02 << (c << 1));
+                        else
+                            dev->sw = ((dev->sw & 0xef) & (c ? 0xf3 : 0xfc)) | (0x03 << (c << 1));
+                    } else if (drive->tracks == 615) {
+                        if (drive->hpc == 6)
+                            dev->sw = (dev->sw & (c ? 0xf3 : 0xfc)) | (0x01 << (c << 1));
+                        else
+                            dev->sw = (dev->sw & (c ? 0xf3 : 0xfc)) | (0x03 << (c << 1));
+                    } else if (drive->tracks == 612)
+                        dev->sw = (dev->sw & (c ? 0xf3 : 0xfc)) | (0x00 << (c << 1));
+                    else
+                        dev->sw = (dev->sw & (c ? 0xf3 : 0xfc)) | (0x02 << (c << 1));
+                }
+            } else if (dev->type == 1) {
+                /*
+                   WDXT-150, Revision 3 (Amstrad PC3086) switches:
+                       - Drive 0, bits 1,0:
+                           - With bit 4 set:
+                               - 0,0 = 612/4/17;
+                               - 0,1 = 615/6/17;
+                               - 1,0 = 977/5/17;
+                               - 1,1 = 615/4/17.
+                           - With bit 4 clear:
+                               - 0,0 = 971/4/17;
+                               - 0,1 = 976/6/17;
+                               - 1,0 = 1024/5/17;
+                               - 1,1 = 976/4/17.
+                       - Drive 1, bits 3,2:
+                           - With bit 4 set:
+                               - 0,0 = 612/4/17;
+                               - 0,1 = 615/6/17;
+                               - 1,0 = 977/5/17;
+                               - 1,1 = 615/4/17.
+                           - With bit 4 clear:
+                               - 0,0 = 971/4/17;
+                               - 0,1 = 976/6/17;
+                               - 1,0 = 1024/5/17;
+                               - 1,1 = 976/4/17.
+                 */
+                if (drive->tracks == 971)
+                    dev->sw = ((dev->sw & 0xef) & (c ? 0xf3 : 0xfc)) | (0x00 << (c << 1));
+                else if (drive->tracks == 976) {
+                    if (drive->hpc == 6)
+                        dev->sw = ((dev->sw & 0xef) & (c ? 0xf3 : 0xfc)) | (0x01 << (c << 1));
+                    else
+                        dev->sw = ((dev->sw & 0xef) & (c ? 0xf3 : 0xfc)) | (0x03 << (c << 1));
+                } else if (drive->tracks == 1024)
+                    dev->sw = ((dev->sw & 0xef) & (c ? 0xf3 : 0xfc)) | (0x02 << (c << 1));
+                else if (drive->tracks == 615) {
+                    if (drive->hpc == 6)
+                        dev->sw = (dev->sw & (c ? 0xf3 : 0xfc)) | (0x01 << (c << 1));
+                    else
+                        dev->sw = (dev->sw & (c ? 0xf3 : 0xfc)) | (0x03 << (c << 1));
+                } else if (drive->tracks == 612)
+                    dev->sw = (dev->sw & (c ? 0xf3 : 0xfc)) | (0x00 << (c << 1));
+                else
+                    dev->sw = (dev->sw & (c ? 0xf3 : 0xfc)) | (0x02 << (c << 1));
+            } else if ((dev->type >= 3) && (dev->type <= 5)) {
+                /*
+                   Bits 1, 0:
+                       - 1, 1 = 615/4/17 (20 MB);
+                       - 1, 0 or 0, 0 = 980/5/17 (40 MB);
+                       - 0, 1 = 615/6/17 (30 MB).
+                       - 0, 0 is actually no hard disk present - switch port supposed to be readable always?
+                 */
+                if (drive->tracks == 980)
+                    dev->sw = 0xfe;
+                else if (drive->hpc == 6)
+                    dev->sw = 0xfd;
+                else
+                    dev->sw = 0xff;
+            }
 
             xta_log("%s: drive%d (cyl=%d,hd=%d,spt=%d), disk %d\n",
                     dev->name, hdd[i].xta_channel, drive->tracks,
@@ -1101,6 +1299,23 @@ xta_init(const device_t *info)
     return dev;
 }
 
+static void *
+xta_init(const device_t *info)
+{
+    return xta_init_common(info, info->local);
+}
+
+static void *
+xta_st50x_init(const device_t *info)
+{
+    hdc_dual_t *dev = (hdc_dual_t *) calloc(1, sizeof(hdc_dual_t));
+
+    dev->hdc[0] = xta_init_common(info, info->local);
+    dev->hdc[1] = xta_init_common(info, 4);
+
+    return dev;
+}
+
 static void
 xta_close(void *priv)
 {
@@ -1122,94 +1337,191 @@ xta_close(void *priv)
     free(dev);
 }
 
+static void
+xta_st50x_close(void *priv)
+{
+    hdc_dual_t    *dev = (hdc_dual_t *) priv;
+
+    xta_close(dev->hdc[1]);
+    xta_close(dev->hdc[0]);
+}
+
+static int
+st50x_available(void)
+{
+    return (rom_present(ST50X_BIOS_FILE));
+}
+
 static const device_config_t wdxt150_config[] = {
     // clang-format off
     {
-        .name = "base",
-        .description = "Address",
-        .type = CONFIG_HEX16,
-        .default_string = "",
-        .default_int = 0x0320,
-        .file_filter = "",
-        .spinner = { 0 }, /*W2*/
-        .selection = {
+        .name           = "bios_rev",
+        .description    = "BIOS Revision",
+        .type           = CONFIG_BIOS,
+        .default_string = "rev_1",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .bios           = {
+            {
+                .name          = "Revision 1.0",
+                .internal_name = "rev_1",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 8192,
+                .files         = { WD_REV_1_BIOS_FILE, "" }
+            },
+            {
+                .name          = "Revision 2.0",
+                .internal_name = "rev_2",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 8192,
+                .files         = { WD_REV_2_BIOS_FILE, "" }
+            },
+            { .files_no = 0 }
+        },
+    },
+#ifdef SELECTABLE_BASE
+    {
+        .name           = "base",
+        .description    = "Address",
+        .type           = CONFIG_HEX16,
+        .default_string = NULL,
+        .default_int    = 0x0320,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
             { .description = "320H", .value = 0x0320 },
             { .description = "324H", .value = 0x0324 },
             { .description = ""                      }
         },
+        .bios           = { { 0 } }
     },
+#endif
     {
-        .name = "irq",
-        .description = "IRQ",
-        .type = CONFIG_SELECTION,
-        .default_string = "",
-        .default_int = 5,
-        .file_filter = "",
-        .spinner = { 0 }, /*W3*/
-        .selection = {
+        .name           = "irq",
+        .description    = "IRQ",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 5,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
             { .description = "IRQ 5", .value = 5 },
             { .description = "IRQ 4", .value = 4 },
             { .description = ""                  }
         },
+        .bios           = { { 0 } }
     },
     {
-        .name = "bios_addr",
-        .description = "BIOS Address",
-        .type = CONFIG_HEX20,
-        .default_string = "",
-        .default_int = 0xc8000,
-        .file_filter = "",
-        .spinner = { 0 }, /*W1*/
-        .selection = {
+        .name           = "bios_addr",
+        .description    = "BIOS address",
+        .type           = CONFIG_HEX20,
+        .default_string = NULL,
+        .default_int    = 0xc8000,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
             { .description = "C800H", .value = 0xc8000 },
             { .description = "CA00H", .value = 0xca000 },
             { .description = ""                        }
         },
+        .bios           = { { 0 } }
     },
+    { .name = "", .description = "", .type = CONFIG_END }
+// clang-format off
+};
+
+static const device_config_t st50x_config[] = {
+    // clang-format off
     {
-        .name = "bios_rev",
-        .description = "BIOS Revision",
-        .type = CONFIG_BIOS,
-        .default_string = "rev_1",
-        .default_int = 0,
-        .file_filter = "",
-        .spinner = { 0 }, /*W1*/
-        .bios = {
-            { .name = "Revision 1.0", .internal_name = "rev_1", .bios_type = BIOS_NORMAL,
-              .files_no = 1, .local = 0, .size = 8192, .files = { WD_REV_1_BIOS_FILE, "" } },
-            { .name = "Revision 2.0", .internal_name = "rev_2", .bios_type = BIOS_NORMAL,
-              .files_no = 1, .local = 0, .size = 8192, .files = { WD_REV_2_BIOS_FILE, "" } },
-            { .files_no = 0 }
+        .name           = "bios_addr",
+        .description    = "BIOS address",
+        .type           = CONFIG_HEX20,
+        .default_string = NULL,
+        .default_int    = 0xc8000,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "C800H", .value = 0xc8000 },
+            { .description = "CA00H", .value = 0xca000 },
+            { .description = ""                        }
         },
+        .bios           = { { 0 } }
     },
     { .name = "", .description = "", .type = CONFIG_END }
 // clang-format off
 };
 
 const device_t xta_wdxt150_device = {
-    .name = "WDXT-150 XTA Fixed Disk Controller",
+    .name          = "WDXT-150 XTA Fixed Disk Controller",
     .internal_name = "xta_wdxt150",
-    .flags = DEVICE_ISA,
-    .local = 0,
-    .init = xta_init,
-    .close = xta_close,
-    .reset = NULL,
-    { .available = NULL /*xta_available*/ },
+    .flags         = DEVICE_ISA,
+    .local         = 0,
+    .init          = xta_init,
+    .close         = xta_close,
+    .reset         = NULL,
+    .available     = NULL /*xta_available*/,
     .speed_changed = NULL,
-    .force_redraw = NULL,
-    .config = wdxt150_config
+    .force_redraw  = NULL,
+    .config        = wdxt150_config
+};
+
+const device_t xta_wdxt150_pc3086_device = {
+    .name          = "WDXT-150 XTA Fixed Disk Controller (PC3086)",
+    .internal_name = "xta_wdxt150",
+    .flags         = DEVICE_ISA,
+    .local         = 1,
+    .init          = xta_init,
+    .close         = xta_close,
+    .reset         = NULL,
+    .available     = NULL /*xta_available*/,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = wdxt150_config
 };
 
 const device_t xta_hd20_device = {
-    .name = "EuroPC HD20 Fixed Disk Controller",
+    .name          = "EuroPC HD20 Fixed Disk Controller",
     .internal_name = "xta_hd20",
-    .flags = DEVICE_ISA,
-    .local = 1,
-    .init = xta_init,
-    .close = xta_close,
-    .reset = NULL,
-    { .available = NULL },
+    .flags         = DEVICE_ISA,
+    .local         = 2,
+    .init          = xta_init,
+    .close         = xta_close,
+    .reset         = NULL,
+    .available     = NULL,
     .speed_changed = NULL,
-    .force_redraw = NULL,
-    .config = NULL
+    .force_redraw  = NULL,
+    .config        = NULL
+};
+
+const device_t xta_st50x_device = {
+    .name          = "ST-50X Fixed Disk Controller",
+    .internal_name = "xta_st50x",
+    .flags         = DEVICE_ISA,
+    .local         = 3,
+    .init          = xta_st50x_init,
+    .close         = xta_st50x_close,
+    .reset         = NULL,
+    .available     = st50x_available,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = st50x_config
+};
+
+const device_t xta_st50x_pc5086_device = {
+    .name          = "ST-50X Fixed Disk Controller (PC5086)",
+    .internal_name = "xta_st50x_pc5086",
+    .flags         = DEVICE_ISA,
+    .local         = 5,
+    .init          = xta_init,
+    .close         = xta_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = NULL
 };
