@@ -552,8 +552,8 @@ ide_hd_identify(const ide_t *ide)
     /* Serial Number */
     ide_padstr((char *) (ide->buffer + 10), "", 20);
     /* Firmware */
-    if (hdd[ide->hdd_num].version_ex)
-        ide_padstr((char *) (ide->buffer + 23), hdd[ide->hdd_num].version_ex, 8);
+    if (hdd[ide->hdd_num].version)
+        ide_padstr((char *) (ide->buffer + 23), hdd[ide->hdd_num].version, 8);
     else
         ide_padstr((char *) (ide->buffer + 23), EMU_VERSION_EX, 8);
     /* Model */
@@ -3001,6 +3001,36 @@ ide_pnp_config_changed_1addr(uint8_t ld, isapnp_device_config_t *config, void *p
                                      config->io[0].base : 0x0000;
         ide_boards[board]->base[1] = (config->io[0].base != ISAPNP_IO_DISABLED) ?
                                      (config->io[0].base + 0x0206) : 0x0000;
+
+        if (ide_boards[board]->base[0] && ide_boards[board]->base[1])
+            ide_set_handlers(board);
+
+        if (config->irq[0].irq != ISAPNP_IRQ_DISABLED)
+            ide_boards[board]->irq = config->irq[0].irq;
+    }
+}
+
+/* OPTi 931 PnP ROM flips the main and side IDE I/O port ranges */
+void
+ide_pnp_config_changed_opti931(uint8_t ld, isapnp_device_config_t *config, void *priv)
+{
+    intptr_t board = (intptr_t) priv;
+
+    if (ld)
+        return;
+
+    if (ide_boards[board]->base[0] || ide_boards[board]->base[1]) {
+        ide_remove_handlers(board);
+        ide_boards[board]->base[0] = ide_boards[board]->base[1] = 0;
+    }
+
+    ide_boards[board]->irq = -1;
+
+    if (config->activate) {
+        ide_boards[board]->base[1] = (config->io[0].base != ISAPNP_IO_DISABLED) ?
+                                     config->io[0].base : 0x0000;
+        ide_boards[board]->base[0] = (config->io[1].base != ISAPNP_IO_DISABLED) ?
+                                     config->io[1].base : 0x0000;
 
         if (ide_boards[board]->base[0] && ide_boards[board]->base[1])
             ide_set_handlers(board);

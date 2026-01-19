@@ -26,6 +26,7 @@ extern MainWindow *main_window;
 #include <QCoreApplication>
 #include <QMessageBox>
 #include <QWindow>
+#include <QClipboard>
 #include <QPainter>
 #include <QWidget>
 #include <QEvent>
@@ -599,7 +600,7 @@ load_texture(const char *f, struct shader_texture *tex)
 
     const GLubyte *rgb = img.constBits();
 
-    int bpp = 4;
+    int bpp = 3;
 
     GLubyte *data = (GLubyte *) malloc((size_t) width * height * bpp);
 
@@ -610,7 +611,6 @@ load_texture(const char *f, struct shader_texture *tex)
             data[(y * width + x) * bpp + 0] = rgb[(Y * width + x) * 3 + 0];
             data[(y * width + x) * bpp + 1] = rgb[(Y * width + x) * 3 + 1];
             data[(y * width + x) * bpp + 2] = rgb[(Y * width + x) * 3 + 2];
-            data[(y * width + x) * bpp + 3] = rgb[(Y * width + x) * 3 + 3];
         }
     }
 
@@ -1147,6 +1147,8 @@ OpenGLRenderer::finalize()
     isFinalized = true;
 }
 
+extern void take_screenshot_clipboard_monitor(int sx, int sy, int sw, int sh, int i);
+
 void
 OpenGLRenderer::onBlit(int buf_idx, int x, int y, int w, int h)
 {
@@ -1184,6 +1186,10 @@ OpenGLRenderer::onBlit(int buf_idx, int x, int y, int w, int h)
 
     if (video_framerate == -1)
         render();
+
+    if (monitors[r_monitor_index].mon_screenshots_raw_clipboard) {
+        take_screenshot_clipboard_monitor(x, y, w, h, r_monitor_index);
+    }
 }
 
 std::vector<std::tuple<uint8_t *, std::atomic_flag *>>
@@ -1723,6 +1729,20 @@ OpenGLRenderer::render()
         QImage image((uchar*)rgb, width, height, width * 3, QImage::Format_RGB888);
         image.mirrored(false, true).save(path, "png");
         monitors[r_monitor_index].mon_screenshots--;
+        free(rgb);
+    }
+    if (monitors[r_monitor_index].mon_screenshots_clipboard) {
+        int  width = destination.width(), height = destination.height();
+
+        unsigned char *rgb = (unsigned char *) calloc(1, (size_t) width * height * 4);
+
+        glw.glFinish();
+        glw.glReadPixels(window_rect.x, window_rect.y, width, height, GL_RGB, GL_UNSIGNED_BYTE, rgb);
+
+        QImage image((uchar*)rgb, width, height, width * 3, QImage::Format_RGB888);
+        QClipboard *clipboard = QApplication::clipboard();
+        clipboard->setImage(image.mirrored(false, true), QClipboard::Clipboard);
+        monitors[r_monitor_index].mon_screenshots_clipboard--;
         free(rgb);
     }
 
