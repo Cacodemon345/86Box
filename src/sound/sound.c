@@ -37,6 +37,7 @@
 #include <86box/snd_mpu401.h>
 #include <86box/sound.h>
 #include <86box/fdd_audio.h>
+#include <86box/hdd_audio.h>
 
 typedef struct {
     const device_t *device;
@@ -96,6 +97,12 @@ static event_t      *sound_fdd_start_event;
 static volatile int fddaudioon = 0;
 static int          fdd_thread_enable = 0;
 
+static thread_t     *sound_hdd_thread_h;
+static event_t      *sound_hdd_event;
+static event_t      *sound_hdd_start_event;
+static volatile int hddaudioon = 0;
+static int          hdd_thread_enable = 0;
+
 static void (*filter_cd_audio)(int channel, double *buffer, void *priv) = NULL;
 static void *filter_cd_audio_p                                          = NULL;
 
@@ -116,12 +123,10 @@ static const SOUND_CARD sound_cards[] = {
     { &ess_ess0968_pnp_device       },
     { &ssi2001_device               },
     { &mmb_device                   },
+#ifdef USE_LIBSERIALPORT /*The following devices required LIBSERIALPORT*/
+    { &opl2board_device             },
+#endif
     { &pasplus_device               },
-    { &voicemasterkey_device        },
-    { &soundmasterplus_device       },
-    { &soundman_device              },
-    { &isadacr0_device              },
-    { &isadacr1_device              },
     { &sb_1_device                  },
     { &sb_15_device                 },
     { &sb_2_device                  },
@@ -130,15 +135,19 @@ static const SOUND_CARD sound_cards[] = {
     { &entertainer_device           },
     { &pssj_isa_device              },
     { &tndy_device                  },
-#ifdef USE_LIBSERIALPORT /*The following devices required LIBSERIALPORT*/
-    { &opl2board_device             },
-#endif
     /* ISA/Sidecar */
     { &adlib_device                 },
+    { &soundmasterplus_device       },
+    { &voicemasterkey_device        },
+    { &isadacr0_device              },
+    { &isadacr1_device              },
+    { &soundman_device              },
     /* ISA16 */
     { &acermagic_s20_device         },
+    { &ad1816_device                },
     { &azt2316a_device              },
     { &azt1605_device               },
+    { &aztpr16_device               },
     { &sb_goldfinch_device          },
     { &cs4232_device                },
     { &cs4235_device                },
@@ -615,6 +624,10 @@ sound_poll(UNUSED(void *priv))
         if (fdd_thread_enable) {
             thread_set_event(sound_fdd_event);
         }
+
+        if (hdd_thread_enable) {
+            thread_set_event(sound_hdd_event);
+        }
         sound_pos_global = 0;
     }
 }
@@ -858,3 +871,59 @@ sound_fdd_thread_end(void)
         }
     }
 }
+
+static void
+sound_hdd_thread(UNUSED(void *param))
+{
+    thread_set_event(sound_hdd_start_event);
+    while (hddaudioon) {
+        thread_wait_event(sound_hdd_event, -1);
+        thread_reset_event(sound_hdd_event);
+
+        if (!hddaudioon)
+            break;
+
+        static float hdd_float_buffer[SOUNDBUFLEN * 2];
+        memset(hdd_float_buffer, 0, sizeof(hdd_float_buffer));
+        hdd_audio_callback((int16_t*)hdd_float_buffer, SOUNDBUFLEN * 2);
+        givealbuffer_hdd(hdd_float_buffer, SOUNDBUFLEN * 2);
+    }
+}
+
+void
+sound_hdd_thread_init(void)
+{
+    if (!hddaudioon) {
+        hddaudioon = 1;
+        hdd_thread_enable = 1;
+        sound_hdd_start_event = thread_create_event();
+        sound_hdd_event = thread_create_event();
+        sound_hdd_thread_h = thread_create(sound_hdd_thread, NULL);
+
+        thread_wait_event(sound_hdd_start_event, -1);
+        thread_reset_event(sound_hdd_start_event);
+    }
+}
+
+void
+sound_hdd_thread_end(void)
+{
+    if (hddaudioon) {
+        hddaudioon = 0;
+        hdd_thread_enable = 0;
+        thread_set_event(sound_hdd_event);
+        thread_wait(sound_hdd_thread_h);
+
+        if (sound_hdd_event) {
+            thread_destroy_event(sound_hdd_event);
+            sound_hdd_event = NULL;
+        }
+
+        sound_hdd_thread_h = NULL;
+        if (sound_hdd_start_event) {
+            thread_destroy_event(sound_hdd_start_event);
+            sound_hdd_start_event = NULL;
+        }
+    }
+}
+

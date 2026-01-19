@@ -848,7 +848,7 @@ static const device_config_t pcjr_config[] = {
 };
 
 const device_t pcjr_device = {
-    .name          = "IBM PCjr",
+    .name          = "IBM PCjr (Video)",
     .internal_name = "pcjr",
     .flags         = 0,
     .local         = 0,
@@ -897,7 +897,7 @@ machine_pcjr_init(UNUSED(const machine_t *model))
 
     /* Initialize the video controller. */
     video_reset(gfxcard[0]);
-    loadfont(FONT_IBM_MDA_437_PATH, 0);
+    video_load_font(FONT_IBM_MDA_437_PATH, FONT_FORMAT_MDA, LOAD_FONT_NO_OFFSET);
     device_context(&pcjr_device);
     pcjr_vid_init(pcjr);
     device_context_restore();

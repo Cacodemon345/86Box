@@ -135,6 +135,7 @@ target_link_libraries(86Box
     sio
     snd
     usb
+    mdsx_dll
     utils
     vid
     voodoo

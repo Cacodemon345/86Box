@@ -263,20 +263,20 @@ typedef struct mach64_t {
 
 #ifdef DMA_BM
     struct {
-        atomic_int state;
+        ATOMIC_INT  state;
 
-        atomic_uint frame_buf_offset, system_buf_addr, command, status;
+        ATOMIC_UINT frame_buf_offset, system_buf_addr, command, status;
 
-        atomic_bool system_triggered;
+        ATOMIC_BOOL system_triggered;
 
         mutex_t *lock;
     } dma;
 #endif
 
     fifo_entry_t fifo[FIFO_SIZE];
-    atomic_int   fifo_read_idx;
-    atomic_int   fifo_write_idx;
-    atomic_int   blitter_busy;
+    ATOMIC_INT   fifo_read_idx;
+    ATOMIC_INT   fifo_write_idx;
+    ATOMIC_INT   blitter_busy;
 
     thread_t *fifo_thread;
     event_t  *wake_fifo_thread;
@@ -563,6 +563,7 @@ mach64_recalctimings(svga_t *svga)
     const mach64_t *mach64 = (mach64_t *) svga->priv;
 
     if (((mach64->crtc_gen_cntl >> 24) & 3) == 3) {
+        svga->char_width = 8;
         svga->vtotal     = (mach64->crtc_v_total_disp & 2047) + 1;
         svga->dispend    = ((mach64->crtc_v_total_disp >> 16) & 2047) + 1;
         svga->htotal     = (mach64->crtc_h_total_disp & 255) + 1;
@@ -826,7 +827,7 @@ mach64_recalc_dp_set_engine(mach64_t *mach64)
     mach64->src_off_pitch = 0;
     if (mach64->dp_set_gui_engine & (1 << 15))
         mach64->src_off_pitch = mach64->dst_off_pitch;
-    
+
     switch ((mach64->dp_set_gui_engine >> 16) & 3)
     {
         case 0:
@@ -983,7 +984,7 @@ start_blit_op:
                     mach64_blit(0, -1, mach64);
             }
             break;
-        
+
         case 0x2ec:
         case 0x2ed:
         case 0x2ee:
@@ -2168,6 +2169,14 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                     uint32_t dest_dat;
                     uint32_t host_dat = 0;
                     int      mix      = 0;
+                    int      draw_pixel = !(mach64->dst_cntl & DST_POLYGON_EN);
+
+                    if (mach64->dst_cntl & DST_POLYGON_EN) {
+                        if (mach64->dst_cntl & DST_Y_MAJOR)
+                            draw_pixel = 1;
+                        else if (mach64->accel.err >= 0)
+                            draw_pixel = 1;
+                    }
 
                     if (mach64->accel.source_host) {
                         host_dat = cpu_dat;
@@ -2214,7 +2223,7 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                             break;
                     }
 
-                    if ((mach64->accel.dst_x >= mach64->accel.sc_left) && (mach64->accel.dst_x <= mach64->accel.sc_right) && (mach64->accel.dst_y >= mach64->accel.sc_top) && (mach64->accel.dst_y <= mach64->accel.sc_bottom)) {
+                    if ((mach64->accel.dst_x >= mach64->accel.sc_left) && (mach64->accel.dst_x <= mach64->accel.sc_right) && (mach64->accel.dst_y >= mach64->accel.sc_top) && (mach64->accel.dst_y <= mach64->accel.sc_bottom) && draw_pixel) {
                         switch (mix ? mach64->accel.source_fg : mach64->accel.source_bg) {
                             case SRC_HOST:
                                 src_dat = host_dat;
@@ -2284,17 +2293,21 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
 
                     if (mach64->dst_cntl & DST_Y_MAJOR) {
                         mach64->accel.dst_y += mach64->accel.yinc;
+                        mach64->accel.src_y += mach64->accel.yinc;
                         if (mach64->accel.err >= 0) {
                             mach64->accel.err += mach64->dst_bres_dec;
                             mach64->accel.dst_x += mach64->accel.xinc;
+                            mach64->accel.src_x += mach64->accel.xinc;
                         } else {
                             mach64->accel.err += mach64->dst_bres_inc;
                         }
                     } else {
                         mach64->accel.dst_x += mach64->accel.xinc;
+                        mach64->accel.src_x += mach64->accel.xinc;
                         if (mach64->accel.err >= 0) {
                             mach64->accel.err += mach64->dst_bres_dec;
                             mach64->accel.dst_y += mach64->accel.yinc;
+                            mach64->accel.src_y += mach64->accel.yinc;
                         } else {
                             mach64->accel.err += mach64->dst_bres_inc;
                         }
@@ -2346,9 +2359,7 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                     if (mach64->dst_cntl & DST_POLYGON_EN) {
                         if (mach64->dst_cntl & DST_Y_MAJOR)
                             draw_pixel = 1;
-                        else if ((mach64->dst_cntl & DST_X_DIR) && mach64->accel.err < (mach64->dst_bres_dec + mach64->dst_bres_inc)) /*X+*/
-                            draw_pixel = 1;
-                        else if (!(mach64->dst_cntl & DST_X_DIR) && mach64->accel.err >= 0) /*X-*/
+                        else if (mach64->accel.err >= 0)
                             draw_pixel = 1;
                     }
 
@@ -2405,62 +2416,27 @@ mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64)
                         return;
                     }
 
-                    switch (mach64->dst_cntl & 7) {
-                        case 0:
-                        case 2:
-                            mach64->accel.src_x--;
-                            mach64->accel.dst_x--;
-                            break;
-                        case 1:
-                        case 3:
-                            mach64->accel.src_x++;
-                            mach64->accel.dst_x++;
-                            break;
-                        case 4:
-                        case 5:
-                            mach64->accel.src_y--;
-                            mach64->accel.dst_y--;
-                            break;
-                        case 6:
-                        case 7:
-                            mach64->accel.src_y++;
-                            mach64->accel.dst_y++;
-                            break;
-
-                        default:
-                            break;
-                    }
-                    mach64_log("x %i y %i err %i inc %i dec %i\n", mach64->accel.dst_x, mach64->accel.dst_y, mach64->accel.err, mach64->dst_bres_inc, mach64->dst_bres_dec);
-                    if (mach64->accel.err >= 0) {
-                        mach64->accel.err += mach64->dst_bres_dec;
-
-                        switch (mach64->dst_cntl & 7) {
-                            case 0:
-                            case 1:
-                                mach64->accel.src_y--;
-                                mach64->accel.dst_y--;
-                                break;
-                            case 2:
-                            case 3:
-                                mach64->accel.src_y++;
-                                mach64->accel.dst_y++;
-                                break;
-                            case 4:
-                            case 6:
-                                mach64->accel.src_x--;
-                                mach64->accel.dst_x--;
-                                break;
-                            case 5:
-                            case 7:
-                                mach64->accel.src_x++;
-                                mach64->accel.dst_x++;
-                                break;
-
-                            default:
-                                break;
+                    if (mach64->dst_cntl & DST_Y_MAJOR) {
+                        mach64->accel.dst_y += mach64->accel.yinc;
+                        mach64->accel.src_y += mach64->accel.yinc;
+                        if (mach64->accel.err >= 0) {
+                            mach64->accel.err += mach64->dst_bres_dec;
+                            mach64->accel.dst_x += mach64->accel.xinc;
+                            mach64->accel.src_x += mach64->accel.xinc;
+                        } else {
+                            mach64->accel.err += mach64->dst_bres_inc;
                         }
-                    } else
-                        mach64->accel.err += mach64->dst_bres_inc;
+                    } else {
+                        mach64->accel.dst_x += mach64->accel.xinc;
+                        mach64->accel.src_x += mach64->accel.xinc;
+                        if (mach64->accel.err >= 0) {
+                            mach64->accel.err += mach64->dst_bres_dec;
+                            mach64->accel.dst_y += mach64->accel.yinc;
+                            mach64->accel.src_y += mach64->accel.yinc;
+                        } else {
+                            mach64->accel.err += mach64->dst_bres_inc;
+                        }
+                    }
                 }
             }
             break;
@@ -2782,7 +2758,7 @@ mach64_ext_readb(uint32_t addr, void *priv)
             case 0x23:
                 READ8(addr, mach64->dsp_config);
                 break;
-            
+
             case 0x24:
             case 0x25:
             case 0x26:
@@ -2875,7 +2851,7 @@ mach64_ext_readb(uint32_t addr, void *priv)
                     READ8(addr, mach64->gp_io);
                 }
 //                pclog("GPIO READ 0x%X, 0x00\n", addr & 0x3ff);
-                
+
                 break;
             case 0x80:
             case 0x81:
@@ -3015,7 +2991,7 @@ mach64_ext_readb(uint32_t addr, void *priv)
                 mach64_wait_fifo_idle(mach64);
                 READ8(addr ^ 2, mach64->dst_height_width);
                 break;
-            
+
             case 0x110:
             case 0x111:
                 addr += 2;
@@ -3331,7 +3307,7 @@ mach64_ext_readb(uint32_t addr, void *priv)
 
                 ret = FIFO_EMPTY ? 0 : 1;
                 break;
-            
+
             case 0x33a:
                 ret = FIFO_EMPTY ? 32 : 31;
                 break;
@@ -3721,7 +3697,7 @@ mach64_ext_writeb(uint32_t addr, uint8_t val, void *priv)
                     svga->hwcursor.yoff = (mach64->cur_horz_vert_off >> 16) & 0x3f;
                 }
                 break;
-            
+
             case 0x78:
             case 0x79:
             case 0x7A:
@@ -5833,7 +5809,7 @@ const device_t mach64vt2_device = {
 };
 
 const device_t mach64vt3_onboard_device = {
-    .name          = "ATI Mach64VT3 (Onboard)",
+    .name          = "ATI Mach64VT3 (On-Board)",
     .internal_name = "mach64vt3_onboard",
     .flags         = DEVICE_PCI,
     .local         = MACH64_VT3 | (1 << 19),
