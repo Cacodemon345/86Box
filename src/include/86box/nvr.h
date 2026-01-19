@@ -6,8 +6,6 @@
  *
  *          Definitions for the generic NVRAM/CMOS driver.
  *
- *
- *
  * Authors: Fred N. van Kempen, <decwiz@yahoo.com>,
  *          David Hrdlička, <hrdlickadavid@outlook.com>
  *
@@ -44,7 +42,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING  IN ANY  WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
 #ifndef EMU_NVR_H
 #define EMU_NVR_H
 
@@ -98,6 +95,7 @@ extern const device_t ami_1992_nvr_device;
 extern const device_t ami_1994_nvr_device;
 extern const device_t ami_1995_nvr_device;
 extern const device_t via_nvr_device;
+extern const device_t piix4_ami_1995_nvr_device;
 extern const device_t p6rp4_nvr_device;
 extern const device_t martin_nvr_device;
 extern const device_t elt_nvr_device;

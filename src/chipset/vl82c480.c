@@ -8,8 +8,6 @@
  *
  *          Implementation of the VLSI VL82c480 chipset.
  *
- *
- *
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *
  *          Copyright 2020 Miran Grca.
@@ -132,8 +130,8 @@ vl82c480_write(uint16_t addr, uint8_t val, void *priv)
                         break;
                     case 0x02: case 0x03:
                         dev->regs[dev->idx] = val;
-                        if (!strcmp(machine_get_internal_name(), "martin") ||
-                            !strcmp(machine_get_internal_name(), "prolineamt"))
+                        if ((machines[machine].init == machine_at_martin_init) ||
+                            (machines[machine].init == machine_at_monsoon_init))
                             vl82c480_recalc_banks(dev);
                         break;
                     case 0x04:
@@ -220,9 +218,10 @@ vl82c480_init(const device_t *info)
     vl82c480_t *dev      = (vl82c480_t *) calloc(1, sizeof(vl82c480_t));
     uint32_t    sizes[8] = { 0, 0, 1024, 2048, 4096, 8192, 16384, 32768 };
     uint32_t    ms       = mem_size;
-    uint8_t     min_i    = !strcmp(machine_get_internal_name(), "prolineamt") ? 1 : 0;
-    uint8_t     min_j    = !strcmp(machine_get_internal_name(), "prolineamt") ? 4 : 2;
-    uint8_t     max_j    = !strcmp(machine_get_internal_name(), "prolineamt") ? 8 : 7;
+    uint8_t     min_i    = (machines[machine].init == machine_at_monsoon_init) ? 1 : 0;
+    uint8_t     max_i    = (machines[machine].init == machine_at_monsoon_init) ? 2 : 4;
+    uint8_t     min_j    = (machines[machine].init == machine_at_monsoon_init) ? 2 : 2;
+    uint8_t     max_j    = (machines[machine].init == machine_at_monsoon_init) ? 7 : 7;
 
     dev->regs[0x00] = info->local;
     dev->regs[0x01] = 0xff;
@@ -233,15 +232,15 @@ vl82c480_init(const device_t *info)
         dev->regs[0x07] = 0x21;
     dev->regs[0x08] = 0x38;
 
-    if (!strcmp(machine_get_internal_name(), "prolineamt")) {
-        dev->banks[0] = 4096;
-
-        /* Bank 0 is ignored if 64 MB is installed. */
-        if (ms != 65536)
-            ms -= 4096;
+    if (machines[machine].init == machine_at_monsoon_init) {
+        if (ms >= 16384) {
+            dev->banks[0] = 0;
+            min_i = 0;
+        } else
+            dev->banks[0] = 4096;
     }
 
-    if (ms > 0)  for (uint8_t i = min_i; i < 4; i++) {
+    if (ms > 0)  for (uint8_t i = min_i; i < max_i; i++) {
         for (uint8_t j = min_j; j < max_j; j++) {
             if (ms >= sizes[j])
                 dev->banks[i] = sizes[j];

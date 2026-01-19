@@ -635,6 +635,13 @@ nvr_reg_write(uint16_t reg, uint8_t val, void *priv)
             nvr_reg_common_write(reg, val, nvr, local);
             break;
 
+        case 0x39:
+            if (machines[machine].init == machine_at_bx6_init)
+                nvr_reg_common_write(reg, val | 0x08, nvr, local);
+            else
+                nvr_reg_common_write(reg, val, nvr, local);
+            break;
+
         default: /* non-RTC registers are just NVRAM */
             nvr_reg_common_write(reg, val, nvr, local);
             break;
@@ -792,6 +799,14 @@ nvr_read(uint16_t addr, void *priv)
                         ret = checksum & 0xff;
                 } else
                     ret = nvr->regs[local->addr[addr_id]];
+                break;
+
+            case 0x39:
+                if (!(local->lock[local->addr[addr_id]] & 0x02)) {
+                    ret = nvr->regs[local->addr[addr_id]];
+                    if (machines[machine].init == machine_at_bx6_init)
+                        ret |= 0x08;
+                }
                 break;
 
             case 0x3e:
@@ -1158,8 +1173,15 @@ nvr_at_init(const device_t *info)
             local->cent = RTC_CENTURY_VIA;
             break;
         case 8: /* Epson Equity LT */
-            nvr->irq    = -1;
-            local->cent = RTC_CENTURY_ELT;
+            if ((info->local & 0x1f) == 0x18) {
+                local->flags |= (FLAG_PIIX4 | FLAG_AMI_1995_HACK);
+                local->def = 0x00;
+                nvr->irq    = 8;
+                local->cent = RTC_CENTURY_AT;
+            } else {
+                nvr->irq    = -1;
+                local->cent = RTC_CENTURY_ELT;
+            }
             break;
 
         default:
@@ -1168,6 +1190,9 @@ nvr_at_init(const device_t *info)
 
     if (info->local & 0x20)
         local->def = 0x00;
+
+    if (machines[machine].init == machine_at_monsoon_init)
+        local->def = 0xff;
 
     if (info->local & 0x40)
         local->flags |= FLAG_MULTI_BANK;
@@ -1204,7 +1229,8 @@ nvr_at_init(const device_t *info)
             io_sethandler(0x0070, 2,
                           nvr_read, NULL, NULL, nvr_write, NULL, NULL, nvr);
         }
-        if (((info->local & 0x1f) == 0x11) || ((info->local & 0x1f) == 0x17)) {
+        if (((info->local & 0x1f) == 0x11) || ((info->local & 0x1f) == 0x17) ||
+            ((info->local & 0x1f) == 0x18)) {
             io_sethandler(0x0072, 2,
                           nvr_read, NULL, NULL, nvr_write, NULL, NULL, nvr);
         }
@@ -1213,8 +1239,11 @@ nvr_at_init(const device_t *info)
     }
 
     /* This is a hack but it is required for the machine to boot properly, no idea why. */
-    if (nvr->is_new && !strcmp(machine_get_internal_name(), "spitfire"))
+    if (nvr->is_new && (machines[machine].init == machine_at_spitfire_init))
         nvr->regs[0x33] = nvr->regs[0x34] = 0xff;
+
+    if (nvr->is_new && (machines[machine].init == machine_at_bx6_init))
+        nvr->regs[0x39] = 0x09;
 
     return nvr;
 }
@@ -1418,6 +1447,20 @@ const device_t via_nvr_device = {
     .internal_name = "via_nvr",
     .flags         = DEVICE_ISA16,
     .local         = 0x10 | 7,
+    .init          = nvr_at_init,
+    .close         = nvr_at_close,
+    .reset         = nvr_at_reset,
+    .available     = NULL,
+    .speed_changed = nvr_at_speed_changed,
+    .force_redraw  = NULL,
+    .config        = NULL
+};
+
+const device_t piix4_ami_1995_nvr_device = {
+    .name          = "Intel PIIX4 AMI WinBIOS 1995 PC/AT NVRAM",
+    .internal_name = "piix4_ami_1995_nvr",
+    .flags         = DEVICE_ISA16,
+    .local         = 0x10 | 8,
     .init          = nvr_at_init,
     .close         = nvr_at_close,
     .reset         = nvr_at_reset,

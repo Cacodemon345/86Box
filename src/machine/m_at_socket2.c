@@ -15,6 +15,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
 #define HAVE_STDARG_H
@@ -91,7 +92,7 @@ machine_at_acera1g_init(const machine_t *model)
     device_add(&ali1429g_device);
 
     if (gfxcard[0] == VID_INTERNAL)
-        device_add(&gd5428_onboard_device);
+        device_add(machine_get_vid_device(machine));
 
     device_add_params(machine_get_kbc_device(machine), (void *) model->kbc_params);
 
@@ -228,16 +229,16 @@ machine_at_cobalt_init(const machine_t *model)
 
     if (bios_only || !ret)
         return ret;
-	
+
     machine_at_common_init(model);
 
     device_add(&opti499_device);
     device_add(&ide_opti611_vlb_device);
     device_add(&ide_isa_sec_device);
     device_add_params(&fdc37c6xx_device, (void *) FDC37C665);
-	
+
     device_add_params(machine_get_kbc_device(machine), (void *) model->kbc_params);
-	
+
     if (gfxcard[0] == VID_INTERNAL)
         device_add(machine_get_vid_device(machine));
 
@@ -333,13 +334,16 @@ machine_at_valuepoint433_init(const machine_t *model) // hangs without the PS/2 
     int ret;
 
     ret = bios_load_linear("roms/machines/valuepoint433/$IMAGEP.FLH",
-                           0x000e0000, 131072, 0);
+                           0x000c0000, 262144, 0);
 
     if (bios_only || !ret)
         return ret;
 
+    memcpy(&rom[0x00020000], rom, 131072);
+
     machine_at_common_ide_init(model);
     device_add(&sis_85c461_device);
+
     if (gfxcard[0] == VID_INTERNAL)
         device_add(&et4000w32_onboard_device);
 
@@ -350,10 +354,44 @@ machine_at_valuepoint433_init(const machine_t *model) // hangs without the PS/2 
     if (fdc_current[0] == FDC_INTERNAL)
         device_add(&fdc_at_device);
 
+    if (gfxcard[0] != VID_INTERNAL) {
+        for (uint16_t i = 0; i < 32768; i++)
+            rom[i] = mem_readb_phys(0x000c0000 + i);
+    }
+    mem_mapping_set_addr(&bios_mapping, 0x0c0000, 0x40000);
+    mem_mapping_set_exec(&bios_mapping, rom);
+
     return ret;
 }
 
 /* VLSI 82C480 */
+int
+machine_at_monsoon_init(const machine_t *model)
+{
+    int ret;
+
+    ret = bios_load_linear_combined("roms/machines/monsoon/1009AC0_.BIO",
+                                    "roms/machines/monsoon/1009AC0_.BI1", 0x1c000, 128);
+
+    if (bios_only || !ret)
+        return ret;
+
+    machine_at_common_init_ex(model, 2);
+
+    device_add(&vl82c480_device);
+    device_add(&vl82c113_device);
+
+    device_add(&ide_vlb_device);
+    device_add_params(&fdc37c6xx_device, (void *) (FDC37C651 | FDC37C6XX_IDE_PRI));
+
+    device_add(&intel_flash_bxt_device);
+
+    if (gfxcard[0] == VID_INTERNAL)
+        device_add(machine_get_vid_device(machine));
+
+    return ret;
+}
+
 int
 machine_at_martin_init(const machine_t *model)
 {
@@ -374,6 +412,6 @@ machine_at_martin_init(const machine_t *model)
     device_add_params(&fdc37c6xx_device, (void *) (FDC37C651 | FDC37C6XX_IDE_PRI));
 
     device_add(&intel_flash_bxt_device);
-    
+
     return ret;
 }

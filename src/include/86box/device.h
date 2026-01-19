@@ -8,8 +8,6 @@
  *
  *          Definitions for the device handler.
  *
- *
- *
  * Authors: Fred N. van Kempen, <decwiz@yahoo.com>
  *          Miran Grca, <mgrca8@gmail.com>
  *          Sarah Walker, <https://pcem-emulator.co.uk/>
@@ -208,6 +206,7 @@ extern void *device_get_priv(const device_t *dev);
 extern int   device_available(const device_t *dev);
 extern void  device_speed_changed(void);
 extern void  device_force_redraw(void);
+extern const char *device_get_bus_name(const device_t *dev);
 extern void  device_get_name(const device_t *dev, int bus, char *name);
 extern int   device_has_config(const device_t *dev);
 
@@ -215,7 +214,7 @@ extern uint8_t     device_get_bios_type(const device_t *dev, const char *interna
 extern uint8_t     device_get_bios_num_files(const device_t *dev, const char *internal_name);
 extern uint32_t    device_get_bios_local(const device_t *dev, const char *internal_name);
 extern uint32_t    device_get_bios_file_size(const device_t *dev, const char *internal_name);
-extern const char *device_get_bios_file(const device_t *dev, const char *internal_name, int file_no);
+extern const char *device_get_bios_file(const device_t *dev, const char *internal_name, unsigned int file_no);
 
 extern int device_is_valid(const device_t *, int mch);
 
