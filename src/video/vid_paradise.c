@@ -803,7 +803,7 @@ paradise_bitblt_fetch_source_mem(paradise_t* paradise, uint32_t src_addr)
     uint8_t src_pixel = 0;
     if (paradise->accel_running.blt_ctrl1 & (1 << 8)) { // Planar mode
         uint32_t addr     = (src_addr >> 3) << 2;
-        uint32_t pln_bit  = 7 - (src_addr & 7);
+        uint32_t pln_bit  = (src_addr & 7);
         // Get the planes
         uint8_t plane0 = paradise->svga.vram[addr | 0];
         uint8_t plane1 = paradise->svga.vram[addr | 1];
@@ -827,7 +827,7 @@ paradise_bitblt_write_dest(paradise_t* paradise, uint8_t val, uint32_t dst_addr)
 {
     if (paradise->accel_running.blt_ctrl1 & (1 << 8)) {
         uint32_t addr     = (dst_addr >> 3) << 2;
-        uint32_t pln_bit  = 7 - (dst_addr & 7);
+        uint32_t pln_bit  = (dst_addr & 7);
         // Get the planes
         uint8_t plane0 = paradise->svga.vram[addr | 0];
         uint8_t plane1 = paradise->svga.vram[addr | 1];
@@ -897,9 +897,6 @@ paradise_setup_bitblt(paradise_t* paradise)
     paradise->accel_running.y = 0;
     paradise->accel_running.count = 0;
     paradise->accel_running.blt_data_cpu_flip = 0;
-    if (!(paradise->svga.gdcreg[6] & 1) && !(paradise->svga.attrregs[0x10] & 1)) {
-        paradise->accel_running.size_x /= 8;
-    }
     paradise->accel_running.max_count = paradise->accel_running.size_x * paradise->accel_running.size_y;
     pclog("expected count = %d\n", paradise->accel_running.max_count);
 }
