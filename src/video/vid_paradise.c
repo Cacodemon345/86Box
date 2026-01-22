@@ -70,12 +70,15 @@ typedef struct paradise_t {
         uint16_t dstlow, dsthigh;
         uint16_t rop, plane_mask;
         uint16_t size_x, size_y;
+        int16_t  x, y;
         uint16_t row_pitch;
         uint16_t fg, bg, trns_col, trns_mask;
 
         uint32_t srcaddr, dstaddr;
+        uint32_t count, max_count;
 
-        uint8_t blt_data_cpu_low, blt_data_cpu_high;
+        uint8_t blt_data_cpu;
+        uint8_t blt_data_cpu_flip;
 
         int invalid_block;
     } accel, accel_running;
@@ -820,15 +823,6 @@ paradise_bitblt_fetch_source_mem(paradise_t* paradise, uint32_t src_addr)
 }
 
 void
-paradise_bitblt_get_source(paradise_t* paradise)
-{
-    switch (paradise->accel_running.blt_ctrl1)
-    {
-
-    }
-}
-
-void
 paradise_bitblt_write_dest(paradise_t* paradise, uint8_t val, uint32_t dst_addr)
 {
     if (paradise->accel_running.blt_ctrl1 & (1 << 8)) {
@@ -853,27 +847,202 @@ paradise_bitblt_write_dest(paradise_t* paradise, uint8_t val, uint32_t dst_addr)
 }
 
 void
+paradise_advance_bitblt(paradise_t* paradise)
+{
+    paradise->accel_running.count++;
+    paradise->accel_running.x++;
+    if (paradise->accel_running.x >= paradise->accel_running.size_x) {
+        paradise->accel_running.x = 0;
+        paradise->accel_running.y++;
+    }
+    if (paradise->accel_running.count >= paradise->accel_running.max_count) {
+        int sign = !!(paradise->accel_running.blt_ctrl1 & (1 << 10)) ? -1 : 1;
+        int pix_offset_dst = (paradise->accel_running.blt_ctrl2 & (1 << 7)) ? paradise->accel_running.dstaddr + (sign * paradise->accel_running.count) : paradise->accel_running.dstaddr + (sign * paradise->accel_running.row_pitch * paradise->accel_running.y) + (sign * paradise->accel_running.x);
+
+        if (paradise->accel_running.blt_ctrl2 & (1 << 6))
+            paradise->accel.dstaddr = pix_offset_dst;
+
+        paradise->accel.blt_ctrl1 &= ~(1 << 11);
+        return;
+    }
+}
+
+void
 paradise_bitblt_process_pixel(paradise_t* paradise, uint8_t pixel)
 {
+    if (!(paradise->accel.blt_ctrl1 & (1 << 11)))
+        return;
 
+    {
+        int sign = !!(paradise->accel_running.blt_ctrl1 & (1 << 10)) ? -1 : 1;
+        int pix_offset = (paradise->accel_running.blt_ctrl2 & (1 << 7)) ? paradise->accel_running.dstaddr + (sign * paradise->accel_running.count) : paradise->accel_running.dstaddr + (sign * paradise->accel_running.row_pitch * paradise->accel_running.y) + (sign * paradise->accel_running.x);
+        uint8_t dest_pixel = paradise_bitblt_fetch_source_mem(paradise, pix_offset);
+        if (paradise->accel_running.blt_ctrl2 & (1 << 0)) {
+            if (!!((dest_pixel & ~paradise->accel_running.trns_mask) == ((paradise->accel_running.trns_col & ((paradise->accel_running.blt_ctrl1 & (1 << 8)) ? 0xF : 0xFF)) & ~paradise->accel_running.trns_mask)) ^ !!(paradise->accel_running.blt_ctrl2 & (1 << 2))) {
+                goto advance;
+            }
+        }
+
+        paradise_bitblt_write_dest(paradise, paradise_bitblt_rop4(paradise, dest_pixel, pixel), pix_offset);
+advance:
+        paradise_advance_bitblt(paradise);
+    }
 }
 
 void
 paradise_setup_bitblt(paradise_t* paradise)
 {
     paradise->accel_running = paradise->accel;
+    paradise->accel_running.x = 0;
+    paradise->accel_running.y = 0;
+    paradise->accel_running.count = 0;
+    paradise->accel_running.blt_data_cpu_flip = 0;
+    paradise->accel_running.max_count = paradise->accel_running.size_x * paradise->accel_running.size_y;
 }
 
 void
 paradise_bitblt_write_from_host(paradise_t* paradise)
 {
-    
+    if (((paradise->accel_running.blt_ctrl1 >> 2) & 3) == 3) {
+        paradise->accel_running.blt_data_cpu_flip ^= 1;
+        if (paradise->accel_running.blt_data_cpu_flip) {
+            if (paradise->accel_running.blt_ctrl1 & (1 << 8)) {
+                for (int i = 0; i < 8; i++) {
+                    int fgres = (paradise->accel_running.blt_data_cpu & (1 << i));
+                    if (!fgres && (paradise->accel_running.blt_ctrl2 & (1 << 3))) {
+                        paradise_advance_bitblt(paradise);
+                        continue;
+                    }
+                    paradise_bitblt_process_pixel(paradise, fgres ? paradise->accel_running.fg : paradise->accel_running.bg);
+                }
+            } else {
+                for (int i = 0; i < 4; i++) {
+                    int fgres = (paradise->accel_running.blt_data_cpu & (1 << i));
+                    if (!fgres && (paradise->accel_running.blt_ctrl2 & (1 << 3))) {
+                        paradise_advance_bitblt(paradise);
+                        continue;
+                    }
+                    paradise_bitblt_process_pixel(paradise, fgres ? paradise->accel_running.fg : paradise->accel_running.bg);
+                }
+            }
+        }
+        return;
+    }
+    if (paradise->accel_running.blt_ctrl1 & (1 << 8)) {
+        paradise_bitblt_process_pixel(paradise, paradise->accel_running.blt_data_cpu & 0xF);
+        paradise_bitblt_process_pixel(paradise, paradise->accel_running.blt_data_cpu >> 4);
+    } else {
+        paradise_bitblt_process_pixel(paradise, paradise->accel_running.blt_data_cpu);
+    }
 }
 
-uint16_t
+// Maintain it separately from the other version.
+uint8_t
+paradise_bitblt_get_source(paradise_t* paradise)
+{
+    uint8_t src_pixel = 0;
+    int sign = !!(paradise->accel_running.blt_ctrl1 & (1 << 10)) ? -1 : 1;
+    int pix_offset = (paradise->accel_running.blt_ctrl2 & (1 << 6)) ? paradise->accel_running.srcaddr + (sign * paradise->accel_running.count) : paradise->accel_running.srcaddr + (sign * paradise->accel_running.row_pitch * paradise->accel_running.y) + (sign * paradise->accel_running.x);
+
+    if (!(paradise->accel.blt_ctrl1 & (1 << 11)))
+        return src_pixel;
+
+    switch ((paradise->accel_running.blt_ctrl1 >> 2) & 3) {
+        case 0:
+        {
+            src_pixel = paradise_bitblt_fetch_source_mem(paradise, pix_offset);
+            break;
+        }
+        case 1:
+        {
+            int fgres = 1;
+            src_pixel = paradise_bitblt_fetch_source_mem(paradise, pix_offset);
+            if (paradise->accel_running.blt_ctrl1 & (1 << 8)) {
+                src_pixel &= ~(paradise->accel_running.trns_mask & 0xF);
+                src_pixel &= 0xF;
+            } else {
+                src_pixel &= ~paradise->accel_running.trns_mask;
+            }
+            fgres = (src_pixel == (paradise->accel_running.trns_col & ~paradise->accel_running.trns_mask));
+            src_pixel = fgres ? paradise->accel_running.fg : paradise->accel_running.bg;
+            if (!fgres && (paradise->accel_running.blt_ctrl2 & (1 << 3))) {
+                return src_pixel;
+            }
+            break;
+        }
+        case 2:
+        {
+            src_pixel = paradise->accel_running.fg;
+            break;
+        }
+    }
+
+    return src_pixel;
+}
+
+uint8_t
 paradise_bitblt_read_to_host(paradise_t* paradise)
 {
-    return 0;
+    uint8_t pixel = paradise_bitblt_get_source(paradise);
+    if (paradise->accel_running.blt_ctrl1 & (1 << 8)) {
+        pixel &= 0xF;
+        paradise_advance_bitblt(paradise);
+        pixel |= paradise_bitblt_get_source(paradise) << 4;
+    }
+    paradise_advance_bitblt(paradise);
+    return pixel;
+}
+
+void
+paradise_do_bitblt(paradise_t* paradise)
+{
+    while ((paradise->accel.blt_ctrl1 & (1 << 11))) {
+        uint8_t src_pixel = 0;
+        int sign = !!(paradise->accel_running.blt_ctrl1 & (1 << 10)) ? -1 : 1;
+        int pix_offset = (paradise->accel_running.blt_ctrl2 & (1 << 6)) ? paradise->accel_running.srcaddr + (sign * paradise->accel_running.count) : paradise->accel_running.srcaddr + (sign * paradise->accel_running.row_pitch * paradise->accel_running.y) + (sign * paradise->accel_running.x);
+
+        if (paradise->accel_running.blt_ctrl2 & (1 << 4)) {
+            int pat_x = paradise->accel_running.x & 7;
+            int pat_y = paradise->accel_running.y & 7;
+            src_pixel = paradise_bitblt_fetch_source_mem(paradise, paradise->accel_running.srcaddr + (pat_y * 8) + pat_x);
+            paradise_bitblt_process_pixel(paradise, src_pixel);
+            continue;
+        }
+
+        switch ((paradise->accel_running.blt_ctrl1 >> 2) & 3) {
+            case 0:
+            {
+                src_pixel = paradise_bitblt_fetch_source_mem(paradise, pix_offset);
+                paradise_bitblt_process_pixel(paradise, src_pixel);
+                break;
+            }
+            case 1:
+            {
+                int fgres = 1;
+                src_pixel = paradise_bitblt_fetch_source_mem(paradise, pix_offset);
+                if (paradise->accel_running.blt_ctrl1 & (1 << 8)) {
+                    src_pixel &= ~(paradise->accel_running.trns_mask & 0xF);
+                    src_pixel &= 0xF;
+                } else {
+                    src_pixel &= ~paradise->accel_running.trns_mask;
+                }
+                fgres = (src_pixel == (paradise->accel_running.trns_col & ~paradise->accel_running.trns_mask));
+                src_pixel = fgres ? paradise->accel_running.fg : paradise->accel_running.bg;
+                if (!fgres && (paradise->accel_running.blt_ctrl2 & (1 << 3))) {
+                    paradise_advance_bitblt(paradise);
+                    continue;
+                }
+                paradise_bitblt_process_pixel(paradise, src_pixel);
+                break;
+            }
+            case 2:
+            {
+                src_pixel = paradise->accel_running.fg;
+                paradise_bitblt_process_pixel(paradise, src_pixel);
+                break;
+            }
+        }
+    }
 }
 
 uint16_t
@@ -957,6 +1126,16 @@ paradise_write_index_reg(uint16_t val, paradise_t* paradise)
         {
             switch (index)
             {
+                case 0:
+                    paradise->accel.blt_ctrl1 = val;
+                    if (paradise->accel.blt_ctrl1 & (1 << 8)) {
+start_bitblt:
+                        paradise_setup_bitblt(paradise);
+                        if (!(paradise->accel.blt_ctrl1 & (1 << 1)) && !(paradise->accel.blt_ctrl1 & (1 << 5)) && !(((paradise->accel_running.blt_ctrl1 >> 2) & 3) == 3)) {
+                            paradise_do_bitblt(paradise);
+                        }
+                    }
+                    break;
                 case 1:
                     paradise->accel.blt_ctrl2 = val;
                     break;
@@ -964,6 +1143,10 @@ paradise_write_index_reg(uint16_t val, paradise_t* paradise)
                     paradise->accel.srclow = val;
                     paradise->accel.srcaddr &= 0xFF000;
                     paradise->accel.srcaddr |= val & 0xFFF;
+                    if ((paradise->accel.blt_ctrl2 & (1 << 7)) && (paradise->accel.blt_ctrl2 & (1 << 6))) {
+                        paradise->accel.blt_ctrl1 |= (1 << 8);
+                        goto start_bitblt;
+                    }
                     break;
                 case 3:
                     paradise->accel.srchigh = val;
@@ -974,6 +1157,10 @@ paradise_write_index_reg(uint16_t val, paradise_t* paradise)
                     paradise->accel.dstlow = val;
                     paradise->accel.dstaddr &= 0xFF000;
                     paradise->accel.dstaddr |= val & 0xFFF;
+                    if ((paradise->accel.blt_ctrl2 & (1 << 7)) && !(paradise->accel.blt_ctrl2 & (1 << 6))) {
+                        paradise->accel.blt_ctrl1 |= (1 << 8);
+                        goto start_bitblt;
+                    }
                     break;
                 case 5:
                     paradise->accel.dsthigh = val;
@@ -1025,7 +1212,15 @@ paradise_ext_readb(uint16_t addr, void* priv)
         case 2:
             return paradise_read_index_reg(paradise) & 0xFF;
         case 3:
-            return paradise_read_index_reg(paradise) >> 8;
+            {
+                uint8_t ret = paradise_read_index_reg(paradise) >> 8;                
+                if (!paradise->accel.disable_autoinc)
+                    paradise->accel.reg_idx++;
+                return ret;
+            }
+        case 4:
+        case 5:
+            return paradise_bitblt_read_to_host(paradise);
         default:
             return 0xFF;
     }
@@ -1045,11 +1240,15 @@ paradise_ext_writeb(uint16_t addr, uint8_t val, void* priv)
             paradise->accel.reg_idx = val & 0xF;
             paradise->accel.disable_autoinc = !!(val & 0x10);
             break;
-        case 4:
-            paradise->accel.blt_data_cpu_low = val;
+        case 2:
+            paradise_write_index_reg((paradise_read_index_reg(paradise) & ~0xFF) | val, paradise);
             break;
+        case 3:
+            paradise_write_index_reg((paradise_read_index_reg(paradise) & 0xFF) | (val << 8), paradise);
+            break;
+        case 4:
         case 5:
-            paradise->accel.blt_data_cpu_high = val;
+            paradise->accel.blt_data_cpu = val;
             paradise_bitblt_write_from_host(paradise);
             break;
         default:
