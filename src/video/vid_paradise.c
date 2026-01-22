@@ -897,7 +897,11 @@ paradise_setup_bitblt(paradise_t* paradise)
     paradise->accel_running.y = 0;
     paradise->accel_running.count = 0;
     paradise->accel_running.blt_data_cpu_flip = 0;
+    if (!(paradise->svga.gdcreg[6] & 1) && !(paradise->svga.attrregs[0x10] & 1)) {
+        paradise->accel_running.size_x /= 8;
+    }
     paradise->accel_running.max_count = paradise->accel_running.size_x * paradise->accel_running.size_y;
+    pclog("expected count = %d\n", paradise->accel_running.max_count);
 }
 
 void
@@ -1128,7 +1132,7 @@ paradise_write_index_reg(uint16_t val, paradise_t* paradise)
             {
                 case 0:
                     paradise->accel.blt_ctrl1 = val;
-                    if (paradise->accel.blt_ctrl1 & (1 << 8)) {
+                    if (paradise->accel.blt_ctrl1 & (1 << 11)) {
 start_bitblt:
                         paradise_setup_bitblt(paradise);
                         if (!(paradise->accel.blt_ctrl1 & (1 << 1)) && !(paradise->accel.blt_ctrl1 & (1 << 5)) && !(((paradise->accel_running.blt_ctrl1 >> 2) & 3) == 3)) {
@@ -1144,7 +1148,7 @@ start_bitblt:
                     paradise->accel.srcaddr &= 0xFF000;
                     paradise->accel.srcaddr |= val & 0xFFF;
                     if ((paradise->accel.blt_ctrl2 & (1 << 7)) && (paradise->accel.blt_ctrl2 & (1 << 6))) {
-                        paradise->accel.blt_ctrl1 |= (1 << 8);
+                        paradise->accel.blt_ctrl1 |= (1 << 11);
                         goto start_bitblt;
                     }
                     break;
@@ -1158,7 +1162,7 @@ start_bitblt:
                     paradise->accel.dstaddr &= 0xFF000;
                     paradise->accel.dstaddr |= val & 0xFFF;
                     if ((paradise->accel.blt_ctrl2 & (1 << 7)) && !(paradise->accel.blt_ctrl2 & (1 << 6))) {
-                        paradise->accel.blt_ctrl1 |= (1 << 8);
+                        paradise->accel.blt_ctrl1 |= (1 << 11);
                         goto start_bitblt;
                     }
                     break;
@@ -1213,7 +1217,7 @@ paradise_ext_readb(uint16_t addr, void* priv)
             return paradise_read_index_reg(paradise) & 0xFF;
         case 3:
             {
-                uint8_t ret = paradise_read_index_reg(paradise) >> 8;                
+                uint8_t ret = paradise_read_index_reg(paradise) >> 8;         
                 if (!paradise->accel.disable_autoinc)
                     paradise->accel.reg_idx++;
                 return ret;
@@ -1263,6 +1267,7 @@ paradise_ext_readw(uint16_t addr, void* priv)
     switch (addr & 7) {
         case 2: {
             uint16_t ret = paradise_read_index_reg(priv);
+            pclog("ret = 0x%04X, idx = 0x%04X, block = 0x%04X\n", ret, paradise->accel.reg_idx, paradise->accel.reg_block_ptr);
             if (!paradise->accel.disable_autoinc)
                 paradise->accel.reg_idx++;
             return ret;
@@ -1510,7 +1515,7 @@ paradise_wd90c31_standalone_init(const device_t *info)
     paradise = paradise_init(info, memsize);
 
     if (paradise)
-        rom_init(&paradise->bios_rom, "roms/video/wd90c31/wd90c31azs.BIN", 0xc0000, 0x8000, 0x7fff, 0, MEM_MAPPING_EXTERNAL);
+        rom_init(&paradise->bios_rom, "roms/video/wd90c31/BIOS.BIN", 0xc0000, 0x8000, 0x7fff, 0, MEM_MAPPING_EXTERNAL);
 
     return paradise;
 }
@@ -1518,7 +1523,7 @@ paradise_wd90c31_standalone_init(const device_t *info)
 static int
 paradise_wd90c31_standalone_available(void)
 {
-    return rom_present("roms/video/wd90c31/wd90c31azs.BIN");
+    return rom_present("roms/video/wd90c31/BIOS.BIN");
 }
 
 void
@@ -1711,7 +1716,7 @@ const device_t paradise_wd90c30_device = {
 
 const device_t paradise_wd90c31_device = {
     .name          = "Paradise WD90C31-ZS",
-    .internal_name = "wd90c30",
+    .internal_name = "wd90c31",
     .flags         = DEVICE_ISA,
     .local         = WD90C31,
     .init          = paradise_wd90c31_standalone_init,
