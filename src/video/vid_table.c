@@ -95,6 +95,7 @@ video_cards[] = {
     { .device = &paradise_pvga1a_device,                        .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &paradise_wd90c11_device,                       .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &paradise_wd90c30_device,                       .flags = VIDEO_FLAG_TYPE_NONE },
+    { .device = &paradise_wd90c31_device,                       .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &cga_pravetz_device,                            .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &quadcolor_device,                              .flags = VIDEO_FLAG_TYPE_NONE },
     { .device = &realtek_rtg3105_device,                        .flags = VIDEO_FLAG_TYPE_NONE },

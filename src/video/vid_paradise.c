@@ -48,7 +48,8 @@ typedef struct paradise_t {
     enum {
         PVGA1A = 0,
         WD90C11,
-        WD90C30
+        WD90C30,
+        WD90C31
     } type;
 
     uint32_t vram_mask;
@@ -60,18 +61,24 @@ typedef struct paradise_t {
 
     struct {
         uint8_t reg_block_ptr;
-        uint8_t reg_idx;
+        uint8_t reg_idx : 4;
         uint8_t disable_autoinc;
 
         uint16_t int_status;
         uint16_t blt_ctrl1, blt_ctrl2;
         uint16_t srclow, srchigh;
         uint16_t dstlow, dsthigh;
+        uint16_t rop, plane_mask;
+        uint16_t size_x, size_y;
+        uint16_t row_pitch;
+        uint16_t fg, bg, trns_col, trns_mask;
 
         uint32_t srcaddr, dstaddr;
 
+        uint8_t blt_data_cpu_low, blt_data_cpu_high;
+
         int invalid_block;
-    } accel;
+    } accel, accel_running;
 } paradise_t;
 
 static video_timings_t timing_paradise_pvga1a = { .type = VIDEO_ISA, .write_b = 6, .write_w = 8, .write_l = 16, .read_b = 6, .read_w = 8, .read_l = 16 };
@@ -104,7 +111,7 @@ paradise_in(uint16_t addr, void *priv)
         case 0x3c7:
         case 0x3c8:
         case 0x3c9:
-            if (paradise->type == WD90C30)
+            if (paradise->type >= WD90C30)
                 return sc1148x_ramdac_in(addr, 0, svga->ramdac, svga);
             return svga_in(addr, svga);
 
@@ -165,7 +172,7 @@ paradise_out(uint16_t addr, uint8_t val, void *priv)
         case 0x3c7:
         case 0x3c8:
         case 0x3c9:
-            if (paradise->type == WD90C30)
+            if (paradise->type >= WD90C30)
                 sc1148x_ramdac_out(addr, 0, val, svga->ramdac, svga);
             else
                 svga_out(addr, val, svga);
@@ -491,7 +498,7 @@ paradise_recalctimings(svga_t *svga)
 
     svga->lowres = !(svga->gdcreg[0x0e] & 0x01);
 
-    if (paradise->type == WD90C30) {
+    if (paradise->type >= WD90C30) {
         if (svga->crtc[0x3e] & 0x01)
             svga->vtotal |= 0x400;
         if (svga->crtc[0x3e] & 0x02)
@@ -741,6 +748,347 @@ paradise_readw(uint32_t addr, void *priv)
     return svga_readw_linear(addr, svga);
 }
 
+uint8_t
+paradise_bitblt_rop4(paradise_t* paradise, uint8_t dst, uint8_t src)
+{
+    uint8_t rop = (paradise->accel_running.rop >> 8) & 0xf;
+    rop |= (rop & 1) ? 0x80 : 0;
+    rop |= (rop & 2) ? 0x40 : 0;
+    rop |= (rop & 4) ? 0x20 : 0;
+    rop |= (rop & 8) ? 0x10 : 0;
+    rop >>= 4;
+    switch (paradise->accel_running.blt_ctrl1 & 0xf) {
+        case 0x0:
+            return 0;
+        case 0x1:
+            return ~(dst | src);
+        case 0x2:
+            return dst & ~src;
+        case 0x3:
+            return ~src;
+        case 0x4:
+            return ~dst & src;
+        case 0x5:
+            return ~dst;
+        case 0x6:
+            return dst ^ src;
+        case 0x7:
+            return ~(dst & src);
+        case 0x8:
+            return dst & src;
+        case 0x9:
+            return ~(dst ^ src);
+        case 0xa:
+            return dst;
+        case 0xb:
+            return dst | ~src;
+        case 0xc:
+            return src;
+        case 0xd:
+            return ~dst | src;
+        case 0xe:
+            return dst | src;
+        case 0xf:
+            return ~0;
+    }
+    return 0;
+}
+
+uint8_t
+paradise_bitblt_fetch_source_mem(paradise_t* paradise, uint32_t src_addr)
+{
+    uint8_t src_pixel = 0;
+    if (paradise->accel_running.blt_ctrl1 & (1 << 8)) { // Planar mode
+        uint32_t addr     = (src_addr >> 3) << 2;
+        uint32_t pln_bit  = 7 - (src_addr & 7);
+        // Get the planes
+        uint8_t plane0 = paradise->svga.vram[addr | 0];
+        uint8_t plane1 = paradise->svga.vram[addr | 1];
+        uint8_t plane2 = paradise->svga.vram[addr | 2];
+        uint8_t plane3 = paradise->svga.vram[addr | 3];
+        // Then calculate the packed source pixel from the planes.
+        src_pixel |= !!(plane0 & (1 << pln_bit)) << 0;
+        src_pixel |= !!(plane1 & (1 << pln_bit)) << 1;
+        src_pixel |= !!(plane2 & (1 << pln_bit)) << 2;
+        src_pixel |= !!(plane3 & (1 << pln_bit)) << 3;
+    } else {
+        uint8_t  readplane = src_addr & 3;
+        uint32_t addr      = ((src_addr & 0xfffc) << 2) | ((src_addr & 0x30000) >> 14) | (src_addr & ~0x3ffff);
+        src_pixel          = paradise->svga.vram[addr | readplane];
+    }
+    return src_pixel;
+}
+
+void
+paradise_bitblt_get_source(paradise_t* paradise)
+{
+    switch (paradise->accel_running.blt_ctrl1)
+    {
+
+    }
+}
+
+void
+paradise_bitblt_write_dest(paradise_t* paradise, uint8_t val, uint32_t dst_addr)
+{
+    if (paradise->accel_running.blt_ctrl1 & (1 << 8)) {
+        uint32_t addr     = (dst_addr >> 3) << 2;
+        uint32_t pln_bit  = 7 - (dst_addr & 7);
+        // Get the planes
+        uint8_t plane0 = paradise->svga.vram[addr | 0];
+        uint8_t plane1 = paradise->svga.vram[addr | 1];
+        uint8_t plane2 = paradise->svga.vram[addr | 2];
+        uint8_t plane3 = paradise->svga.vram[addr | 3];
+        // Then write the result after calculation.
+        if (paradise->accel_running.plane_mask & 1) paradise->svga.vram[addr | 0] = (plane0 & ~(1 << pln_bit)) | (!!(val & 1) << pln_bit);
+        if (paradise->accel_running.plane_mask & 2) paradise->svga.vram[addr | 1] = (plane1 & ~(1 << pln_bit)) | (!!(val & 2) << pln_bit);
+        if (paradise->accel_running.plane_mask & 4) paradise->svga.vram[addr | 2] = (plane2 & ~(1 << pln_bit)) | (!!(val & 4) << pln_bit);
+        if (paradise->accel_running.plane_mask & 8) paradise->svga.vram[addr | 3] = (plane3 & ~(1 << pln_bit)) | (!!(val & 8) << pln_bit);
+    } else {
+        uint8_t  readplane = dst_addr & 3;
+        uint32_t addr      = ((dst_addr & 0xfffc) << 2) | ((dst_addr & 0x30000) >> 14) | (dst_addr & ~0x3ffff);
+
+        paradise->svga.vram[addr | readplane] = (paradise->svga.vram[addr | readplane] & ~paradise->accel_running.plane_mask) | (val & paradise->accel_running.plane_mask);
+    }
+}
+
+void
+paradise_bitblt_process_pixel(paradise_t* paradise, uint8_t pixel)
+{
+
+}
+
+void
+paradise_setup_bitblt(paradise_t* paradise)
+{
+    paradise->accel_running = paradise->accel;
+}
+
+void
+paradise_bitblt_write_from_host(paradise_t* paradise)
+{
+    
+}
+
+uint16_t
+paradise_bitblt_read_to_host(paradise_t* paradise)
+{
+    return 0;
+}
+
+uint16_t
+paradise_read_index_reg(paradise_t* paradise)
+{
+    switch (paradise->accel.reg_block_ptr)
+    {
+        case 0:
+        {
+            if (paradise->accel.reg_idx == 0) {
+                return paradise->accel.int_status;
+            }
+            return 0;
+        }
+        case 1:
+        {
+            uint16_t ret = 0;
+            switch (paradise->accel.reg_idx) {
+                case 0:
+                    ret = paradise->accel.blt_ctrl1;
+                    break;
+                case 1:
+                    ret = paradise->accel.blt_ctrl2;
+                    break;
+                case 2:
+                    ret = paradise->accel.srclow;
+                    break;
+                case 3:
+                    ret = paradise->accel.srchigh;
+                    break;
+                case 4:
+                    ret = paradise->accel.dstlow;
+                    break;
+                case 5:
+                    ret = paradise->accel.dsthigh;
+                    break;
+                case 6:
+                    ret = paradise->accel.size_x;
+                    break;
+                case 7:
+                    ret = paradise->accel.size_y;
+                    break;
+                case 8:
+                    ret = paradise->accel.row_pitch;
+                    break;
+                case 9:
+                    ret = paradise->accel.rop;
+                    break;
+                case 10:
+                    ret = paradise->accel.fg;
+                    break;
+                case 11:
+                    ret = paradise->accel.bg;
+                    break;
+                case 12:
+                    ret = paradise->accel.trns_col;
+                    break;
+                case 13:
+                    ret = paradise->accel.trns_mask;
+                    break;
+                case 14:
+                    ret = paradise->accel.plane_mask;
+                    break;
+            }
+            return (ret & ((1 << 12) - 1)) | (paradise->accel.reg_idx << 12);
+        }
+        default:
+            return 0;
+    }
+}
+
+void
+paradise_write_index_reg(uint16_t val, paradise_t* paradise)
+{
+    uint8_t index = val >> 12;
+    val &= (1 << 12) - 1;
+
+    switch (paradise->accel.reg_block_ptr)
+    {
+        case 1:
+        {
+            switch (index)
+            {
+                case 1:
+                    paradise->accel.blt_ctrl2 = val;
+                    break;
+                case 2:
+                    paradise->accel.srclow = val;
+                    paradise->accel.srcaddr &= 0xFF000;
+                    paradise->accel.srcaddr |= val & 0xFFF;
+                    break;
+                case 3:
+                    paradise->accel.srchigh = val;
+                    paradise->accel.srcaddr &= 0xFFF;
+                    paradise->accel.srcaddr |= (val & 0xFF) << 12;
+                    break;
+                case 4:
+                    paradise->accel.dstlow = val;
+                    paradise->accel.dstaddr &= 0xFF000;
+                    paradise->accel.dstaddr |= val & 0xFFF;
+                    break;
+                case 5:
+                    paradise->accel.dsthigh = val;
+                    paradise->accel.dstaddr &= 0xFFF;
+                    paradise->accel.dstaddr |= (val & 0xFF) << 12;
+                    break;
+                case 6:
+                    paradise->accel.size_x = val;
+                    break;
+                case 7:
+                    paradise->accel.size_y = val;
+                    break;
+                case 8:
+                    paradise->accel.row_pitch = val;
+                    break;
+                case 9:
+                    paradise->accel.rop = val;
+                    break;
+                case 10:
+                    paradise->accel.fg = val;
+                    break;
+                case 11:
+                    paradise->accel.bg = val;
+                    break;
+                case 12:
+                    paradise->accel.trns_col = val;
+                    break;
+                case 13:
+                    paradise->accel.trns_mask = val;
+                    break;
+                case 14:
+                    paradise->accel.plane_mask = val;
+                    break;
+            }
+        }
+    }
+}
+
+uint8_t
+paradise_ext_readb(uint16_t addr, void* priv)
+{
+    paradise_t *paradise = (paradise_t *) priv;
+    switch (addr & 7)
+    {
+        case 0:
+            return paradise->accel.reg_block_ptr;
+        case 1:
+            return paradise->accel.reg_idx & 0x1F;
+        case 2:
+            return paradise_read_index_reg(paradise) & 0xFF;
+        case 3:
+            return paradise_read_index_reg(paradise) >> 8;
+        default:
+            return 0xFF;
+    }
+    return 0xFF;
+}
+
+void
+paradise_ext_writeb(uint16_t addr, uint8_t val, void* priv)
+{
+    paradise_t *paradise = (paradise_t *) priv;
+    switch (addr & 7)
+    {
+        case 0:
+            paradise->accel.reg_block_ptr = val;
+            break;
+        case 1:
+            paradise->accel.reg_idx = val & 0xF;
+            paradise->accel.disable_autoinc = !!(val & 0x10);
+            break;
+        case 4:
+            paradise->accel.blt_data_cpu_low = val;
+            break;
+        case 5:
+            paradise->accel.blt_data_cpu_high = val;
+            paradise_bitblt_write_from_host(paradise);
+            break;
+        default:
+            return;
+    }
+}
+
+uint16_t
+paradise_ext_readw(uint16_t addr, void* priv)
+{
+    paradise_t *paradise = (paradise_t *) priv;
+    switch (addr & 7) {
+        case 2: {
+            uint16_t ret = paradise_read_index_reg(priv);
+            if (!paradise->accel.disable_autoinc)
+                paradise->accel.reg_idx++;
+            return ret;
+        }
+        default:
+            return paradise_ext_readb(addr, priv) | (paradise_ext_readb(addr + 1, priv) << 8);
+    }
+    return 0xFFFF;
+}
+
+void
+paradise_ext_writew(uint16_t addr, uint16_t val, void* priv)
+{
+    paradise_t *paradise = (paradise_t *) priv;
+
+    switch (addr & 7) {
+        case 2:
+            return paradise_write_index_reg(val, priv);
+        default:
+            paradise_ext_writeb(addr, val & 0xFF, priv);
+            paradise_ext_writeb(addr + 1, val >> 8, priv);
+            break;
+    }
+}
+
 void *
 paradise_init(const device_t *info, uint32_t memory)
 {
@@ -786,6 +1134,19 @@ paradise_init(const device_t *info, uint32_t memory)
             svga->clock_gen     = device_add(&ics90c64a_903_device);
             svga->getclock      = ics90c64a_vclk_getclock;
             break;
+        case WD90C31:
+            svga_init(info, svga, paradise, (memory << 10),
+                      paradise_recalctimings,
+                      paradise_in, paradise_out,
+                      NULL,
+                      NULL);
+            paradise->vram_mask = (memory << 10) - 1;
+            svga->decode_mask   = (memory << 10) - 1;
+            svga->ramdac        = device_add(&sc11487_ramdac_device); /*Actually a Winbond W82c487-80, probably a clone.*/
+            svga->clock_gen     = device_add(&ics90c64a_903_device);
+            svga->getclock      = ics90c64a_vclk_getclock;
+            io_sethandler(0x23c0, 8, paradise_ext_readb, paradise_ext_readw, NULL, paradise_ext_writeb, paradise_ext_writew, NULL, paradise);
+            break;
 
         default:
             break;
@@ -817,6 +1178,10 @@ paradise_init(const device_t *info, uint32_t memory)
         case WD90C30:
             svga->crtc[0x36] = '3';
             svga->crtc[0x37] = '0';
+            break;
+        case WD90C31:
+            svga->crtc[0x36] = '3';
+            svga->crtc[0x37] = '1';
             break;
 
         default:
@@ -935,6 +1300,26 @@ static int
 paradise_wd90c30_standalone_available(void)
 {
     return rom_present("roms/video/wd90c30/90C30-LR.VBI");
+}
+
+static void *
+paradise_wd90c31_standalone_init(const device_t *info)
+{
+    paradise_t *paradise;
+    uint32_t memsize = device_get_config_int("memory");
+
+    paradise = paradise_init(info, memsize);
+
+    if (paradise)
+        rom_init(&paradise->bios_rom, "roms/video/wd90c31/wd90c31azs.BIN", 0xc0000, 0x8000, 0x7fff, 0, MEM_MAPPING_EXTERNAL);
+
+    return paradise;
+}
+
+static int
+paradise_wd90c31_standalone_available(void)
+{
+    return rom_present("roms/video/wd90c31/wd90c31azs.BIN");
 }
 
 void
@@ -1090,6 +1475,27 @@ static const device_config_t paradise_wd90c30_config[] = {
   // clang-format on
 };
 
+static const device_config_t paradise_wd90c31_config[] = {
+  // clang-format off
+    {
+        .name           = "memory",
+        .description    = "Memory size",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 1024,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "512 KB", .value =  512 },
+            { .description = "1 MB",   .value = 1024 },
+            { .description = ""                      }
+        },
+        .bios           = { { 0 } }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+  // clang-format on
+};
+
 const device_t paradise_wd90c30_device = {
     .name          = "Paradise WD90C30-LR",
     .internal_name = "wd90c30",
@@ -1102,4 +1508,18 @@ const device_t paradise_wd90c30_device = {
     .speed_changed = paradise_speed_changed,
     .force_redraw  = paradise_force_redraw,
     .config        = paradise_wd90c30_config
+};
+
+const device_t paradise_wd90c31_device = {
+    .name          = "Paradise WD90C31-ZS",
+    .internal_name = "wd90c30",
+    .flags         = DEVICE_ISA,
+    .local         = WD90C31,
+    .init          = paradise_wd90c31_standalone_init,
+    .close         = paradise_close,
+    .reset         = NULL,
+    .available     = paradise_wd90c31_standalone_available,
+    .speed_changed = paradise_speed_changed,
+    .force_redraw  = paradise_force_redraw,
+    .config        = paradise_wd90c31_config
 };
