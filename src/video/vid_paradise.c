@@ -1042,7 +1042,6 @@ paradise_do_bitblt(paradise_t* paradise)
             case 2:
             {
                 src_pixel = paradise->accel_running.fg;
-                pclog("Fixed color = %x\n", src_pixel);
                 paradise_bitblt_process_pixel(paradise, src_pixel);
                 break;
             }
