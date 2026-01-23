@@ -801,9 +801,9 @@ uint8_t
 paradise_bitblt_fetch_source_mem(paradise_t* paradise, uint32_t src_addr)
 {
     uint8_t src_pixel = 0;
-    if (paradise->accel_running.blt_ctrl1 & (1 << 8)) { // Planar mode
+    if (!(paradise->accel_running.blt_ctrl1 & (1 << 8))) { // Planar mode
         uint32_t addr     = (src_addr >> 3) << 2;
-        uint32_t pln_bit  = (src_addr & 7);
+        uint32_t pln_bit  = 7 - (src_addr & 7);
         // Get the planes
         uint8_t plane0 = paradise->svga.vram[addr | 0];
         uint8_t plane1 = paradise->svga.vram[addr | 1];
@@ -825,9 +825,9 @@ paradise_bitblt_fetch_source_mem(paradise_t* paradise, uint32_t src_addr)
 void
 paradise_bitblt_write_dest(paradise_t* paradise, uint8_t val, uint32_t dst_addr)
 {
-    if (paradise->accel_running.blt_ctrl1 & (1 << 8)) {
+    if (!(paradise->accel_running.blt_ctrl1 & (1 << 8))) {
         uint32_t addr     = (dst_addr >> 3) << 2;
-        uint32_t pln_bit  = (dst_addr & 7);
+        uint32_t pln_bit  = 7 - (dst_addr & 7);
         // Get the planes
         uint8_t plane0 = paradise->svga.vram[addr | 0];
         uint8_t plane1 = paradise->svga.vram[addr | 1];
@@ -842,7 +842,7 @@ paradise_bitblt_write_dest(paradise_t* paradise, uint8_t val, uint32_t dst_addr)
         uint8_t  readplane = dst_addr & 3;
         uint32_t addr      = ((dst_addr & 0xfffc) << 2) | ((dst_addr & 0x30000) >> 14) | (dst_addr & ~0x3ffff);
 
-        paradise->svga.vram[addr | readplane] = (paradise->svga.vram[addr | readplane] & ~paradise->accel_running.plane_mask) | (val & paradise->accel_running.plane_mask);
+        paradise->svga.vram[addr | readplane] = (paradise->svga.vram[addr | readplane] & paradise->accel_running.plane_mask) | (val & ~paradise->accel_running.plane_mask);
     }
 }
 
@@ -878,7 +878,7 @@ paradise_bitblt_process_pixel(paradise_t* paradise, uint8_t pixel)
         int pix_offset = (paradise->accel_running.blt_ctrl2 & (1 << 7)) ? paradise->accel_running.dstaddr + (sign * paradise->accel_running.count) : paradise->accel_running.dstaddr + (sign * paradise->accel_running.row_pitch * paradise->accel_running.y) + (sign * paradise->accel_running.x);
         uint8_t dest_pixel = paradise_bitblt_fetch_source_mem(paradise, pix_offset);
         if (paradise->accel_running.blt_ctrl2 & (1 << 0)) {
-            if (!!((dest_pixel & ~paradise->accel_running.trns_mask) == ((paradise->accel_running.trns_col & ((paradise->accel_running.blt_ctrl1 & (1 << 8)) ? 0xF : 0xFF)) & ~paradise->accel_running.trns_mask)) ^ !!(paradise->accel_running.blt_ctrl2 & (1 << 2))) {
+            if (!!((dest_pixel & ~paradise->accel_running.trns_mask) == ((paradise->accel_running.trns_col & (!(paradise->accel_running.blt_ctrl1 & (1 << 8)) ? 0xF : 0xFF)) & ~paradise->accel_running.trns_mask)) ^ !!(paradise->accel_running.blt_ctrl2 & (1 << 2))) {
                 goto advance;
             }
         }
@@ -907,7 +907,7 @@ paradise_bitblt_write_from_host(paradise_t* paradise)
     if (((paradise->accel_running.blt_ctrl1 >> 2) & 3) == 3) {
         paradise->accel_running.blt_data_cpu_flip ^= 1;
         if (paradise->accel_running.blt_data_cpu_flip) {
-            if (paradise->accel_running.blt_ctrl1 & (1 << 8)) {
+            if (!(paradise->accel_running.blt_ctrl1 & (1 << 8))) {
                 for (int i = 0; i < 8; i++) {
                     int fgres = (paradise->accel_running.blt_data_cpu & (1 << i));
                     if (!fgres && (paradise->accel_running.blt_ctrl2 & (1 << 3))) {
@@ -929,7 +929,7 @@ paradise_bitblt_write_from_host(paradise_t* paradise)
         }
         return;
     }
-    if (paradise->accel_running.blt_ctrl1 & (1 << 8)) {
+    if (!(paradise->accel_running.blt_ctrl1 & (1 << 8))) {
         paradise_bitblt_process_pixel(paradise, paradise->accel_running.blt_data_cpu & 0xF);
         paradise_bitblt_process_pixel(paradise, paradise->accel_running.blt_data_cpu >> 4);
     } else {
@@ -958,7 +958,7 @@ paradise_bitblt_get_source(paradise_t* paradise)
         {
             int fgres = 1;
             src_pixel = paradise_bitblt_fetch_source_mem(paradise, pix_offset);
-            if (paradise->accel_running.blt_ctrl1 & (1 << 8)) {
+            if (!(paradise->accel_running.blt_ctrl1 & (1 << 8))) {
                 src_pixel &= ~(paradise->accel_running.trns_mask & 0xF);
                 src_pixel &= 0xF;
             } else {
@@ -985,7 +985,7 @@ uint8_t
 paradise_bitblt_read_to_host(paradise_t* paradise)
 {
     uint8_t pixel = paradise_bitblt_get_source(paradise);
-    if (paradise->accel_running.blt_ctrl1 & (1 << 8)) {
+    if (!(paradise->accel_running.blt_ctrl1 & (1 << 8))) {
         pixel &= 0xF;
         paradise_advance_bitblt(paradise);
         pixel |= paradise_bitblt_get_source(paradise) << 4;
@@ -1021,7 +1021,7 @@ paradise_do_bitblt(paradise_t* paradise)
             {
                 int fgres = 1;
                 src_pixel = paradise_bitblt_fetch_source_mem(paradise, pix_offset);
-                if (paradise->accel_running.blt_ctrl1 & (1 << 8)) {
+                if (!(paradise->accel_running.blt_ctrl1 & (1 << 8))) {
                     src_pixel &= ~(paradise->accel_running.trns_mask & 0xF);
                     src_pixel &= 0xF;
                 } else {
