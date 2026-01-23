@@ -66,8 +66,6 @@ typedef struct paradise_t {
 
         uint16_t int_status;
         uint16_t blt_ctrl1, blt_ctrl2;
-        uint16_t srclow, srchigh;
-        uint16_t dstlow, dsthigh;
         uint16_t rop, plane_mask;
         uint16_t size_x, size_y;
         int16_t  x, y;
@@ -1008,7 +1006,7 @@ paradise_do_bitblt(paradise_t* paradise)
         int pix_offset = (paradise->accel_running.blt_ctrl2 & (1 << 6)) ? paradise->accel_running.srcaddr + (sign * paradise->accel_running.count) : paradise->accel_running.srcaddr + (sign * paradise->accel_running.row_pitch * paradise->accel_running.y) + (sign * paradise->accel_running.x);
 
         if (((paradise->accel_running.blt_ctrl2 >> 4) & 3) == 1) {
-            int pat_x = paradise->accel_running.x & 7;
+            int pat_x = (paradise->accel_running.x + (paradise->accel_running.srcaddr & 7)) & 7;
             int pat_y = paradise->accel_running.y & 7;
             src_pixel = paradise_bitblt_fetch_source_mem(paradise, paradise->accel_running.srcaddr + (pat_y * 8) + pat_x);
             paradise_bitblt_process_pixel(paradise, src_pixel);
@@ -1075,16 +1073,16 @@ paradise_read_index_reg(paradise_t* paradise)
                     ret = paradise->accel.blt_ctrl2;
                     break;
                 case 2:
-                    ret = paradise->accel.srclow;
+                    ret = paradise->accel.srcaddr & 0xFFF;
                     break;
                 case 3:
-                    ret = paradise->accel.srchigh;
+                    ret = (paradise->accel.srcaddr >> 8) & 0xFF;
                     break;
                 case 4:
-                    ret = paradise->accel.dstlow;
+                    ret = paradise->accel.dstaddr & 0xFFF;
                     break;
                 case 5:
-                    ret = paradise->accel.dsthigh;
+                    ret = (paradise->accel.dstaddr >> 8) & 0xFF;
                     break;
                 case 6:
                     ret = paradise->accel.size_x;
@@ -1147,7 +1145,6 @@ start_bitblt:
                     paradise->accel.blt_ctrl2 = val;
                     break;
                 case 2:
-                    paradise->accel.srclow = val;
                     paradise->accel.srcaddr &= 0xFF000;
                     paradise->accel.srcaddr |= val & 0xFFF;
                     if ((paradise->accel.blt_ctrl2 & (1 << 7)) && (paradise->accel.blt_ctrl2 & (1 << 6))) {
@@ -1156,12 +1153,10 @@ start_bitblt:
                     }
                     break;
                 case 3:
-                    paradise->accel.srchigh = val;
                     paradise->accel.srcaddr &= 0xFFF;
                     paradise->accel.srcaddr |= (val & 0xFF) << 12;
                     break;
                 case 4:
-                    paradise->accel.dstlow = val;
                     paradise->accel.dstaddr &= 0xFF000;
                     paradise->accel.dstaddr |= val & 0xFFF;
                     if ((paradise->accel.blt_ctrl2 & (1 << 7)) && !(paradise->accel.blt_ctrl2 & (1 << 6))) {
@@ -1170,7 +1165,6 @@ start_bitblt:
                     }
                     break;
                 case 5:
-                    paradise->accel.dsthigh = val;
                     paradise->accel.dstaddr &= 0xFFF;
                     paradise->accel.dstaddr |= (val & 0xFF) << 12;
                     break;
