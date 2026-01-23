@@ -849,10 +849,6 @@ paradise_bitblt_write_dest(paradise_t* paradise, uint8_t val, uint32_t dst_addr)
 void
 paradise_advance_bitblt(paradise_t* paradise)
 {
-    if (paradise->accel_running.host_driven && (paradise->accel_running.srcaddr & 7)) {
-        paradise->accel_running.srcaddr--;
-        return;
-    }
     paradise->accel_running.count++;
     paradise->accel_running.x++;
     if (paradise->accel_running.x >= paradise->accel_running.size_x) {
@@ -902,6 +898,7 @@ paradise_setup_bitblt(paradise_t* paradise)
     paradise->accel_running.blt_data_cpu_flip = 0;
     paradise->accel_running.host_driven = 0;
     paradise->accel_running.max_count = paradise->accel_running.size_x * paradise->accel_running.size_y;
+    pclog("blt_ctrl1 = 0x%04X, blt_ctrl2 = 0x%04X, idx = 0x%04X, block = 0x%04X\n", paradise->accel_running.blt_ctrl1, paradise->accel_running.blt_ctrl2, paradise->accel.reg_idx, paradise->accel.reg_block_ptr);
     pclog("src_addr = 0x%05X, dst_addr = 0x%05X\n", paradise->accel_running.srcaddr, paradise->accel_running.dstaddr);
     pclog("expected count = %d\n", paradise->accel_running.max_count);
 }
@@ -915,6 +912,10 @@ paradise_bitblt_write_from_host(paradise_t* paradise)
             if (!(paradise->accel_running.blt_ctrl1 & (1 << 8))) {
                 for (int i = 0; i < 8; i++) {
                     int fgres = (paradise->accel_running.blt_data_cpu & (1 << i));
+                    if (paradise->accel_running.srcaddr & 7) {
+                        paradise->accel_running.srcaddr--;
+                        continue;
+                    }
                     if (!fgres && (paradise->accel_running.blt_ctrl2 & (1 << 3))) {
                         paradise_advance_bitblt(paradise);
                         continue;
@@ -924,6 +925,10 @@ paradise_bitblt_write_from_host(paradise_t* paradise)
             } else {
                 for (int i = 0; i < 4; i++) {
                     int fgres = (paradise->accel_running.blt_data_cpu & (1 << i));
+                    if (paradise->accel_running.srcaddr & 7) {
+                        paradise->accel_running.srcaddr--;
+                        continue;
+                    }
                     if (!fgres && (paradise->accel_running.blt_ctrl2 & (1 << 3))) {
                         paradise_advance_bitblt(paradise);
                         continue;
@@ -938,6 +943,10 @@ paradise_bitblt_write_from_host(paradise_t* paradise)
         paradise_bitblt_process_pixel(paradise, paradise->accel_running.blt_data_cpu & 0xF);
         paradise_bitblt_process_pixel(paradise, paradise->accel_running.blt_data_cpu >> 4);
     } else {
+        if (paradise->accel_running.srcaddr & 7) {
+            paradise->accel_running.srcaddr--;
+            return;
+        }
         paradise_bitblt_process_pixel(paradise, paradise->accel_running.blt_data_cpu);
     }
 }
@@ -1006,9 +1015,9 @@ paradise_do_bitblt(paradise_t* paradise)
         int pix_offset = (paradise->accel_running.blt_ctrl2 & (1 << 6)) ? paradise->accel_running.srcaddr + (sign * paradise->accel_running.count) : paradise->accel_running.srcaddr + (sign * paradise->accel_running.row_pitch * paradise->accel_running.y) + (sign * paradise->accel_running.x);
 
         if (((paradise->accel_running.blt_ctrl2 >> 4) & 3) == 1) {
-            int pat_x = (paradise->accel_running.x + (paradise->accel_running.srcaddr & 7)) & 7;
+            int pat_x = paradise->accel_running.x & 7;
             int pat_y = paradise->accel_running.y & 7;
-            src_pixel = paradise_bitblt_fetch_source_mem(paradise, paradise->accel_running.srcaddr + (pat_y * 8) + pat_x);
+            src_pixel = paradise_bitblt_fetch_source_mem(paradise, (paradise->accel_running.srcaddr & ~63) + (pat_y * 8) + pat_x);
             paradise_bitblt_process_pixel(paradise, src_pixel);
             continue;
         }
@@ -1263,7 +1272,6 @@ paradise_ext_readw(uint16_t addr, void* priv)
     switch (addr & 7) {
         case 2: {
             uint16_t ret = paradise_read_index_reg(priv);
-            pclog("ret = 0x%04X, idx = 0x%04X, block = 0x%04X\n", ret, paradise->accel.reg_idx, paradise->accel.reg_block_ptr);
             if (!paradise->accel.disable_autoinc)
                 paradise->accel.reg_idx++;
             return ret;
