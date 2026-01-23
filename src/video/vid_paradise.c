@@ -941,8 +941,28 @@ paradise_bitblt_write_from_host(paradise_t* paradise)
         return;
     }
     if (!(paradise->accel_running.blt_ctrl1 & (1 << 8))) {
-        paradise_bitblt_process_pixel(paradise, paradise->accel_running.blt_data_cpu & 0xF);
+        //paradise->accel_running.blt_data_cpu_planar[paradise->accel_running.blt_data_cpu_flip++] = paradise->accel_running.blt_data_cpu;
+        //if (paradise->accel_running.blt_data_cpu_flip == 4) {
+        //    paradise->accel_running.blt_data_cpu_flip = 0;
+        //    for (int i = (paradise->accel_running.srcaddr & 7); i < 8; i++) {
+        //        uint8_t src_pixel = 0;
+        //        uint32_t pln_bit  = 7 - i;
+        //        // Get the planes
+        //        uint8_t plane0 = paradise->accel_running.blt_data_cpu_planar[0];
+        //        uint8_t plane1 = paradise->accel_running.blt_data_cpu_planar[1];
+        //        uint8_t plane2 = paradise->accel_running.blt_data_cpu_planar[2];
+        //        uint8_t plane3 = paradise->accel_running.blt_data_cpu_planar[3];
+        //        // Then calculate the packed source pixel from the planes.
+        //        src_pixel |= !!(plane0 & (1 << pln_bit)) << 0;
+        //        src_pixel |= !!(plane1 & (1 << pln_bit)) << 1;
+        //        src_pixel |= !!(plane2 & (1 << pln_bit)) << 2;
+        //        src_pixel |= !!(plane3 & (1 << pln_bit)) << 3;
+        //        paradise_bitblt_process_pixel(paradise, src_pixel);
+        //    }
+        //    paradise->accel_running.srcaddr &= ~7;
+        //}
         paradise_bitblt_process_pixel(paradise, paradise->accel_running.blt_data_cpu >> 4);
+        paradise_bitblt_process_pixel(paradise, paradise->accel_running.blt_data_cpu & 0xF);
     } else {
         if (paradise->accel_running.srcaddr & 7) {
             paradise->accel_running.srcaddr--;
