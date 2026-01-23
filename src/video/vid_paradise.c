@@ -80,6 +80,8 @@ typedef struct paradise_t {
         uint8_t blt_data_cpu;
         uint8_t blt_data_cpu_flip;
 
+        int host_driven;
+
         int invalid_block;
     } accel, accel_running;
 } paradise_t;
@@ -842,13 +844,17 @@ paradise_bitblt_write_dest(paradise_t* paradise, uint8_t val, uint32_t dst_addr)
         uint8_t  readplane = dst_addr & 3;
         uint32_t addr      = ((dst_addr & 0xfffc) << 2) | ((dst_addr & 0x30000) >> 14) | (dst_addr & ~0x3ffff);
 
-        paradise->svga.vram[addr | readplane] = (paradise->svga.vram[addr | readplane] & paradise->accel_running.plane_mask) | (val & ~paradise->accel_running.plane_mask);
+        paradise->svga.vram[addr | readplane] = (paradise->svga.vram[addr | readplane] & ~paradise->accel_running.plane_mask) | (val & paradise->accel_running.plane_mask);
     }
 }
 
 void
 paradise_advance_bitblt(paradise_t* paradise)
 {
+    if (paradise->accel_running.host_driven && (paradise->accel_running.srcaddr & 7)) {
+        paradise->accel_running.srcaddr--;
+        return;
+    }
     paradise->accel_running.count++;
     paradise->accel_running.x++;
     if (paradise->accel_running.x >= paradise->accel_running.size_x) {
@@ -896,7 +902,7 @@ paradise_setup_bitblt(paradise_t* paradise)
     paradise->accel_running.y = 0;
     paradise->accel_running.count = 0;
     paradise->accel_running.blt_data_cpu_flip = 0;
-    //paradise->accel_running.size_x *= 2;
+    paradise->accel_running.host_driven = 1;
     paradise->accel_running.max_count = paradise->accel_running.size_x * paradise->accel_running.size_y;
     pclog("src_addr = 0x%05X, dst_addr = 0x%05X\n", paradise->accel_running.srcaddr, paradise->accel_running.dstaddr);
     pclog("expected count = %d\n", paradise->accel_running.max_count);
@@ -995,6 +1001,7 @@ paradise_bitblt_read_to_host(paradise_t* paradise)
 void
 paradise_do_bitblt(paradise_t* paradise)
 {
+    paradise->accel_running.host_driven = 0;
     while ((paradise->accel.blt_ctrl1 & (1 << 11))) {
         uint8_t src_pixel = 0;
         int sign = !!(paradise->accel_running.blt_ctrl1 & (1 << 10)) ? -1 : 1;
@@ -1037,6 +1044,7 @@ paradise_do_bitblt(paradise_t* paradise)
             case 2:
             {
                 src_pixel = paradise->accel_running.fg;
+                pclog("Fixed color = %x\n", src_pixel);
                 paradise_bitblt_process_pixel(paradise, src_pixel);
                 break;
             }
