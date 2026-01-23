@@ -906,8 +906,9 @@ paradise_setup_bitblt(paradise_t* paradise)
 void
 paradise_bitblt_write_from_host(paradise_t* paradise)
 {
+    pclog("data = 0x%x\n", paradise->accel_running.blt_data_cpu);
     if (((paradise->accel_running.blt_ctrl1 >> 2) & 3) == 3) {
-        paradise->accel_running.blt_data_cpu_flip ^= 1;
+        paradise->accel_running.blt_data_cpu_flip = 1;
         if (paradise->accel_running.blt_data_cpu_flip) {
             if (!(paradise->accel_running.blt_ctrl1 & (1 << 8))) {
                 for (int i = 0; i < 8; i++) {
