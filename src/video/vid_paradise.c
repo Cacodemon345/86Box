@@ -882,11 +882,11 @@ paradise_bitblt_process_pixel(paradise_t* paradise, uint8_t pixel)
         int sign = !!(paradise->accel_running.blt_ctrl1 & (1 << 10)) ? -1 : 1;
         int pix_offset = (paradise->accel_running.blt_ctrl2 & (1 << 7)) ? paradise->accel_running.dstaddr + (sign * paradise->accel_running.count) : paradise->accel_running.dstaddr + (sign * paradise->accel_running.row_pitch * paradise->accel_running.y) + (sign * paradise->accel_running.x);
         uint8_t dest_pixel = paradise_bitblt_fetch_source_mem(paradise, pix_offset);
-        //if (paradise->accel_running.blt_ctrl2 & (1 << 0)) {
-        //    if (!!((dest_pixel & ~paradise->accel_running.trns_mask) == ((paradise->accel_running.trns_col & (!(paradise->accel_running.blt_ctrl1 & (1 << 8)) ? 0xF : 0xFF)) & ~paradise->accel_running.trns_mask)) ^ !!(paradise->accel_running.blt_ctrl2 & (1 << 2))) {
-        //        goto advance;
-        //    }
-        //}
+        if (paradise->accel_running.blt_ctrl2 & (1 << 0)) {
+            if (!!((dest_pixel & ~paradise->accel_running.trns_mask) == ((paradise->accel_running.trns_col & (!(paradise->accel_running.blt_ctrl1 & (1 << 8)) ? 0xF : 0xFF)) & ~paradise->accel_running.trns_mask)) ^ !!(paradise->accel_running.blt_ctrl2 & (1 << 2))) {
+                goto advance;
+            }
+        }
 
         paradise_bitblt_write_dest(paradise, paradise_bitblt_rop4(paradise, dest_pixel, pixel), pix_offset);
 advance:
@@ -902,7 +902,7 @@ paradise_setup_bitblt(paradise_t* paradise)
     paradise->accel_running.y = 0;
     paradise->accel_running.count = 0;
     paradise->accel_running.blt_data_cpu_flip = 0;
-    paradise->accel_running.host_driven = 1;
+    paradise->accel_running.host_driven = 0;
     paradise->accel_running.max_count = paradise->accel_running.size_x * paradise->accel_running.size_y;
     pclog("src_addr = 0x%05X, dst_addr = 0x%05X\n", paradise->accel_running.srcaddr, paradise->accel_running.dstaddr);
     pclog("expected count = %d\n", paradise->accel_running.max_count);
