@@ -250,6 +250,9 @@ extern const device_t pssj_1e0_device;
 /* Tandy PSG */
 extern const device_t tndy_device;
 
+/* Tandy Sensation */
+extern const device_t sensationaud_device;
+
 /* USB Audio */
 extern const device_t usb_audio_device;
 
