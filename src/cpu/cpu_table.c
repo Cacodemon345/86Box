@@ -8258,6 +8258,32 @@ const cpu_family_t cpu_families[] = {
             { .name = "", 0 }
         }
     },
+    {
+        .package       = CPU_PKG_PPC,
+        .manufacturer  = "IBM",
+        .name          = "PowerPC 603",
+        .internal_name = "ppc603",
+        .cpus          = (const CPU[]) {
+            { /* out of multiplier range */
+                .name               = "100",
+                .cpu_type           = CPU_PPC603,
+                .fpus               = fpus_none,
+                .rspeed             = 100000000,
+                .multi              = 1.5,
+                .voltage            = 2050,
+                .edx_reset          = 0x660,
+                .cpuid_model        = 0x660,
+                .cyrix_id           = 0,
+                .cpu_flags          = CPU_FIXED_MULTIPLIER,
+                .mem_read_cycles    = 9,
+                .mem_write_cycles   = 9,
+                .cache_read_cycles  = 4,
+                .cache_write_cycles = 4,
+                .atclk_div          = 12
+            },
+            { .name = "", 0 }
+        }
+    },
     { .package = 0, 0 }
   // clang-format on
 };

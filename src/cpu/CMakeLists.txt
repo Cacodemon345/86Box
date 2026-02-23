@@ -32,6 +32,7 @@ add_library(cpu OBJECT
     x87.c
     x87_timings.c
     i8080.c
+    ppcglue.cpp
 )
 
 if(AMD_K5)

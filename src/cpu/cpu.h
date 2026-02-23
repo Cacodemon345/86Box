@@ -81,7 +81,9 @@ enum {
     CPU_CYRIX3S,
     CPU_PENTIUMPRO, /* 686 class CPUs */
     CPU_PENTIUM2,
-    CPU_PENTIUM2D
+    CPU_PENTIUM2D,
+
+    CPU_PPC603
 };
 
 enum {
@@ -112,7 +114,8 @@ enum {
     CPU_PKG_SOCKET8          = (1 << 24),
     CPU_PKG_SLOT1            = (1 << 25),
     CPU_PKG_SLOT2            = (1 << 26),
-    CPU_PKG_SOCKET370        = (1 << 27)
+    CPU_PKG_SOCKET370        = (1 << 27),
+    CPU_PKG_PPC              = (1 << 28)
 };
 
 #define CPU_SUPPORTS_DYNAREC 1
@@ -532,6 +535,7 @@ extern int isibm486;
 extern int is_mazovia;
 extern int is_nec;
 extern int is_rapidcad;
+extern int is_ppc;
 extern int hasfpu;
 #define CPU_FEATURE_RDTSC   (1 << 0)
 #define CPU_FEATURE_MSR     (1 << 1)
@@ -725,6 +729,7 @@ extern void leave_smm(void);
 extern void exec386_2386(int32_t cycs);
 extern void exec386(int32_t cycs);
 extern void exec386_dynarec(int32_t cycs);
+extern void execppc(int32_t cycs);
 extern int  idivl(int32_t val);
 extern void resetmcr(void);
 extern void resetx86(void);
@@ -810,6 +815,8 @@ extern void SF_FPU_reset(void);
 
 extern void reset_808x(int hard);
 extern void interrupt_808x(uint16_t addr);
+
+extern void reset_ppc(int hard);
 
 extern void reset_vx0(int hard);
 

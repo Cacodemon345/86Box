@@ -128,6 +128,7 @@ if(INSTRUMENT)
 endif()
 
 target_link_libraries(86Box
+    pearpc
     cpu
     chipset
     mch
@@ -199,6 +200,7 @@ configure_file(include/86box/version.h.in include/86box/version.h @ONLY)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/include)
 
 include_directories(include)
+include_directories(pearpc)
 if(NEW_DYNAREC)
     include_directories(cpu codegen_new)
 elseif(DYNAREC)
@@ -209,6 +211,7 @@ endif()
 
 add_subdirectory(cdrom)
 add_subdirectory(chipset)
+add_subdirectory(pearpc)
 
 add_subdirectory(cpu)
 if(NEW_DYNAREC)

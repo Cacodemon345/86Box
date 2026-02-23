@@ -201,6 +201,7 @@ int is_mazovia;
 int is_nec;
 int is286;
 int is386;
+int isppc;
 int is6117;
 int is486 = 1;
 int is586 = 0;
@@ -535,6 +536,7 @@ cpu_set(void)
     is486       = (cpu_s->cpu_type >= CPU_RAPIDCAD);
     is_am486    = (cpu_s->cpu_type == CPU_ENH_Am486DX);
     is_am486dxl = (cpu_s->cpu_type == CPU_Am486DXL);
+    is_ppc      = (cpu_s->cpu_type == CPU_PPC603);
 
     is6117 = !strcmp(cpu_f->manufacturer, "ALi");
 
@@ -1680,6 +1682,7 @@ cpu_set(void)
         case CPU_PENTIUMPRO:
         case CPU_PENTIUM2:
         case CPU_PENTIUM2D:
+        case CPU_PPC603:
 #ifdef USE_DYNAREC
             /* TODO: Perhaps merge the three opcode tables with some instructions UD#'ing depending on
                      CPU type. */
@@ -1869,6 +1872,10 @@ cpu_set(void)
         cpu_exec = execvx0;
     else
         cpu_exec = execx86;
+
+    if (is_ppc) {
+        cpu_exec = execppc;
+    }
     mmx_init();
     gdbstub_cpu_init();
 }

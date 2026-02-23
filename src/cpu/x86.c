@@ -374,6 +374,10 @@ reset_common(int hard)
             reset_808x(hard);
     }
 
+    if (is_ppc) {
+        reset_ppc(hard);
+    }
+
     in_lock    = 0;
 
     cpu_cpurst_on_sr = 0;

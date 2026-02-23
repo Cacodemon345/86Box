@@ -647,6 +647,10 @@ getpccache(uint32_t a)
     }
     a64 &= rammask;
 
+    if (is_ppc && a >= 0xFFF00000) {
+        a |= 0x80000;
+    }
+
     if (_mem_exec[a64 >> MEM_GRANULARITY_BITS]) {
         if (is286) {
             if (read_mapping[a64 >> MEM_GRANULARITY_BITS] && (read_mapping[a64 >> MEM_GRANULARITY_BITS]->flags & MEM_MAPPING_ROM_WS))
@@ -672,6 +676,10 @@ read_mem_b(uint32_t addr)
 
     mem_logical_addr = addr;
     addr &= rammask;
+    
+    if (is_ppc && addr >= 0xFFF00000) {
+        addr |= 0x80000;
+    }
 
     map = read_mapping[addr >> MEM_GRANULARITY_BITS];
     if (map && map->read_b)
@@ -689,6 +697,10 @@ read_mem_w(uint32_t addr)
     mem_logical_addr = addr;
     addr &= rammask;
 
+    if (is_ppc && addr >= 0xFFF00000) {
+        addr |= 0x80000;
+    }
+
     if (addr & 1)
         ret = read_mem_b(addr) | (read_mem_b(addr + 1) << 8);
     else {
@@ -703,6 +715,35 @@ read_mem_w(uint32_t addr)
     return ret;
 }
 
+uint32_t
+read_mem_l(uint32_t addr)
+{
+    mem_mapping_t *map;
+    uint32_t       ret        = 0xffffffff;
+
+    mem_logical_addr = addr;
+    addr &= rammask;
+
+    if (is_ppc && addr >= 0xFFF00000) {
+        addr |= 0x80000;
+    }
+
+    if (addr & 3)
+        ret = read_mem_w(addr) | (read_mem_w(addr + 2) << 16);
+    else {
+        map = read_mapping[addr >> MEM_GRANULARITY_BITS];
+
+        if (map && map->read_l)
+            ret = map->read_l(addr, map->priv);
+        else if (map && map->read_w)
+            ret = map->read_w(addr, map->priv) | (map->read_w(addr + 2, map->priv) << 16);
+        else if (map && map->read_b)
+            ret = map->read_b(addr, map->priv) | (map->read_b(addr + 1, map->priv) << 8) | (map->read_b(addr + 2, map->priv) << 16) | (map->read_b(addr + 3, map->priv) << 24);
+    }
+
+    return ret;
+}
+
 void
 write_mem_b(uint32_t addr, uint8_t val)
 {
@@ -710,6 +751,10 @@ write_mem_b(uint32_t addr, uint8_t val)
 
     mem_logical_addr = addr;
     addr &= rammask;
+
+    if (is_ppc && addr >= 0xFFF00000) {
+        addr |= 0x80000;
+    }
 
     map = write_mapping[addr >> MEM_GRANULARITY_BITS];
     if (map && map->write_b)
@@ -723,6 +768,10 @@ write_mem_w(uint32_t addr, uint16_t val)
 
     mem_logical_addr = addr;
     addr &= rammask;
+
+    if (is_ppc && addr >= 0xFFF00000) {
+        addr |= 0x80000;
+    }
 
     if (addr & 1) {
         write_mem_b(addr, val);
@@ -738,6 +787,41 @@ write_mem_w(uint32_t addr, uint16_t val)
             }
         }
     }
+}
+
+void
+write_mem_l(uint32_t addr, uint32_t val)
+{
+    mem_mapping_t *map;
+
+    mem_logical_addr = addr;
+    addr &= rammask;
+
+    if (is_ppc && addr >= 0xFFF00000) {
+        addr |= 0x80000;
+    }
+
+    if (addr & 3) {
+        write_mem_w(addr, val & 0xFFFF);
+        write_mem_w(addr + 2, val >> 16);
+    } else {
+        map = read_mapping[addr >> MEM_GRANULARITY_BITS];
+
+        if (map && map->write_l)
+            map->write_l(addr, val, map->priv);
+        else if (map && map->write_w) {
+            map->write_w(addr, val & 0xFFFF, map->priv);
+            map->write_w(addr + 2, val >> 16, map->priv);
+        }
+        else if (map && map->read_b) {
+            map->write_b(addr, val & 0xFF, map->priv);
+            map->write_b(addr + 1, val >> 8, map->priv);
+            map->write_b(addr + 2, val >> 16, map->priv);
+            map->write_b(addr + 3, val >> 24, map->priv);
+        }
+    }
+
+    return;
 }
 
 uint8_t
@@ -2680,7 +2764,7 @@ mem_set_access(uint8_t bitmap, int mode, uint32_t base, uint32_t size, uint16_t 
 void
 mem_a20_init(void)
 {
-    if (is286) {
+    if (is286 || is_ppc) {
         mem_a20_key = mem_a20_alt = mem_a20_state = 0;
         rammask = cpu_16bitbus ? 0xffffff : 0xffffffff;
         if (is6117)
@@ -2851,7 +2935,7 @@ mem_reset(void)
     memset(_mem_state, 0x00, sizeof(_mem_state));
 
     /* Set the low RAM space as internal. */
-    mem_init_ram_mapping(&ram_low_mapping, 0x000000, (mem_size > 640) ? 0xa0000 : mem_size * 1024);
+    mem_init_ram_mapping(&ram_low_mapping, 0x000000, is_ppc ? 0x100000 : ((mem_size > 640) ? 0xa0000 : mem_size * 1024));
 
     if (mem_size > 1024) {
         if (cpu_16bitbus && !is6117 && mem_size > 16256)
@@ -2859,15 +2943,16 @@ mem_reset(void)
         else if (cpu_16bitbus && is6117 && mem_size > 65408)
             mem_init_ram_mapping(&ram_high_mapping, 0x100000, (65408 - 1024) * 1024);
         else {
-           mem_init_ram_mapping(&ram_high_mapping, 0x100000, (mem_size - 1024) * 1024);
+            mem_init_ram_mapping(&ram_high_mapping, 0x100000, (mem_size - 1024) * 1024);
         }
     }
+    if (!is_ppc) {
+        if (mem_size > 768) {
+            mem_add_ram_mapping(&ram_mid_mapping, 0xa0000, 0x60000);
 
-    if (mem_size > 768) {
-        mem_add_ram_mapping(&ram_mid_mapping, 0xa0000, 0x60000);
-
-        mem_add_ram_mapping(&ram_mid_mapping2, 0xa0000, 0x60000);
-        mem_mapping_disable(&ram_mid_mapping2);
+            mem_add_ram_mapping(&ram_mid_mapping2, 0xa0000, 0x60000);
+            mem_mapping_disable(&ram_mid_mapping2);
+        }
     }
 
     mem_mapping_add(&ram_remapped_mapping, mem_size * 1024, 256 * 1024,
@@ -3106,6 +3191,14 @@ void
 mem_a20_recalc(void)
 {
     int state;
+
+    if (is_ppc) {
+        rammask = 0xffffffff;
+        flushmmucache();
+        mem_a20_key = mem_a20_alt = mem_a20_state = mem_a20_chipset = 0;
+
+        return;
+    }
 
     if (!is286) {
         rammask = 0xfffff;
