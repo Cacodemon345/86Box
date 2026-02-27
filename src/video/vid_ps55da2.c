@@ -64,7 +64,11 @@
 #define DA2_MASK_GAIJIRAM        0x3ffff       /* 0x3FFFF */
 #define DA2_MASK_VRAM            0xfffff       /* 0xFFFFF */
 #define DA2_MASK_VRAMPLANE       0x1ffff       /* 0x1FFFF */
-#define DA2_PIXELCLOCK           29000000.0    /* 58 MHz interlaced */
+#define DA2_CLOCK_58MHZ          58000000.0    /* 58.000 MHz interlaced */
+#define DA2_CLOCK_45MHZ          45570000.0    /* 45.570 MHz interlaced */
+/* The DA-3 and later have the capability of monitor ID detection and 45.57/47.424 MHz OSCs.
+   They must be used for IBM 8515 monitor, but I don't know which OSC is used (or both). */
+
 #define DA2_BLT_MEMSIZE          0x10
 #define DA2_BLT_REGSIZE          0x40
 #define DA2_DEBUG_BLTLOG_SIZE    (DA2_BLT_REGSIZE + 1)
@@ -77,9 +81,9 @@
 /* These ROMs are currently not found.
    At least, IBM-J released a Korean and PRC version of PS/55 for each market. */
 #define DA2_DCONFIG_CHARSET_HANT  3 /* for Code page 938 Traditional Chinese */
-#define DA2_DCONFIG_MONTYPE_COLOR 0x0A
-#define DA2_DCONFIG_MONTYPE_8515  0x0B
-#define DA2_DCONFIG_MONTYPE_MONO  0x09
+#define DA2_DCONFIG_MONTYPE_COLOR 0x0A /* 1010: IBM 8514 */
+#define DA2_DCONFIG_MONTYPE_8515  0x0B /* 1011: IBM 8515 */
+#define DA2_DCONFIG_MONTYPE_MONO  0x09 /* 1001: IBM 8604 */
 
 #define DA2_BLT_CIDLE             0
 #define DA2_BLT_CFILLRECT         1
@@ -263,8 +267,8 @@
 #endif
 
 #ifdef ENABLE_DA2_LOG
-#    define ENABLE_DA2_DEBUGIO 1
-#    define ENABLE_DA2_DEBUGBLT 1
+// #    define ENABLE_DA2_DEBUGIO 1
+// #    define ENABLE_DA2_DEBUGBLT 1
 // #    define ENABLE_DA2_DEBUGVRAM 1
 // #    define ENABLE_DA2_DEBUGFULLSCREEN 1
 // #    define ENABLE_DA2_DEBUGMONWAIT 1
@@ -347,7 +351,7 @@ typedef struct da2_t {
     int      hdisp, htotal, hdisp_time, rowoffset;
     int      lowres;
     int      rowcount;
-    double   clock;
+    double   clock, pixelclock;
     uint32_t memaddr_latch, ca_adj;
 
     uint64_t   dispontime, dispofftime;
@@ -368,6 +372,7 @@ typedef struct da2_t {
     int firstline, lastline;
     int firstline_draw, lastline_draw;
     int displine;
+    int oddeven;
 
     /* Attribute Buffer E0000-E0FFFh (4 KB) */
     uint8_t *cram;
@@ -440,6 +445,9 @@ typedef struct da2_t {
 
     int old_pos2;
 } da2_t;
+
+static video_timings_t timing_da2_mca = 
+{ .type = VIDEO_MCA, .write_b = 4, .write_w = 4, .write_l =  10, .read_b = 4, .read_w = 4, .read_l = 10 };
 
 static void     da2_recalctimings(da2_t *da2);
 static void     da2_mmio_gc_writeW(uint32_t addr, uint16_t val, void *p);
@@ -515,7 +523,7 @@ da2_WritePlaneDataWithBitmask(uint32_t destaddr, const uint16_t mask, pixel32 *s
     uint32_t writepx[8];
     destaddr &= 0xfffffffe; /* align to word address to work bit shift correctly */
     // da2_log("DA2_WPDWB addr %x mask %x rop %x shift %d\n", destaddr, mask, da2->bitblt.raster_op, da2->bitblt.bitshift_destr);
-    da2->changedvram[(DA2_MASK_VRAMPLANE & destaddr) >> 9]       = changeframecount;
+    da2->changedvram[(DA2_MASK_VRAMPLANE & destaddr) >> 9]       = 3;
     destaddr <<= 3;
     /* read destination data with big endian order */
     for (uint8_t i = 0; i < 8; i++)
@@ -677,7 +685,7 @@ static uint8_t
 pixel1tohex(uint32_t addr, int index, da2_t *da2)
 {
     uint8_t pixeldata = 0;
-    for (uint8_t i = 0; i < 8; j++) {
+    for (uint8_t i = 0; i < 8; i++) {
         if (da2_vram_r(((addr << 3) | i) & (1 << (7 - index)), da2))
             pixeldata++;
     }
@@ -1245,7 +1253,7 @@ da2_out(uint16_t addr, uint16_t val, void *priv)
         case 0x3C9: /* Data */
             // da2_iolog("DA2 Out addr %03X idx %d:%d val %02X %04X:%04X esdi %04X:%04X\n", addr, da2->dac_write, da2->dac_pos, val, cs >> 4, cpu_state.pc, ES, DI);
             da2->dac_status = 0;
-            da2->fullchange = changeframecount;
+            da2->fullchange = 3;
             switch (da2->dac_pos) {
                 case 0:
                     da2->dac_r = val;
@@ -1283,7 +1291,7 @@ da2_out(uint16_t addr, uint16_t val, void *priv)
                 if (da2->ioctladdr == LS_RESET && val & 0x01) /* Reset register */
                     da2_reset_ioctl(da2);
                 else if (da2->ioctladdr == LS_MODE && ((oldval ^ val) & 0x03)) { /* Mode register */
-                    da2->fullchange = changeframecount;
+                    da2->fullchange = 3;
                     da2_recalctimings(da2);
                     da2_updatevidselector(da2);
                 }
@@ -1371,8 +1379,8 @@ da2_out(uint16_t addr, uint16_t val, void *priv)
                 case LC_START_H_DISPLAY_ENAB:
                 case LC_START_V_DISPLAY_ENAB:
                 case LC_VIEWPORT_SELECT:
-                case LC_VIEWPORT_PRIORITY:
-                    da2->fullchange = changeframecount;
+                case LC_COMMAND:
+                    da2->fullchange = 3;
                     da2_recalctimings(da2);
                     break;
                 default:
@@ -1391,13 +1399,13 @@ da2_out(uint16_t addr, uint16_t val, void *priv)
                 // da2_iolog("set attraddr: %X\n", da2->attraddr);
             } else {
                 if ((da2->attraddr == LV_PANNING) && (da2->attrc[LV_PANNING] != val))
-                    da2->fullchange = changeframecount;
+                    da2->fullchange = 3;
                 if (da2->attrc[da2->attraddr & 0x3f] != val)
                     da2_iolog("attr changed %x: %x -> %x\n", da2->attraddr & 0x3f, da2->attrc[da2->attraddr & 0x3f], val);
                 da2->attrc[da2->attraddr & 0x3f] = val;
                 // da2_iolog("set attrc %x: %x\n", da2->attraddr & 31, val);
                 if (da2->attraddr < 16)
-                    da2->fullchange = changeframecount;
+                    da2->fullchange = 3;
                 if (da2->attraddr == LV_MODE_CONTROL || da2->attraddr < 0x10) {
                     for (uint8_t c = 0; c < 16; c++) {
                         // if (da2->attrc[LV_MODE_CONTROL] & 0x80) da2->egapal[c] = (da2->attrc[c] & 0xf) | ((da2->attrc[0x14] & 0xf) << 4);
@@ -1411,7 +1419,7 @@ da2_out(uint16_t addr, uint16_t val, void *priv)
                 switch (da2->attraddr) {
                     case LV_COLOR_PLANE_ENAB:
                         if ((val & 0xff) != da2->plane_mask)
-                            da2->fullchange = changeframecount;
+                            da2->fullchange = 3;
                         da2->plane_mask = val & 0xff;
                         break;
                     case LV_CURSOR_CONTROL:
@@ -2055,7 +2063,7 @@ da2_render_text(da2_t *da2)
             }
             /* Drawing text cursor */
             drawcursor = ((da2->memaddr == da2->cursoraddr) && da2->cursorvisible && da2->cursoron);
-            if (drawcursor && da2->scanline >= da2->crtc[LC_CURSOR_ROW_START] && da2->scanline <= da2->crtc[LC_CURSOR_ROW_END]) {
+            if (drawcursor) {
                 int cursorwidth = (da2->crtc[LC_COMPATIBILITY] & 0x20 ? 26 : 13);
                 int cursorcolor = (colormode) ? IRGBtoBGRI(da2->attrc[LV_CURSOR_COLOR]) : 2; /* Choose color 2 if mode 8 */
                 fg              = (colormode) ? getPS55ForeColor(attr, da2) : ((attr & 0x08) ? 3 : 2);
@@ -2326,14 +2334,18 @@ da2_recalctimings(da2_t *da2)
     /* In the video mode 3, you'll see a blank below the screen. It's NOT a bug. */
     da2->hdisp -= da2->crtc[LC_START_H_DISPLAY_ENAB];
     da2->dispend -= da2->crtc[LC_START_V_DISPLAY_ENAB];
-    da2->dispend += 1;
 
     da2->htotal = da2->crtc[LC_HORIZONTAL_TOTAL];
-    da2->htotal += 1;
+    da2->htotal += 2;
 
     da2->rowoffset = da2->crtc[LC_OFFSET]; /* number of bytes in a scanline */
 
-    da2->clock = da2->da2const;
+    if (da2->crtc[LC_END_HSYNC_PULSE] & 0x8000)
+        da2->pixelclock = DA2_CLOCK_45MHZ;
+    else
+        da2->pixelclock = DA2_CLOCK_58MHZ;
+    da2->da2const = (uint64_t) ((cpuclock / da2->pixelclock) * (double) (1ull << 32));
+    da2->clock = (double)da2->da2const;
 
     if (da2->vtotal == 0)
         da2->vtotal = da2->vsyncstart = da2->vblankstart = 256;
@@ -2352,15 +2364,12 @@ da2_recalctimings(da2_t *da2)
     da2->render     = da2_render_blank;
     /* determine display mode */
     // if (da2->attr_palette_enable && (da2->attrc[0x1f] & 0x08))
-    /* if output disabled or VGA passthrough */
-    if (da2->ioctl[LS_MODE] & 0x02 || !(da2->attrc[LV_COMPATIBILITY] & 0x08)) {
-        da2->render = da2_render_blank;
-        // return;
     /* 16 color graphics mode */
-    } else if (!(da2->ioctl[LS_MODE] & 0x01)) {
+    if (!(da2->ioctl[LS_MODE] & 0x01)) {
         da2->hdisp *= 16;
         da2->char_width = 13;
-        if (da2->crtc[LC_VIEWPORT_PRIORITY] & 0x80) {
+        // if (da2->crtc[LC_VIEWPORT_PRIORITY] & 0x80) {
+        if (da2->crtc[LC_COMMAND] & 0x40) {
             da2_log("Set videomode to PS/55 8 bpp graphics.\n");
             da2->render            = da2_render_color_8bpp;
             da2->vram_display_mask = DA2_MASK_A000;
@@ -2383,6 +2392,9 @@ da2_recalctimings(da2_t *da2)
         da2->hdisp *= 13;
         da2->char_width = 13;
     }
+    /* if output disabled or VGA passthrough */
+    if (da2->ioctl[LS_MODE] & 0x02 || !(da2->attrc[LV_COMPATIBILITY] & 0x08)) 
+        da2->render = da2_render_blank;
 
     if (da2->vblankstart < da2->dispend)
         da2->dispend = da2->vblankstart;
@@ -2404,9 +2416,11 @@ da2_recalctimings(da2_t *da2)
         da2->dispontime = TIMER_USEC;
     if (da2->dispofftime < TIMER_USEC)
         da2->dispofftime = TIMER_USEC;
-    da2_log("da2 horiz total %i display end %i vidclock %f\n", da2->crtc[0], da2->crtc[1], da2->clock);
+    da2_log("da2 horiz total %i display end %i vidclock %f\n", da2->htotal, da2->hdisp, da2->clock);
     da2_log("da2 vert total %i display end %i max row %i vsync %i\n",da2->vtotal,da2->dispend,(da2->crtc[9]&31)+1,da2->vsyncstart);
-    da2_log("da2 dispon %lu dispoff %lu on(us) %f off(us) %f\n",da2->dispontime, da2->dispofftime, (double)da2->dispontime / (double)cpuclock /  (double) (1ULL << 32) * 1000000.0, (double)da2->dispofftime / (double)cpuclock /  (double) (1ULL << 32) * 1000000.0);
+    da2_log("da2 dispon %lu dispoff %lu on(us) %f off(us) %f\n",da2->dispontime, da2->dispofftime, 
+        (double)da2->dispontime / (double)cpuclock /  (double) (1ULL << 32) * 1000000.0, 
+        (double)da2->dispofftime / (double)cpuclock /  (double) (1ULL << 32) * 1000000.0);
     da2_log("da2 linecompare %d\n", da2->split);
 }
 
@@ -2744,7 +2758,7 @@ da2_mmio_write(uint32_t addr, uint8_t val, void *priv)
         //}
 #endif
         cycles -= video_timing_write_b;
-        da2->changedvram[addr >> 9] = changeframecount;/* 0x1FFFF -> 0x1F */
+        da2->changedvram[addr >> 9] = 3;/* 0x1FFFF -> 0x1F */
         addr <<= 3;
 
         for (uint8_t i = 0; i < 8; i++)
@@ -2805,7 +2819,7 @@ da2_mmio_write(uint32_t addr, uint8_t val, void *priv)
     } else { /*  mode 3h text */
         cycles -= video_timing_write_b;
         da2_vram_w(addr, val, da2);
-        da2->fullchange = 2;
+        da2->fullchange = 3;
     }
 }
 static uint16_t
@@ -2844,7 +2858,7 @@ da2_mmio_gc_writeW(uint32_t addr, uint16_t val, void *priv)
     // da2_log("da2_gcW m%d a%x d%x\n", da2->writemode, addr, val);
     // da2_log("da2_gcW %05X %02X %04X:%04X esdi %04X:%04X dssi %04X:%04X\n", addr, val, cs >> 4, cpu_state.pc, ES, DI, DS, SI);
 
-    da2->changedvram[addr >> 9]       = changeframecount;
+    da2->changedvram[addr >> 9]       = 3;
     addr <<= 3;
 
     for (uint8_t i = 0; i < 8; i++)
@@ -2943,7 +2957,7 @@ da2_code_write(uint32_t addr, uint8_t val, void *priv)
     // if ((addr & ~0xfff) != 0xE0000) return;
     addr &= DA2_MASK_CRAM;
     da2->cram[addr] = val;
-    da2->fullchange = 2;
+    da2->fullchange = 3;
 }
 static void
 da2_code_writeb(uint32_t addr, uint8_t val, void *priv)
@@ -2988,7 +3002,7 @@ da2_code_readw(uint32_t addr, void *priv)
 }
 
 static void
-da2_doblit(int y1, int y2, int wx, int wy, da2_t *da2)
+da2_doblit(int wx, int wy, da2_t *da2)
 {
     if (wx != xsize || wy != ysize) {
         xsize = wx;
@@ -3027,14 +3041,14 @@ da2_poll(void *priv)
                 video_wait_for_buffer();
             }
 
-            if (!da2->override)
+            if (!da2->override && ((da2->displine ^ !da2->oddeven) & 1))
                 da2->render(da2);
 
             if (da2->lastline < da2->displine)
                 da2->lastline = da2->displine;
         }
-
-        // da2_log("%03i %06X %06X\n", da2->displine, da2->memaddr,da2->vram_display_mask);
+        // if(da2->fullchange)
+        //     pclog("%03i %05X %d %d\n", da2->displine, da2->memaddr, ((da2->displine ^ !da2->oddeven) & 1), da2->fullchange);
         da2->displine++;
         if ((da2->cgastat & 8) && ((da2->displine & 0xf) == (da2->crtc[LC_VERTICAL_SYNC_END] & 0xf)) && da2->vslines) {
             // da2_log("Vsync off at line %i\n",displine);
@@ -3086,14 +3100,13 @@ da2_poll(void *priv)
             // if (da2->crtc[10] & 0x20) da2->cursoron = 0;
             // else da2->cursoron = da2->blink & 16;
             if (da2->ioctl[LS_MODE] & 1) {                /* in text mode */
-                if (da2->attrc[LV_CURSOR_CONTROL] & 0x01) /* cursor blinking */
-                {
+                if (da2->attrc[LV_CURSOR_CONTROL] & 0x01) {/* cursor blinking */
                     da2->cursoron = (da2->blink | 1) & da2->blinkconf;
                 } else {
                     da2->cursoron = 0;
                 }
-                if (!(da2->blink & (0x10 - 1))) /* force redrawing for cursor and blink attribute */
-                    da2->fullchange = 2;
+                if (!(da2->blink & (0x08 - 1))) /* force redrawing for cursor and blink attribute */
+                    da2->fullchange = 3;
             }
             da2->blink++;
 
@@ -3104,6 +3117,7 @@ da2_poll(void *priv)
             // memset(changedvram,0,2048);  del
             if (da2->fullchange) {
                 da2->fullchange--;
+                // pclog("fc %d %d\n",da2->fullchange,da2->oddeven);
             }
         }
         if (da2->vc == da2->vsyncstart) {
@@ -3113,10 +3127,15 @@ da2_poll(void *priv)
             da2->cgastat |= 8;
             x = da2->hdisp;
 
+            if (!da2->oddeven)
+                da2->lastline++;
+            if (da2->oddeven)
+                da2->firstline--;
+
             wx = x;
             wy = da2->lastline - da2->firstline;
 
-            da2_doblit(da2->firstline_draw, da2->lastline_draw + 1, wx, wy, da2);
+            da2_doblit(wx, wy, da2);
 
             da2->firstline = 2000;
             da2->lastline  = 0;
@@ -3124,7 +3143,8 @@ da2_poll(void *priv)
             da2->firstline_draw = 2000;
             da2->lastline_draw  = 0;
 
-            changeframecount = 2;
+            da2->oddeven ^= 1;
+
             da2->vslines     = 0;
 
             da2->memaddr
@@ -3138,7 +3158,7 @@ da2_poll(void *priv)
             // da2_log("VC vtotal\n");
             // printf("Frame over at line %i %i  %i %i\n",displine,vc,da2_vsyncstart,da2_dispend);
             da2->vc          = 0;
-            da2->scanline          = da2->crtc[LC_PRESET_ROW_SCANJ] & 0x1f;
+            da2->scanline    = da2->crtc[LC_PRESET_ROW_SCANJ] & 0x1f;
             da2->dispon      = 1;
             da2->displine    = 0;
             da2->scrollcache = da2->attrc[LV_PANNING] & 7;
@@ -3208,6 +3228,13 @@ da2_reset_ioctl(da2_t *da2)
     da2->ioctl[LS_RESET] = 0x00;     /* Bit 0: Reset sequencer */
     da2_outw(LS_INDEX, 0x0302, da2); /* Index 02, Bit 1: VGA passthrough, Bit 0: Character Mode */
     da2_outw(LS_INDEX, 0x0008, da2); /* Index 08, Bit 0: Enable MMIO */
+    /* Set default color palette (Windows 3.1 display driver won't reset palette regs) */
+    for (uint16_t i = 0; i < 256; i++) {
+        da2->vgapal[i].r = ps55_palette_color[i & 0x3F][0];
+        da2->vgapal[i].g = ps55_palette_color[i & 0x3F][1];
+        da2->vgapal[i].b = ps55_palette_color[i & 0x3F][2];
+        da2->pallook[i]  = makecol32((da2->vgapal[i].r & 0x3f) * 4, (da2->vgapal[i].g & 0x3f) * 4, (da2->vgapal[i].b & 0x3f) * 4);
+    }
 }
 
 static void
@@ -3222,7 +3249,7 @@ da2_reset(void *priv)
     da2->pos_regs[0]       = DA2_POSID_L;                    /* Adapter Identification Byte (Low byte) */
     da2->pos_regs[1]       = DA2_POSID_H;                    /* Adapter Identification Byte (High byte) */
     da2->pos_regs[2]       = 0x40;                           /* Bit 7-5: 010=Mono, 100=Color, Bit 0 : Card Enable (set by reference diskette) */
-    da2->ioctl[LS_CONFIG1] = OldLSI | Page_Two;              /* Configuration 1 : DA-II, 1024 KB */
+    da2->ioctl[LS_CONFIG1] = Page_Two;                       /* Configuration 1 : DA-III, 1024 KB */
     da2->ioctl[LS_CONFIG1] |= ((da2->monitorid & 0x8) << 1); /* Configuration 1 : Monitor ID 3 */
     da2->ioctl[LS_CONFIG2]         = (da2->monitorid & 0x7); /* Configuration 2: Monitor ID 0-2 */
     da2->fctl[0]                   = 0x2b;                   /* 3E3h:0 */
@@ -3230,17 +3257,11 @@ da2_reset(void *priv)
     da2->attrc[LV_CURSOR_COLOR]    = 0x0f;                   /* cursor color */
     da2->crtc[LC_HORIZONTAL_TOTAL] = 63;                     /* Horizontal Total */
     da2->crtc[LC_VERTICAL_TOTALJ]  = 255;                    /* Vertical Total (These two must be set before the timer starts.) */
-    da2->memaddr_latch                  = 0;
+    da2->memaddr_latch             = 0;
+    da2->oddeven                   = 0;
     da2->attrc[LV_CURSOR_CONTROL]  = 0x13; /* cursor options */
     da2->attr_palette_enable       = 0;    /* disable attribute generator */
 
-    /* Set default color palette (Windows 3.1 display driver won't reset palette) */
-    for (uint16_t i = 0; i < 256; i++) {
-        da2->vgapal[i].r = ps55_palette_color[i & 0x3F][0];
-        da2->vgapal[i].g = ps55_palette_color[i & 0x3F][1];
-        da2->vgapal[i].b = ps55_palette_color[i & 0x3F][2];
-        da2->pallook[i]  = makecol32((da2->vgapal[i].r & 0x3f) * 4, (da2->vgapal[i].g & 0x3f) * 4, (da2->vgapal[i].b & 0x3f) * 4);
-    }
     da2_log("da2_reset done.\n");
 }
 
@@ -3260,7 +3281,7 @@ da2_init(UNUSED(const device_t *info))
     da2->vram              = calloc(1, DA2_SIZE_VRAM);
     da2->cram              = calloc(1, DA2_SIZE_CRAM);
     da2->vram_display_mask = DA2_MASK_CRAM;
-    da2->monitorid         = device_get_config_int("montype");       
+    da2->monitorid         = device_get_config_int("montype");
     da2->changedvram       = calloc(1,  (DA2_MASK_VRAMPLANE + 1) >> 9); /* XX000h */
 
     da2->mmio.charset = device_get_config_int("charset");
@@ -3278,7 +3299,9 @@ da2_init(UNUSED(const device_t *info))
     }
 
     mca_add(da2_mca_read, da2_mca_write, da2_mca_feedb, da2_mca_reset, da2);
-    da2->da2const = (uint64_t) ((cpuclock / DA2_PIXELCLOCK) * (double) (1ull << 32));
+    da2->pixelclock = DA2_CLOCK_58MHZ;
+    da2->da2const = (uint64_t) ((cpuclock / DA2_CLOCK_58MHZ) * (double) (1ull << 32));
+    video_inform(VIDEO_FLAG_TYPE_SPECIAL, &timing_da2_mca);
     memset(da2->bitblt.payload, 0x00, DA2_BLT_MEMSIZE);
     memset(da2->bitblt.reg, 0xfe, DA2_BLT_REGSIZE * sizeof(uint32_t)); /* clear memory */
 #ifdef ENABLE_DA2_DEBUGBLT
@@ -3425,7 +3448,7 @@ static void
 da2_speed_changed(void *priv)
 {
     da2_t *da2    = (da2_t *) priv;
-    da2->da2const = (uint64_t) ((cpuclock / DA2_PIXELCLOCK) * (double) (1ull << 32));
+    da2->da2const = (uint64_t) ((cpuclock / da2->pixelclock) * (double) (1ull << 32));
     da2_recalctimings(da2);
 }
 
@@ -3433,7 +3456,7 @@ static void
 da2_force_redraw(void *priv)
 {
     da2_t *da2      = (da2_t *) priv;
-    da2->fullchange = changeframecount;
+    da2->fullchange = 3;
 }
 
 static const device_config_t da2_configuration[] = {

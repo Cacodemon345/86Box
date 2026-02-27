@@ -122,6 +122,7 @@ static const SOUND_CARD sound_cards[] = {
     { &ess_ess0102_pnp_device       },
     { &ess_ess0968_pnp_device       },
     { &ssi2001_device               },
+    { &thunderboard_device          },
     { &mmb_device                   },
 #ifdef USE_LIBSERIALPORT /*The following devices required LIBSERIALPORT*/
     { &opl2board_device             },
