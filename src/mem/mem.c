@@ -665,7 +665,7 @@ getpccache(uint32_t a)
 
     mem_log("Bad getpccache %08X%08X\n", (uint32_t) (a64 >> 32), (uint32_t) (a64 & 0xffffffffULL));
 
-    return (uint8_t *) &ff_pccache;
+    return is_ppc ? NULL : (uint8_t *) &ff_pccache;
 }
 
 uint8_t

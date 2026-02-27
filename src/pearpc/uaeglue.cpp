@@ -71,10 +71,10 @@ void uae_ppc_crash(void)
 static __inline void *
 get_ram_ptr(uint32_t a)
 {
-    if ((a >> 12) == pccache)
-        return (void *) (((uintptr_t) &pccache2[a] & 0x00000000ffffffffULL) | ((uintptr_t) &pccache2[0] & 0xffffffff00000000ULL));
-    else {
+    {
         uint8_t *t = getpccache(a);
+		if (!t)
+			return nullptr;
         return (void *) (((uintptr_t) &t[a] & 0x00000000ffffffffULL) | ((uintptr_t) &t[0] & 0xffffffff00000000ULL));
     }
 }
