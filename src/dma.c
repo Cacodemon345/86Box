@@ -108,13 +108,72 @@ dma_transfer_size(dma_t *dev)
     return dev->transfer_mode & 0xff;
 }
 
+
+// For PReP the ISA masters will always read from and write to system memory.
+static inline uint32_t
+ppc_translate_isa_address(uint32_t address)
+{
+    return address | (1 << 31);
+}
+
+/* DMA Bus Master Page Read/Write (ISA) */
+void
+dma_bm_read_isa(uint32_t PhysAddress, uint8_t *DataRead, uint32_t TotalSize, int TransferSize)
+{
+    uint32_t n;
+    uint32_t n2;
+    uint8_t  bytes[4] = { 0, 0, 0, 0 };
+
+    n  = TotalSize & ~(TransferSize - 1);
+    n2 = TotalSize - n;
+
+    /* Do the divisible block, if there is one. */
+    if (n) {
+        for (uint32_t i = 0; i < n; i += TransferSize)
+            mem_read_phys((void *) &(DataRead[i]), ppc_translate_isa_address(PhysAddress + i), TransferSize);
+    }
+
+    /* Do the non-divisible block, if there is one. */
+    if (n2) {
+        mem_read_phys((void *) bytes, ppc_translate_isa_address(PhysAddress + n), TransferSize);
+        memcpy((void *) &(DataRead[n]), bytes, n2);
+    }
+}
+
+void
+dma_bm_write_isa(uint32_t PhysAddress, const uint8_t *DataWrite, uint32_t TotalSize, int TransferSize)
+{
+    uint32_t n;
+    uint32_t n2;
+    uint8_t  bytes[4] = { 0, 0, 0, 0 };
+
+    n  = TotalSize & ~(TransferSize - 1);
+    n2 = TotalSize - n;
+
+    /* Do the divisible block, if there is one. */
+    if (n) {
+        for (uint32_t i = 0; i < n; i += TransferSize)
+            mem_write_phys((void *) &(DataWrite[i]), ppc_translate_isa_address(PhysAddress + i), TransferSize);
+    }
+
+    /* Do the non-divisible block, if there is one. */
+    if (n2) {
+        mem_read_phys((void *) bytes, ppc_translate_isa_address(PhysAddress + n), TransferSize);
+        memcpy(bytes, (void *) &(DataWrite[n]), n2);
+        mem_write_phys((void *) bytes, ppc_translate_isa_address(PhysAddress + n), TransferSize);
+    }
+
+    if (dma_at)
+        mem_invalidate_range(PhysAddress, PhysAddress + TotalSize - 1);
+}
+
 static void
 dma_sg_next_addr(dma_t *dev)
 {
     int ts = dma_transfer_size(dev);
 
-    dma_bm_read(dev->ptr_cur, (uint8_t *) &(dev->addr), 4, ts);
-    dma_bm_read(dev->ptr_cur + 4, (uint8_t *) &(dev->count), 4, ts);
+    dma_bm_read_isa(dev->ptr_cur, (uint8_t *) &(dev->addr), 4, ts);
+    dma_bm_read_isa(dev->ptr_cur + 4, (uint8_t *) &(dev->count), 4, ts);
     dma_log("DMA S/G DWORDs: %08X %08X\n", dev->addr, dev->count);
     dev->eot = dev->count >> 31;
     dev->count &= 0xfffe;
@@ -1328,17 +1387,17 @@ dma_sg(uint8_t *data, int transfer_length, int out, void *priv)
         if (dev->count <= transfer_length) {
             dma_log("%sing %i bytes to %08X\n", sop, dev->count, dev->addr);
             if (out)
-                dma_bm_read(dev->addr, (uint8_t *) (data + buffer_pos), dev->count, 4);
+                dma_bm_read_isa(dev->addr, (uint8_t *) (data + buffer_pos), dev->count, 4);
             else
-                dma_bm_write(dev->addr, (uint8_t *) (data + buffer_pos), dev->count, 4);
+                dma_bm_write_isa(dev->addr, (uint8_t *) (data + buffer_pos), dev->count, 4);
             transfer_length -= dev->count;
             buffer_pos += dev->count;
         } else {
             dma_log("%sing %i bytes to %08X\n", sop, transfer_length, dev->addr);
             if (out)
-                dma_bm_read(dev->addr, (uint8_t *) (data + buffer_pos), transfer_length, 4);
+                dma_bm_read_isa(dev->addr, (uint8_t *) (data + buffer_pos), transfer_length, 4);
             else
-                dma_bm_write(dev->addr, (uint8_t *) (data + buffer_pos), transfer_length, 4);
+                dma_bm_write_isa(dev->addr, (uint8_t *) (data + buffer_pos), transfer_length, 4);
             /* Increase addr and decrease count so that resumed transfers do not mess up. */
             dev->addr += transfer_length;
             dev->count -= transfer_length;
@@ -1367,7 +1426,7 @@ dma_sg(uint8_t *data, int transfer_length, int out, void *priv)
     }
 }
 
-uint8_t
+static uint8_t
 _dma_read(uint32_t addr, dma_t *dma_c)
 {
     uint8_t temp = 0;
@@ -1376,7 +1435,7 @@ _dma_read(uint32_t addr, dma_t *dma_c)
         if (dma_c->sg_status & 1)
             dma_c->sg_status = (dma_c->sg_status & 0x0f) | (dma_sg(&temp, 1, 1, dma_c) << 4);
         else
-            dma_bm_read(addr, &temp, 1, dma_transfer_size(dma_c));
+            dma_bm_read_isa(ppc_translate_isa_address(addr), &temp, 1, dma_transfer_size(dma_c));
     } else
         temp = mem_readb_phys(addr);
 
@@ -1392,7 +1451,7 @@ _dma_readw(uint32_t addr, dma_t *dma_c)
         if (dma_c->sg_status & 1)
             dma_c->sg_status = (dma_c->sg_status & 0x0f) | (dma_sg((uint8_t *) &temp, 2, 1, dma_c) << 4);
         else
-            dma_bm_read(addr, (uint8_t *) &temp, 2, dma_transfer_size(dma_c));
+            dma_bm_read_isa(addr, (uint8_t *) &temp, 2, dma_transfer_size(dma_c));
     } else
         temp = _dma_read(addr, dma_c) | (_dma_read(addr + 1, dma_c) << 8);
 
@@ -1406,9 +1465,9 @@ _dma_write(uint32_t addr, uint8_t val, dma_t *dma_c)
         if (dma_c->sg_status & 1)
             dma_c->sg_status = (dma_c->sg_status & 0x0f) | (dma_sg(&val, 1, 0, dma_c) << 4);
         else
-            dma_bm_write(addr, &val, 1, dma_transfer_size(dma_c));
+            dma_bm_write_isa(addr, &val, 1, dma_transfer_size(dma_c));
     } else {
-        mem_writeb_phys(addr, val);
+        mem_writeb_phys(ppc_translate_isa_address(addr), val);
         if (dma_at)
             mem_invalidate_range(addr, addr);
     }
@@ -1421,7 +1480,7 @@ _dma_writew(uint32_t addr, uint16_t val, dma_t *dma_c)
         if (dma_c->sg_status & 1)
             dma_c->sg_status = (dma_c->sg_status & 0x0f) | (dma_sg((uint8_t *) &val, 2, 0, dma_c) << 4);
         else
-            dma_bm_write(addr, (uint8_t *) &val, 2, dma_transfer_size(dma_c));
+            dma_bm_write_isa(addr, (uint8_t *) &val, 2, dma_transfer_size(dma_c));
     } else {
         _dma_write(addr, val & 0xff, dma_c);
         _dma_write(addr + 1, val >> 8, dma_c);

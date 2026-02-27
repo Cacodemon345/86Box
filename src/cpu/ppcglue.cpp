@@ -73,8 +73,8 @@ bool UAECALL cb_uae_ppc_io_mem_write64(uint32_t addr, uint64_t data)
     return false;
 }
 
-uae_ppc_io_mem_read_function uae_ppc_io_mem_read = NULL;
-uae_ppc_io_mem_write_function uae_ppc_io_mem_write = NULL;
+uae_ppc_io_mem_read_function uae_ppc_io_mem_read = cb_uae_ppc_io_mem_read;
+uae_ppc_io_mem_write_function uae_ppc_io_mem_write = cb_uae_ppc_io_mem_write;
 uae_ppc_io_mem_read64_function uae_ppc_io_mem_read64 = NULL;
 uae_ppc_io_mem_write64_function uae_ppc_io_mem_write64 = NULL;
 

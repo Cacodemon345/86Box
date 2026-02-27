@@ -77,7 +77,7 @@ machine_at_ps440_init(const machine_t *model)
     int ret;
 
     ret = bios_load_linear("roms/machines/ps440/ps440.bin",
-                           0xfffa0000, 262144 * 2, 0);
+                           0xfff00000, 262144 * 2, 0);
 
     if (bios_only || !ret)
         return ret;
