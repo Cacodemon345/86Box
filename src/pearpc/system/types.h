@@ -27,6 +27,8 @@
 #include "pearpc_config.h"
 #endif
 
+#include <stdint.h>
+
 #ifdef MIN
 #undef MIN
 #endif
@@ -85,20 +87,20 @@ typedef unsigned int uint;
 #	define ALIGN_STRUCT(n)	__attribute__((aligned(n)))
 #	define NORETURN __declspec(noreturn)
 
-typedef unsigned long long uint64;
-typedef signed long long sint64;
-typedef unsigned int uint32;
-typedef signed int sint32;
-typedef unsigned short uint16;
-typedef signed short sint16;
-typedef unsigned char uint8;
-typedef signed char sint8;
-typedef unsigned char byte;
-
-typedef unsigned int uint;
 
 #endif /* !__GNUC__ */
 
+typedef uint64_t uint64;
+typedef int64_t sint64;
+typedef uint32_t uint32;
+typedef int32_t sint32;
+typedef uint16_t uint16;
+typedef int16_t sint16;
+typedef uint8_t uint8;
+typedef int8_t sint8;
+typedef uint8_t byte;
+
+typedef unsigned int uint;
 /*
  *	integers
  */
