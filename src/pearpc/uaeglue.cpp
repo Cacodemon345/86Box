@@ -8,9 +8,31 @@
 
 //#include "uae/log.h"
 
+//#include "sysconfig.h"
+//#include "sysdeps.h"
+//#include <threaddep/thread.h>
+
+extern "C"
+{
+#include <stdarg.h>
+#define HAVE_STDARG_H 1
+#include <86box/86box.h>
+#include <86box/mem.h>
+#include <86box/thread.h>
+extern uint8_t *pccache2;
+extern uint32_t pccache;
+
+}
+
+
 int ht_printf(const char *format,...)
 {
 	//UAE_LOG_VA_ARGS_FULL(format);
+    va_list ap;
+
+    va_start(ap, format);
+    pclog_ex(format, ap);
+    va_end(ap);
 	return 0;
 }
 int ht_fprintf(FILE *f, const char *fmt, ...)
@@ -40,19 +62,6 @@ void prom_quiesce()
 }
 #endif
 
-//#include "sysconfig.h"
-//#include "sysdeps.h"
-//#include <threaddep/thread.h>
-
-extern "C"
-{
-#include <86box/86box.h>
-#include <86box/mem.h>
-#include <86box/thread.h>
-extern uint8_t *pccache2;
-extern uint32_t pccache;
-
-}
 typedef void * sys_mutex;
 void uae_ppc_crash(void)
 {
