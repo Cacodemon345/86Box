@@ -133,6 +133,7 @@ static char flash_path[1024];
 
 #define AMD         0x01 /* AMD Manufacturer's ID */
 #define AMD29F020A  0xb000
+#define AMD29F040A  0xa400
 
 #define SIZE_512K   0x010000
 #define SIZE_1M     0x020000
@@ -474,6 +475,10 @@ sst_add_mappings(sst_t *dev)
 
     count     = dev->size >> 16;
     root_base = 0x100000 - dev->size;
+    if (is_ppc) {
+        // PReP machines always have it at 0xFF000000.
+        root_base = 0xFF000000;
+    }
 
     for (int i = 0; i < count; i++) {
         base  = root_base + (i << 16);
@@ -1001,6 +1006,20 @@ const device_t amd_flash_29f020a_device = {
     .internal_name = "amd_flash_29f020a",
     .flags         = 0,
     .local         = AMD | AMD29F020A | SIZE_2M,
+    .init          = sst_init,
+    .close         = sst_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = NULL
+};
+
+const device_t amd_flash_29f040a_device = {
+    .name          = "AMD 29F040a Flash BIOS",
+    .internal_name = "amd_flash_29f040a",
+    .flags         = 0,
+    .local         = AMD | AMD29F040A | SIZE_4M,
     .init          = sst_init,
     .close         = sst_close,
     .reset         = NULL,

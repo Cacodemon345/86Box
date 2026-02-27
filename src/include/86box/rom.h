@@ -19,8 +19,10 @@
 #define FLAG_INV                                  2
 #define FLAG_AUX                                  4
 #define FLAG_REP                                  8
+#define FLAG_SZOVR                               16
 
 #define bios_load_linear(a, b, c, d)              bios_load(a, NULL, b, c, d, 0)
+#define bios_load_linear_szover(a, b, c, d)       bios_load(a, NULL, b, c, d, FLAG_SZOVR)
 #define bios_load_linearr(a, b, c, d)             bios_load(a, NULL, b, c, d, FLAG_REP)
 #define bios_load_aux_linear(a, b, c, d)          bios_load(a, NULL, b, c, d, FLAG_AUX)
 #define bios_load_linear_inverted(a, b, c, d)     bios_load(a, NULL, b, c, d, FLAG_INV)

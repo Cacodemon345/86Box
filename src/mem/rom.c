@@ -732,7 +732,7 @@ bios_load(const char *fn1, const char *fn2, uint32_t addr, int sz, int off, int 
     else
         return (!fn1 || rom_present(fn1)) && (!fn2 || rom_present(fn2));
 
-    if (!(flags & FLAG_AUX) && ((addr + sz) > 0x00100000))
+    if (!(flags & FLAG_AUX) && ((addr + sz) > 0x00100000) && !(flags & FLAG_SZOVR))
         sz = 0x00100000 - addr;
 
 #ifdef ENABLE_ROM_LOG

@@ -49,15 +49,30 @@ extern "C"
 #include <86box/86box.h>
 #include <86box/mem.h>
 #include <86box/thread.h>
+extern uint8_t *pccache2;
+extern uint32_t pccache;
+
 }
 typedef void * sys_mutex;
 void uae_ppc_crash(void)
 {
 	fatal("PPC emulation failure.");
 }
+
+static __inline void *
+get_ram_ptr(uint32_t a)
+{
+    if ((a >> 12) == pccache)
+        return (void *) (((uintptr_t) &pccache2[a] & 0x00000000ffffffffULL) | ((uintptr_t) &pccache2[0] & 0xffffffff00000000ULL));
+    else {
+        uint8_t *t = getpccache(a);
+        return (void *) (((uintptr_t) &t[a] & 0x00000000ffffffffULL) | ((uintptr_t) &t[0] & 0xffffffff00000000ULL));
+    }
+}
+
 bool uae_ppc_direct_physical_memory_handle(uint32_t addr, uint8_t *&ptr)
 {
-	ptr = getpccache(addr);
+	ptr = (uint8_t*)get_ram_ptr(addr);
 	return true;
 }
 int sys_lock_mutex(sys_mutex m)

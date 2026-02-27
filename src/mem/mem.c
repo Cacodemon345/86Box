@@ -647,8 +647,8 @@ getpccache(uint32_t a)
     }
     a64 &= rammask;
 
-    if (is_ppc && a >= 0xFFF00000) {
-        a |= 0x80000;
+    if (is_ppc && a >= 0xFF000000) {
+        a |= 0xF00000;
     }
 
     if (_mem_exec[a64 >> MEM_GRANULARITY_BITS]) {
@@ -677,8 +677,8 @@ read_mem_b(uint32_t addr)
     mem_logical_addr = addr;
     addr &= rammask;
     
-    if (is_ppc && addr >= 0xFFF00000) {
-        addr |= 0x80000;
+    if (is_ppc && addr >= 0xFF000000) {
+        addr |= 0xF00000;
     }
 
     map = read_mapping[addr >> MEM_GRANULARITY_BITS];
@@ -697,8 +697,8 @@ read_mem_w(uint32_t addr)
     mem_logical_addr = addr;
     addr &= rammask;
 
-    if (is_ppc && addr >= 0xFFF00000) {
-        addr |= 0x80000;
+    if (is_ppc && addr >= 0xFF000000) {
+        addr |= 0xF00000;
     }
 
     if (addr & 1)
@@ -724,8 +724,8 @@ read_mem_l(uint32_t addr)
     mem_logical_addr = addr;
     addr &= rammask;
 
-    if (is_ppc && addr >= 0xFFF00000) {
-        addr |= 0x80000;
+    if (is_ppc && addr >= 0xFF000000) {
+        addr |= 0xF00000;
     }
 
     if (addr & 3)
@@ -752,8 +752,8 @@ write_mem_b(uint32_t addr, uint8_t val)
     mem_logical_addr = addr;
     addr &= rammask;
 
-    if (is_ppc && addr >= 0xFFF00000) {
-        addr |= 0x80000;
+    if (is_ppc && addr >= 0xFF000000) {
+        addr |= 0xF00000;
     }
 
     map = write_mapping[addr >> MEM_GRANULARITY_BITS];
@@ -769,8 +769,8 @@ write_mem_w(uint32_t addr, uint16_t val)
     mem_logical_addr = addr;
     addr &= rammask;
 
-    if (is_ppc && addr >= 0xFFF00000) {
-        addr |= 0x80000;
+    if (is_ppc && addr >= 0xFF000000) {
+        addr |= 0xF00000;
     }
 
     if (addr & 1) {
@@ -797,8 +797,8 @@ write_mem_l(uint32_t addr, uint32_t val)
     mem_logical_addr = addr;
     addr &= rammask;
 
-    if (is_ppc && addr >= 0xFFF00000) {
-        addr |= 0x80000;
+    if (is_ppc && addr >= 0xFF000000) {
+        addr |= 0xF00000;
     }
 
     if (addr & 3) {
