@@ -72,10 +72,6 @@ typedef unsigned char byte;
 
 typedef unsigned int uint;
 
-#ifndef mode_t
-#define mode_t int
-#endif
-
 #elif _MSC_VER
 
 #define FORCE_INLINE __forceinline
@@ -100,10 +96,6 @@ typedef signed char sint8;
 typedef unsigned char byte;
 
 typedef unsigned int uint;
-
-#ifndef mode_t
-#define mode_t int
-#endif
 
 #endif /* !__GNUC__ */
 
