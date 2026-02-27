@@ -110,12 +110,12 @@ static int ppc_trace;
 void PPCCALL ppc_cpu_run_single(int count)
 {
 	while (count != 0) {
-		if (count > 0)
-			count--;
 		gCPU.npc = gCPU.pc+4;
 		if ((gCPU.pc & ~0xfff) == gCPU.effective_code_page) {
 			gCPU.current_opc = ppc_word_from_BE(*((uint32*)(&gCPU.physical_code_page[gCPU.pc & 0xfff])));
 			ppc_debug_hook();
+			if (count > 0)
+				count--;
 		} else {
 			int ret;
 			if ((ret = ppc_direct_effective_memory_handle_code(gCPU.pc & ~0xfff, gCPU.physical_code_page))) {

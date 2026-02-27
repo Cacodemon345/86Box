@@ -34,7 +34,7 @@ int is_ppc = 0;
 
 bool UAECALL cb_uae_ppc_io_mem_read(uint32_t addr, uint32_t *data, int size)
 {
-    if (size == 4 & (addr & 3)) {
+    if (size == 4 && (addr & 3)) {
         uint32_t temp_data = 0;
         uint32_t temp_data_2 = 0;
         cb_uae_ppc_io_mem_read(addr, &temp_data, 2);
@@ -63,7 +63,7 @@ bool UAECALL cb_uae_ppc_io_mem_read(uint32_t addr, uint32_t *data, int size)
 }
 bool UAECALL cb_uae_ppc_io_mem_write(uint32_t addr, uint32_t data, int size)
 {
-    if (size == 4 & (addr & 3)) {
+    if (size == 4 && (addr & 3)) {
         cb_uae_ppc_io_mem_write(addr, data >> 16, 2);
         cb_uae_ppc_io_mem_write(addr + 2, data & 0xFFFF, 2);
         return true;
