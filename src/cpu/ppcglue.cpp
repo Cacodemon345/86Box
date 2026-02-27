@@ -34,6 +34,19 @@ int is_ppc = 0;
 
 bool UAECALL cb_uae_ppc_io_mem_read(uint32_t addr, uint32_t *data, int size)
 {
+    if (size == 4 & (addr & 3)) {
+        uint32_t temp_data = 0;
+        uint32_t temp_data_2 = 0;
+        cb_uae_ppc_io_mem_read(addr, &temp_data, 2);
+        cb_uae_ppc_io_mem_read(addr + 2, &temp_data_2, 2);
+        *data = (temp_data << 16) | temp_data_2;
+        return true;
+    }
+    if (size == 2 && (addr & 1)) {
+        *data = ((uint32_t)read_mem_b(addr)) << 8;
+        *data |= ((uint32_t)read_mem_b(addr + 1));
+        return true;
+    }
     switch (size)
     {
         case 1:
@@ -50,6 +63,16 @@ bool UAECALL cb_uae_ppc_io_mem_read(uint32_t addr, uint32_t *data, int size)
 }
 bool UAECALL cb_uae_ppc_io_mem_write(uint32_t addr, uint32_t data, int size)
 {
+    if (size == 4 & (addr & 3)) {
+        cb_uae_ppc_io_mem_write(addr, data >> 16, 2);
+        cb_uae_ppc_io_mem_write(addr + 2, data & 0xFFFF, 2);
+        return true;
+    }
+    if (size == 2 && (addr & 1)) {
+        write_mem_b(addr, data >> 8);
+        write_mem_b(addr + 1, data & 0xFF);
+        return true;
+    }
     switch (size)
     {
         case 1:
@@ -66,17 +89,24 @@ bool UAECALL cb_uae_ppc_io_mem_write(uint32_t addr, uint32_t data, int size)
 }
 bool UAECALL cb_uae_ppc_io_mem_read64(uint32_t addr, uint64_t *data)
 {
-    return false;
+    uint32_t temp_data = 0, temp_data_2 = 0;
+
+    temp_data = cb_uae_ppc_io_mem_read(addr, &temp_data, 4);
+    temp_data_2 = cb_uae_ppc_io_mem_read(addr, &temp_data_2, 4);
+    *data = (((uint64_t)temp_data) << 32ull) | ((uint64_t)temp_data_2);
+    return true;
 }
 bool UAECALL cb_uae_ppc_io_mem_write64(uint32_t addr, uint64_t data)
 {
-    return false;
+    cb_uae_ppc_io_mem_write(addr, data >> 32, 4);
+    cb_uae_ppc_io_mem_write(addr + 4, data & 0xFFFFFFFF, 4);
+    return true;
 }
 
 uae_ppc_io_mem_read_function uae_ppc_io_mem_read = cb_uae_ppc_io_mem_read;
 uae_ppc_io_mem_write_function uae_ppc_io_mem_write = cb_uae_ppc_io_mem_write;
-uae_ppc_io_mem_read64_function uae_ppc_io_mem_read64 = NULL;
-uae_ppc_io_mem_write64_function uae_ppc_io_mem_write64 = NULL;
+uae_ppc_io_mem_read64_function uae_ppc_io_mem_read64 = cb_uae_ppc_io_mem_read64;
+uae_ppc_io_mem_write64_function uae_ppc_io_mem_write64 = cb_uae_ppc_io_mem_write64;
 
 
 void reset_ppc(int hard)

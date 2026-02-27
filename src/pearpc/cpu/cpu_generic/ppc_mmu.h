@@ -46,7 +46,6 @@ int FASTCALL ppc_read_physical_word(uint32 addr, uint32 &result);
 int FASTCALL ppc_read_physical_half(uint32 addr, uint16 &result);
 int FASTCALL ppc_read_physical_byte(uint32 addr, uint8 &result);
  
-int FASTCALL ppc_read_effective_code(uint32 addr, uint32 &result);
 int FASTCALL ppc_read_effective_dword(uint32 addr, uint64 &result);
 int FASTCALL ppc_read_effective_word(uint32 addr, uint32 &result);
 int FASTCALL ppc_read_effective_half(uint32 addr, uint16 &result);

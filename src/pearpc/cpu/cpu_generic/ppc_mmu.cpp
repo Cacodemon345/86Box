@@ -147,6 +147,7 @@ inline int FASTCALL ppc_effective_to_physical(uint32 addr, int flags, uint32 &re
 	uint32 sr = gCPU.sr[EA_SR(addr)];
 
 	if (sr & SR_T) {
+		/* Cacodemon345: Direct-store operations are not supported in MPC105 northbridges. */
 		// woea
 		// FIXME: implement me
 		PPC_MMU_ERR("sr & T\n");
@@ -524,20 +525,6 @@ inline int FASTCALL ppc_read_physical_byte(uint32 addr, uint8 &result)
 	return ret;
 }
 
-inline int FASTCALL ppc_read_effective_code(uint32 addr, uint32 &result)
-{
-	if (addr & 3) {
-		// EXC..bla
-		return PPC_MMU_FATAL;
-	}
-	uint32 p;
-	int r;
-	if (!((r=ppc_effective_to_physical(addr, PPC_MMU_READ | PPC_MMU_CODE, p)))) {
-		return ppc_read_physical_word(p, result);
-	}
-	return r;
-}
-
 inline int FASTCALL ppc_read_effective_qword(uint32 addr, Vector_t &result)
 {
 	uint32 p;
@@ -559,16 +546,26 @@ inline int FASTCALL ppc_read_effective_dword(uint32 addr, uint64 &result)
 	if (!(r = ppc_effective_to_physical(addr, PPC_MMU_READ, p))) {
 		if (EA_Offset(addr) > 4088) {
 			// read overlaps two pages.. tricky
-			byte *r1, *r2;
-			byte b[14];
-			ppc_effective_to_physical((addr & ~0xfff)+4089, PPC_MMU_READ, p);
-			if ((r = ppc_direct_physical_memory_handle(p, r1))) return r;
-			if ((r = ppc_effective_to_physical((addr & ~0xfff)+4096, PPC_MMU_READ, p))) return r;
-			if ((r = ppc_direct_physical_memory_handle(p, r2))) return r;
-			memmove(&b[0], r1, 7);
-			memmove(&b[7], r2, 7);
-			memmove(&result, &b[EA_Offset(addr)-4089], 8);
-			result = ppc_dword_from_BE(result);
+			result = 0;
+			int byte_pos = 0;
+			// Deal with this page, then translate second page.
+			for (int i = 0; (i + EA_Offset(addr)) < 4096; i++) {
+				uint8_t byte_result = 0;
+				ppc_read_physical_byte(p, byte_result);
+				p++;
+				result |= (uint64_t)(byte_result << (uint64_t)(8ull * byte_pos));
+				byte_pos++;
+			}
+
+			if (r = ppc_effective_to_physical((addr + 8) & ~0xFFF, PPC_MMU_READ, p)) return r;
+
+			while (byte_pos < 8) {
+				uint8_t byte_result = 0;
+				ppc_read_physical_byte(p, byte_result);
+				result |= (uint64_t)(byte_result << (uint64_t)(8ull * byte_pos));
+				byte_pos++;
+			}
+
 			return PPC_MMU_OK;
 		} else {
 			return ppc_read_physical_dword(p, result);
@@ -584,16 +581,26 @@ inline int FASTCALL ppc_read_effective_word(uint32 addr, uint32 &result)
 	if (!(r = ppc_effective_to_physical(addr, PPC_MMU_READ, p))) {
 		if (EA_Offset(addr) > 4092) {
 			// read overlaps two pages.. tricky
-			byte *r1, *r2;
-			byte b[6];
-			ppc_effective_to_physical((addr & ~0xfff)+4093, PPC_MMU_READ, p);
-			if ((r = ppc_direct_physical_memory_handle(p, r1))) return r;
-			if ((r = ppc_effective_to_physical((addr & ~0xfff)+4096, PPC_MMU_READ, p))) return r;
-			if ((r = ppc_direct_physical_memory_handle(p, r2))) return r;
-			memmove(&b[0], r1, 3);
-			memmove(&b[3], r2, 3);
-			memmove(&result, &b[EA_Offset(addr)-4093], 4);
-			result = ppc_word_from_BE(result);
+			result = 0;
+			int byte_pos = 0;
+			// Deal with this page, then translate second page.
+			for (int i = 0; (i + EA_Offset(addr)) < 4096; i++) {
+				uint8_t byte_result = 0;
+				ppc_read_physical_byte(p, byte_result);
+				p++;
+				result |= byte_result << (8 * byte_pos);
+				byte_pos++;
+			}
+
+			if (r = ppc_effective_to_physical((addr + 4) & ~0xFFF, PPC_MMU_READ, p)) return r;
+
+			while (byte_pos < 4) {
+				uint8_t byte_result = 0;
+				ppc_read_physical_byte(p, byte_result);
+				result |= byte_result << (8 * byte_pos);
+				byte_pos++;
+			}
+
 			return PPC_MMU_OK;
 		} else {
 			return ppc_read_physical_word(p, result);
@@ -725,18 +732,24 @@ inline int FASTCALL ppc_write_effective_dword(uint32 addr, uint64 data)
 	if (!((r=ppc_effective_to_physical(addr, PPC_MMU_WRITE, p)))) {
 		if (EA_Offset(addr) > 4088) {
 			// write overlaps two pages.. tricky
-			byte *r1, *r2;
-			byte b[14];
-			ppc_effective_to_physical((addr & ~0xfff)+4089, PPC_MMU_WRITE, p);
-			if ((r = ppc_direct_physical_memory_handle(p, r1))) return r;
-			if ((r = ppc_effective_to_physical((addr & ~0xfff)+4096, PPC_MMU_WRITE, p))) return r;
-			if ((r = ppc_direct_physical_memory_handle(p, r2))) return r;
 			data = ppc_dword_to_BE(data);
-			memmove(&b[0], r1, 7);
-			memmove(&b[7], r2, 7);
-			memmove(&b[EA_Offset(addr)-4089], &data, 8);
-			memmove(r1, &b[0], 7);
-			memmove(r2, &b[7], 7);
+			int byte_pos = 0;
+			// Deal with this page, then translate second page.
+			for (int i = 0; (i + EA_Offset(addr)) < 4096; i++) {
+				ppc_write_physical_byte(p + i, data & 0xFF);
+				data >>= 8ull;
+				byte_pos++;
+			}
+
+			if (r = ppc_effective_to_physical((addr + 8) & ~0xFFF, PPC_MMU_WRITE, p)) return r;
+
+			while (byte_pos < 8) {
+				uint8_t byte_result = 0;
+				ppc_write_physical_byte(p, data & 0xFF);
+				p++;
+				byte_pos++;
+			}
+
 			return PPC_MMU_OK;
 		} else {
 			return ppc_write_physical_dword(p, data);
@@ -752,18 +765,24 @@ inline int FASTCALL ppc_write_effective_word(uint32 addr, uint32 data)
 	if (!((r=ppc_effective_to_physical(addr, PPC_MMU_WRITE, p)))) {
 		if (EA_Offset(addr) > 4092) {
 			// write overlaps two pages.. tricky
-			byte *r1, *r2;
-			byte b[6];
-			ppc_effective_to_physical((addr & ~0xfff)+4093, PPC_MMU_WRITE, p);
-			if ((r = ppc_direct_physical_memory_handle(p, r1))) return r;
-			if ((r = ppc_effective_to_physical((addr & ~0xfff)+4096, PPC_MMU_WRITE, p))) return r;
-			if ((r = ppc_direct_physical_memory_handle(p, r2))) return r;
 			data = ppc_word_to_BE(data);
-			memmove(&b[0], r1, 3);
-			memmove(&b[3], r2, 3);
-			memmove(&b[EA_Offset(addr)-4093], &data, 4);
-			memmove(r1, &b[0], 3);
-			memmove(r2, &b[3], 3);
+			int byte_pos = 0;
+			// Deal with this page, then translate second page.
+			for (int i = 0; (i + EA_Offset(addr)) < 4096; i++) {
+				ppc_write_physical_byte(p + i, data & 0xFF);
+				data >>= 8;
+				byte_pos++;
+			}
+
+			if (r = ppc_effective_to_physical((addr + 4) & ~0xFFF, PPC_MMU_WRITE, p)) return r;
+
+			while (byte_pos < 4) {
+				uint8_t byte_result = 0;
+				ppc_write_physical_byte(p, data & 0xFF);
+				p++;
+				byte_pos++;
+			}
+
 			return PPC_MMU_OK;
 		} else {
 			return ppc_write_physical_word(p, data);

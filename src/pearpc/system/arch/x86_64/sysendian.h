@@ -52,7 +52,7 @@ static inline FORCE_INLINE FUNCTION_CONST uint64 ppc_bswap_dword(uint64 data)
 		"bswapq %0": "=r" (data) : "0" (data)
 	);
 #endif
-	data = (ppc_bswap_word(data) << 32) | (ppc_bswap_word(data >> 32));
+	data = (((uint64)ppc_bswap_word(data)) << 32ull) | (ppc_bswap_word(data >> 32));
 	return data;
 }
 
