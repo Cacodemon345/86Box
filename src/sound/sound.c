@@ -48,26 +48,6 @@ typedef struct {
     void *priv;
 } sound_handler_t;
 
-typedef struct _sound_source_ {
-    const char *name;
-    uint8_t (*poll)(sound_buffer_t buffer, void *priv);
-    void *priv;
-    sound_buffer_t buffer;
-    uint32_t buf_len, sample_len;
-    int pos;
-
-    uint32_t   freq;
-    uint8_t    format;
-    uint8_t    channels;
-    pc_timer_t timer;
-    uint64_t   latch;
-
-    void *backend_priv;
-} sound_source_t;
-
-sound_source_t sources[256];
-uint32_t source_num = 0;
-
 int sound_card_current[SOUND_CARD_MAX] = { 0, 0, 0, 0 };
 int sound_pos_global                   = 0;
 int music_pos_global                   = 0;
@@ -722,59 +702,6 @@ wavetable_poll(UNUSED(void *priv))
     }
 }
 
-static const int8_t bytes_per_sample[SOUND_MAX] = {
-    [SOUND_U8] = 1,
-    [SOUND_S16] = 2,
-    [SOUND_FLOAT32] = 4
-};
-
-void
-sound_set_format(void *priv, uint8_t format, uint8_t channels, uint32_t freq)
-{
-    sound_source_t* source = priv;
-    source->channels = channels;
-    source->freq = freq;
-    source->sample_len = bytes_per_sample[format];
-    source->buf_len = ((int)ceil(freq / 10.)) * channels * source->sample_len;
-    source->buffer.u8 = realloc(source->buffer.u8, source->buf_len);
-    sound_backend_set_format(source->backend_priv, &format, &channels, &freq);
-    source->latch = (uint64_t) ((double) TIMER_USEC * (1000000.0 / (double) source->freq));
-    timer_set_delay_u64(&source->timer, source->latch);
-}
-
-void sound_custom_source_poll(void *priv)
-{
-    sound_source_t* source = priv;
-
-    timer_advance_u64(&source->timer, source->latch);
-    source->pos++;
-
-    if (source->pos == (source->buf_len / (source->channels * source->sample_len))) {
-        source->poll(source->buffer, source->priv);
-        sound_backend_buffer(source->backend_priv, source->buffer.u8, source->buf_len);
-        source->pos = 0;
-    }
-}
-
-void*
-sound_add_source(uint8_t (*poll)(sound_buffer_t buffer, void *priv), void *priv, const char *name)
-{
-    int i = source_num;
-    memset(&sources[i], 0, sizeof(sources[0]));
-    sources[i].buf_len = 0;
-    sources[i].channels = 2;
-    sources[i].freq = 44100;
-    sources[i].name = name;
-    sources[i].priv = priv;
-    sources[i].poll = poll;
-    sources[i].buffer.u8 = NULL;
-    sources[i].backend_priv = sound_backend_add_source();
-    timer_add(&sources[i].timer, sound_custom_source_poll, &sources[i], 0);
-    sound_set_format(&sources[i], sources[i].format, sources[i].channels, sources[i].freq);
-    source_num++;
-    return &sources[i];
-}
-
 void
 sound_speed_changed(void)
 {
@@ -783,10 +710,6 @@ sound_speed_changed(void)
     music_poll_latch = (uint64_t) ((double) TIMER_USEC * (1000000.0 / (double) MUSIC_FREQ));
 
     wavetable_poll_latch = (uint64_t) ((double) TIMER_USEC * (1000000.0 / (double) WT_FREQ));
-
-    for (int i = 0; i < source_num; i++) {
-        sources[i].latch = (uint64_t) ((double) TIMER_USEC * (1000000.0 / (double) sources[i].freq));
-    }
 }
 
 void
@@ -825,8 +748,6 @@ sound_reset(void)
 
     /* Reset the MPU-401 already loaded flag and the chain of input/output handlers. */
     midi_in_handlers_clear();
-
-    source_num = 0;
 }
 
 void
