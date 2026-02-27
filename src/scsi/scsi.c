@@ -55,13 +55,13 @@ extern const device_t usb_msd_device;
 static SCSI_CARD scsi_cards[] = {
   // clang-format off
     { &device_none,              },
-    /* ISA/Sidecar */
-    { &scsi_ls2000_device,       },
     /* ISA */
     { &scsi_lcs6821n_device,     },
     { &scsi_rt1000b_device,      },
     { &scsi_t128_device,         },
     { &scsi_t130b_device,        },
+    /* ISA/Sidecar */
+    { &scsi_ls2000_device,       },
     /* ISA16 */
     { &aha154xa_device,          },
     { &aha154xb_device,          },
@@ -93,14 +93,17 @@ static SCSI_CARD scsi_cards[] = {
     { &ncr53c825a_pci_device,    },
     { &ncr53c860_pci_device,     },
     { &ncr53c875_pci_device,     },
-    { &dc390_pci_device,         },
     { &qla1040b_device,          },
     { &qla1080_device,           },
     { &qla1240_device,           },
     { &qla1280_device,           },
     { &qla12160a_device,         },
+<<<<<<< HEAD
     /* USB */
     { &usb_msd_device,           },
+=======
+    { &dc390_pci_device,         },
+>>>>>>> origin/master
     { NULL,                      },
   // clang-format on
 };
