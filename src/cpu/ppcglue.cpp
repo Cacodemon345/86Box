@@ -114,7 +114,7 @@ void reset_ppc(int hard)
     if (hard) {
         ppc_cpu_init(0x00070101);
     }
-    ppc_cpu_set_pc(0, 0xfff00100);
+    ppc_cpu_set_pc(0, (gCPU.msr & MSR_IP) ? 0xfff00100 : 0x00000100);
 }
 
 void execppc(int32_t cycs)
