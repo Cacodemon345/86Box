@@ -1875,6 +1875,7 @@ cpu_set(void)
 
     if (is_ppc) {
         cpu_exec = execppc;
+        cpu_use_exec = 0;
     }
     mmx_init();
     gdbstub_cpu_init();
