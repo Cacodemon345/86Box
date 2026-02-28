@@ -113,7 +113,9 @@ dma_transfer_size(dma_t *dev)
 static inline uint32_t
 ppc_translate_isa_address(uint32_t address)
 {
-    return address | (1 << 31);
+    if (!is_ppc)
+        return address;
+    return !(address & 0xFF000000) ? (address | (1 << 31)) : address;
 }
 
 /* DMA Bus Master Page Read/Write (ISA) */
