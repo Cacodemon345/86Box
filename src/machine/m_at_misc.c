@@ -70,7 +70,7 @@ machine_at_vpc2007_init(const machine_t *model)
 
     return ret;
 }
-
+extern const device_t mpc105_device;
 int
 machine_at_ps440_init(const machine_t *model)
 {
@@ -97,12 +97,13 @@ machine_at_ps440_init(const machine_t *model)
     pci_register_slot(0x0F, PCI_CARD_NORMAL,      1, 2, 3, 4);
     device_add(&sio_zb_device);
 
-    //device_add(&piix4e_device);
-    device_add_params(&w83977_device, (void *) (W83977F | W83977_370 | W83977_AMI | W83977_NO_NVR));
     device_add(&amd_flash_29f040a_device);
     spd_register(SPD_TYPE_SDRAM, 0xF, 256); /* real VPC provides invalid SPD data */
     
     mem_set_mem_state_both(0xFF000000, 0x1000000, MEM_READ_ROMCS | MEM_WRITE_ROMCS);
+
+    device_add(&mpc105_device);
+    device_add_params(&pc873xx_device, (void *) (PCX730X_398 | PCX73XX_IDE_PRI | PCX73XX_IDE_SEC | PCX73XX_FDC_ON));
 
     return ret;
 }

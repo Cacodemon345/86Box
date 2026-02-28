@@ -677,8 +677,14 @@ read_mem_b(uint32_t addr)
     mem_logical_addr = addr;
     addr &= rammask;
     
-    if (is_ppc && addr >= 0xFF000000) {
-        addr |= 0xF00000;
+    if (is_ppc) {
+        if (addr >= 0xFF000000) {
+            addr |= 0xF00000;
+        }
+
+        if (addr >= 0x80000000 && addr < 0xFF000000) {
+            fatal("I/O ACCESS! (0x%x, %d)", addr, 1);
+        }
     }
 
     map = read_mapping[addr >> MEM_GRANULARITY_BITS];
@@ -697,8 +703,14 @@ read_mem_w(uint32_t addr)
     mem_logical_addr = addr;
     addr &= rammask;
 
-    if (is_ppc && addr >= 0xFF000000) {
-        addr |= 0xF00000;
+    if (is_ppc) {
+        if (addr >= 0xFF000000) {
+            addr |= 0xF00000;
+        }
+
+        if (addr >= 0x80000000 && addr < 0xFF000000) {
+            fatal("I/O ACCESS! (0x%x, %d)", addr, 2);
+        }
     }
 
     if (addr & 1)
@@ -724,8 +736,14 @@ read_mem_l(uint32_t addr)
     mem_logical_addr = addr;
     addr &= rammask;
 
-    if (is_ppc && addr >= 0xFF000000) {
-        addr |= 0xF00000;
+    if (is_ppc) {
+        if (addr >= 0xFF000000) {
+            addr |= 0xF00000;
+        }
+
+        if (addr >= 0x80000000 && addr < 0xFF000000) {
+            fatal("I/O ACCESS! (0x%x, %d)", addr, 4);
+        }
     }
 
     if (addr & 3)
@@ -752,8 +770,14 @@ write_mem_b(uint32_t addr, uint8_t val)
     mem_logical_addr = addr;
     addr &= rammask;
 
-    if (is_ppc && addr >= 0xFF000000) {
-        addr |= 0xF00000;
+    if (is_ppc) {
+        if (is_ppc && addr >= 0xFF000000) {
+            addr |= 0xF00000;
+        }
+
+        if (addr >= 0x80000000 && addr < 0xFF000000) {
+            fatal("I/O ACCESS! (0x%x, %d, w)", addr, 1);
+        }
     }
 
     map = write_mapping[addr >> MEM_GRANULARITY_BITS];
@@ -769,8 +793,14 @@ write_mem_w(uint32_t addr, uint16_t val)
     mem_logical_addr = addr;
     addr &= rammask;
 
-    if (is_ppc && addr >= 0xFF000000) {
-        addr |= 0xF00000;
+    if (is_ppc){
+        if (addr >= 0xFF000000) {
+            addr |= 0xF00000;
+        }
+
+        if (addr >= 0x80000000 && addr < 0xFF000000) {
+            fatal("I/O ACCESS! (0x%x, %d, w)", addr, 2);
+        }
     }
 
     if (addr & 1) {
@@ -797,8 +827,14 @@ write_mem_l(uint32_t addr, uint32_t val)
     mem_logical_addr = addr;
     addr &= rammask;
 
-    if (is_ppc && addr >= 0xFF000000) {
-        addr |= 0xF00000;
+    if (is_ppc) {
+        if (addr >= 0xFF000000) {
+            addr |= 0xF00000;
+        }
+
+        if (addr >= 0x80000000 && addr < 0xFF000000) {
+            fatal("I/O ACCESS! (0x%x, %d, w)", addr, 4);
+        }
     }
 
     if (addr & 3) {
@@ -1700,6 +1736,10 @@ mem_readb_phys(uint32_t addr)
 
     mem_logical_addr = 0xffffffff;
 
+    if (is_ppc && (addr & (1 << 31))) {
+        map = read_mapping[(addr & 0x7FFFFFFF) >> MEM_GRANULARITY_BITS];
+    }
+
     if (map) {
         if (cpu_use_exec && map->exec)
             ret = map->exec[(addr - map->base) & map->mask];
@@ -1718,6 +1758,9 @@ mem_readw_phys(uint32_t addr)
     const uint16_t *p;
 
     mem_logical_addr = 0xffffffff;
+    if (is_ppc && (addr & (1 << 31))) {
+        map = read_mapping[(addr & 0x7FFFFFFF) >> MEM_GRANULARITY_BITS];
+    }
 
     if (cpu_use_exec && ((addr & MEM_GRANULARITY_MASK) <= MEM_GRANULARITY_HBOUND) && (map && map->exec)) {
         p   = (uint16_t *) &(map->exec[(addr - map->base) & map->mask]);
@@ -1740,6 +1783,9 @@ mem_readl_phys(uint32_t addr)
     const uint32_t *p;
 
     mem_logical_addr = 0xffffffff;
+    if (is_ppc && (addr & (1 << 31))) {
+        map = read_mapping[(addr & 0x7FFFFFFF) >> MEM_GRANULARITY_BITS];
+    }
 
     if (cpu_use_exec && ((addr & MEM_GRANULARITY_MASK) <= MEM_GRANULARITY_QBOUND) && (map && map->exec)) {
         p   = (uint32_t *) &(map->exec[(addr - map->base) & map->mask]);
@@ -1780,6 +1826,10 @@ mem_writeb_phys(uint32_t addr, uint8_t val)
 
     mem_logical_addr = 0xffffffff;
 
+    if (is_ppc && (addr & (1 << 31))) {
+        map = write_mapping[(addr & 0x7FFFFFFF) >> MEM_GRANULARITY_BITS];
+    }
+
     if (map) {
         if (cpu_use_exec && map->exec)
             map->exec[(addr - map->base) & map->mask] = val;
@@ -1795,6 +1845,10 @@ mem_writew_phys(uint32_t addr, uint16_t val)
     uint16_t      *p;
 
     mem_logical_addr = 0xffffffff;
+
+    if (is_ppc && (addr & (1 << 31))) {
+        map = write_mapping[(addr & 0x7FFFFFFF) >> MEM_GRANULARITY_BITS];
+    }
 
     if (cpu_use_exec && ((addr & MEM_GRANULARITY_MASK) <= MEM_GRANULARITY_HBOUND) && (map && map->exec)) {
         p  = (uint16_t *) &(map->exec[(addr - map->base) & map->mask]);
@@ -1814,6 +1868,10 @@ mem_writel_phys(uint32_t addr, uint32_t val)
     uint32_t      *p;
 
     mem_logical_addr = 0xffffffff;
+
+    if (is_ppc && (addr & (1 << 31))) {
+        map = write_mapping[(addr & 0x7FFFFFFF) >> MEM_GRANULARITY_BITS];
+    }
 
     if (cpu_use_exec && ((addr & MEM_GRANULARITY_MASK) <= MEM_GRANULARITY_QBOUND) && (map && map->exec)) {
         p  = (uint32_t *) &(map->exec[(addr - map->base) & map->mask]);
@@ -2914,6 +2972,8 @@ mem_reset(void)
             mem_add_ram_mapping(&ram_mid_mapping2, 0xa0000, 0x60000);
             mem_mapping_disable(&ram_mid_mapping2);
         }
+    } else {
+        mem_set_mem_state_bus_both(0, mem_size * 1024, MEM_READ_EXTERNAL | MEM_WRITE_EXTERNAL);
     }
 
     mem_mapping_add(&ram_remapped_mapping, mem_size * 1024, 256 * 1024,
