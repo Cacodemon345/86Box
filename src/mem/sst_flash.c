@@ -422,7 +422,9 @@ sst_read(uint32_t addr, void *priv)
     if (dev->id_mode)
         ret = sst_read_id(addr, priv);
     else {
-        if ((addr >= biosaddr) && (addr <= (biosaddr + biosmask)))
+        if (is_ppc)
+            ret = dev->array[addr & dev->mask];
+        else if ((addr >= biosaddr) && (addr <= (biosaddr + biosmask)))
             ret = dev->array[addr - biosaddr];
     }
 
@@ -440,7 +442,9 @@ sst_readw(uint32_t addr, void *priv)
     if (dev->id_mode)
         ret = sst_read(addr, priv) | (sst_read(addr + 1, priv) << 8);
     else {
-        if ((addr >= biosaddr) && (addr <= (biosaddr + biosmask)))
+        if (is_ppc)
+            ret = *(uint16_t *) &dev->array[addr & dev->mask];
+        else if ((addr >= biosaddr) && (addr <= (biosaddr + biosmask)))
             ret = *(uint16_t *) &dev->array[addr - biosaddr];
     }
 
@@ -458,7 +462,9 @@ sst_readl(uint32_t addr, void *priv)
     if (dev->id_mode)
         ret = sst_readw(addr, priv) | (sst_readw(addr + 2, priv) << 16);
     else {
-        if ((addr >= biosaddr) && (addr <= (biosaddr + biosmask)))
+        if (is_ppc)
+            ret = *(uint32_t *) &dev->array[addr & dev->mask];
+        else if ((addr >= biosaddr) && (addr <= (biosaddr + biosmask)))
             ret = *(uint32_t *) &dev->array[addr - biosaddr];
     }
 
