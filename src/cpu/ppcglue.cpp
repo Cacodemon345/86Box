@@ -130,6 +130,9 @@ void execppc(int32_t cycs)
         ppc_cpu_run_single(cyc_period);
         cycs -= cyc_period;
         tsc += cyc_period;
+
+        if (pic.int_pending)
+            ppc_cpu_atomic_raise_ext_exception();
         
         if (TIMER_VAL_LESS_THAN_VAL(timer_target, (uint64_t) tsc))
             timer_process();
