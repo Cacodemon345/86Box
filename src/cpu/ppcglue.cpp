@@ -59,6 +59,9 @@ bool UAECALL cb_uae_ppc_io_mem_read(uint32_t addr, uint32_t *data, int size)
             *data = bswap32(read_mem_l(addr));
             break;
     }
+    if (addr >= 0x80000000) {
+        pclog("Read from bus = %X\n", size == 2 ? bswap16(*data) : (size == 4 ? bswap32(*data) : *data));
+    }
     return true;
 }
 bool UAECALL cb_uae_ppc_io_mem_write(uint32_t addr, uint32_t data, int size)
@@ -84,6 +87,9 @@ bool UAECALL cb_uae_ppc_io_mem_write(uint32_t addr, uint32_t data, int size)
         case 4:
             write_mem_l(addr, bswap32(data));
             break;
+    }
+    if (addr >= 0x80000000) {
+        pclog("Write to bus = %X\n", size == 2 ? bswap16(data) : (size == 4 ? bswap32(data) : data));
     }
     return true;
 }
