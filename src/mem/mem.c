@@ -801,12 +801,9 @@ read_mem_b(uint32_t addr)
     if (is_ppc) {
         if (addr >= 0xFF000000) {
             addr &= ~0xF00000;
-        }
-
-        if (addr == 0xbfffeff0) {
+        } else if (addr == 0xbfffeff0) {
             return 0;
-        }
-        if (addr >= 0x80000000 && addr < 0xFF000000) {
+        } else if (addr >= 0x80000000 && addr < 0xFF000000) {
             return read_mem_from_bus(addr, 1);
         }
     }
@@ -830,13 +827,9 @@ read_mem_w(uint32_t addr)
     if (is_ppc) {
         if (addr >= 0xFF000000) {
             addr &= ~0xF00000;
-        }
-
-        if (addr == 0xbfffeff0) {
+        } else if (addr == 0xbfffeff0) {
             return 0;
-        }
-
-        if ((addr >= 0x80000000 && addr < 0xFF000000) && !(addr & 1)) {
+        } else if ((addr >= 0x80000000 && addr < 0xFF000000) && !(addr & 1)) {
             return read_mem_from_bus(addr, 2);
         }
     }
@@ -867,12 +860,9 @@ read_mem_l(uint32_t addr)
     if (is_ppc) {
         if (addr >= 0xFF000000) {
             addr &= ~0xF00000;
-        }
-
-        if (addr == 0xbfffeff0) {
+        } else if (addr == 0xbfffeff0) {
             return 0;
-        }
-        if ((addr >= 0x80000000 && addr < 0xFF000000) && !(addr & 3)) {
+        } else if ((addr >= 0x80000000 && addr < 0xFF000000) && !(addr & 3)) {
             return read_mem_from_bus(addr, 4);
         }
     }
@@ -904,9 +894,7 @@ write_mem_b(uint32_t addr, uint8_t val)
     if (is_ppc) {
         if (addr >= 0xFF000000) {
             addr &= ~0xF00000;
-        }
-
-        if ((addr >= 0x80000000 && addr < 0xFF000000)) {
+        } else if ((addr >= 0x80000000 && addr < 0xFF000000)) {
             write_mem_to_bus(addr, val, 1);
         }
     }
@@ -927,9 +915,7 @@ write_mem_w(uint32_t addr, uint16_t val)
     if (is_ppc) {
         if (addr >= 0xFF000000) {
             addr &= ~0xF00000;
-        }
-
-        if ((addr >= 0x80000000 && addr < 0xFF000000) && !(addr & 1)) {
+        } else if ((addr >= 0x80000000 && addr < 0xFF000000) && !(addr & 1)) {
             write_mem_to_bus(addr, val, 2);
         }
     }
@@ -961,9 +947,7 @@ write_mem_l(uint32_t addr, uint32_t val)
     if (is_ppc) {
         if (addr >= 0xFF000000) {
             addr &= ~0xF00000;
-        }
-
-        if ((addr >= 0x80000000 && addr < 0xFF000000) && !(addr & 3)) {
+        } else if ((addr >= 0x80000000 && addr < 0xFF000000) && !(addr & 3)) {
             write_mem_to_bus(addr, val, 4);
         }
     }
