@@ -693,7 +693,7 @@ read_mem_from_bus(uint32_t addr, int size)
             }
             return inl(io_addr);
         }
-        case 0x800000 ... 0xFFFFFF:
+        case 0x00800000 ... 0x00FFFFFF:
         {
             uint32_t pci_addr = (__builtin_ctz((uint16_t)(addr >> 11)) << 11) | (addr & 0x7ff);
             switch (size) {
@@ -705,7 +705,7 @@ read_mem_from_bus(uint32_t addr, int size)
                     return pci_mpc105_read_regl(pci_addr);
             }
         }
-        case 0x1000000 ... 0xF7FFFFF:
+        case 0x01000000 ... 0x3f7fffff:
         {
             fatal("PCI I/O read attempted\n");
         }
@@ -765,7 +765,7 @@ write_mem_to_bus(uint32_t addr, uint32_t val, int size)
                     break;
             }
         }
-        case 0x1000000 ... 0xF7FFFFF:
+        case 0x01000000 ... 0x3f7fffff:
         {
             fatal("PCI I/O write attempted\n");
         }
@@ -799,7 +799,7 @@ read_mem_b(uint32_t addr)
     
     if (is_ppc) {
         if (addr >= 0xFF000000) {
-            addr |= 0xF00000;
+            addr &= ~0xF00000;
         }
 
         if (addr == 0xbfffeff0) {
@@ -828,7 +828,7 @@ read_mem_w(uint32_t addr)
 
     if (is_ppc) {
         if (addr >= 0xFF000000) {
-            addr |= 0xF00000;
+            addr &= ~0xF00000;
         }
 
         if (addr == 0xbfffeff0) {
@@ -865,7 +865,7 @@ read_mem_l(uint32_t addr)
 
     if (is_ppc) {
         if (addr >= 0xFF000000) {
-            addr |= 0xF00000;
+            addr &= ~0xF00000;
         }
 
         if (addr == 0xbfffeff0) {
@@ -901,8 +901,8 @@ write_mem_b(uint32_t addr, uint8_t val)
     addr &= rammask;
 
     if (is_ppc) {
-        if (is_ppc && addr >= 0xFF000000) {
-            addr |= 0xF00000;
+        if (addr >= 0xFF000000) {
+            addr &= ~0xF00000;
         }
 
         if ((addr >= 0x80000000 && addr < 0xFF000000)) {
@@ -923,9 +923,9 @@ write_mem_w(uint32_t addr, uint16_t val)
     mem_logical_addr = addr;
     addr &= rammask;
 
-    if (is_ppc){
+    if (is_ppc) {
         if (addr >= 0xFF000000) {
-            addr |= 0xF00000;
+            addr &= ~0xF00000;
         }
 
         if ((addr >= 0x80000000 && addr < 0xFF000000) && !(addr & 1)) {
@@ -959,7 +959,7 @@ write_mem_l(uint32_t addr, uint32_t val)
 
     if (is_ppc) {
         if (addr >= 0xFF000000) {
-            addr |= 0xF00000;
+            addr &= ~0xF00000;
         }
 
         if ((addr >= 0x80000000 && addr < 0xFF000000) && !(addr & 3)) {
