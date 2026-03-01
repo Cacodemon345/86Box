@@ -259,6 +259,7 @@ extern const device_t sensationaud_device;
 /* Windows Sound System */
 extern const device_t wss_device;
 extern const device_t ncr_business_audio_device;
+extern const device_t ibm_ultimedia_device;
 
 /* Yamaha YMF-7xx */
 extern const device_t ymf701_device;

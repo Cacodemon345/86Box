@@ -196,6 +196,45 @@ ncr_audio_mca_write(int port, uint8_t val, void *priv)
     }
 }
 
+void *
+ibm_ultimedia_init(UNUSED(const device_t *info))
+{
+    wss_t *wss = calloc(1, sizeof(wss_t));
+
+    uint16_t addr    = 0x830;
+    wss->opl_enabled = 1;
+
+    if (wss->opl_enabled)
+        fm_driver_get(FM_YMF262, &wss->opl);
+
+    ad1848_init(&wss->ad1848, AD1848_TYPE_CS4231);
+
+    ad1848_setirq(&wss->ad1848, 7);
+    ad1848_setdma(&wss->ad1848, 3);
+
+    if (wss->opl_enabled)
+        io_sethandler(0x0388, 0x0004,
+                      wss->opl.read, NULL, NULL,
+                      wss->opl.write, NULL, NULL,
+                      wss->opl.priv);
+
+    io_sethandler(addr, 0x0004,
+                  wss_read, NULL, NULL,
+                  wss_write, NULL, NULL,
+                  wss);
+    io_sethandler(addr + 4, 0x0004,
+                  ad1848_read, NULL, NULL,
+                  ad1848_write, NULL, NULL,
+                  &wss->ad1848);
+
+    sound_add_handler(wss_get_buffer, wss);
+
+    if (wss->opl_enabled)
+        music_add_handler(wss_get_music_buffer, wss);
+
+    return wss;
+}
+
 static uint8_t
 ncr_audio_mca_feedb(void *priv)
 {
@@ -294,6 +333,20 @@ const device_t ncr_business_audio_device = {
     .flags         = DEVICE_MCA,
     .local         = 0,
     .init          = ncr_audio_init,
+    .close         = wss_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = wss_speed_changed,
+    .force_redraw  = NULL,
+    .config        = NULL
+};
+
+const device_t ibm_ultimedia_device = {
+    .name          = "IBM Ultimedia Audio",
+    .internal_name = "ibmultaudio",
+    .flags         = DEVICE_ISA,
+    .local         = 0,
+    .init          = ibm_ultimedia_init,
     .close         = wss_close,
     .reset         = NULL,
     .available     = NULL,

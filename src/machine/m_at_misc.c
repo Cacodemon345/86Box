@@ -109,6 +109,7 @@ machine_at_ps440_init(const machine_t *model)
     // They reused the RTC designs from the PS/2s in this machine.
     device_add(&ps2_nvr_55ls_device);
 
+    device_add(&ibm_ultimedia_device);
     device_add(&s3_vision864_onboard_pci_device);
 
     return ret;
