@@ -695,7 +695,9 @@ read_mem_from_bus(uint32_t addr, int size)
         }
         case 0x00800000 ... 0x00FFFFFF:
         {
-            uint32_t pci_addr = (__builtin_ctz((uint16_t)(addr >> 11)) << 11) | (addr & 0x7ff);
+            uint32_t pci_addr = addr & 0x7ff;
+            uint32_t idsel = __builtin_ctz((addr & 0x7FFFFF) & ~0x7ff);
+            pci_addr |= idsel << 11;
             switch (size) {
                 case 1:
                     return pci_mpc105_read_reg(pci_addr);
@@ -752,7 +754,9 @@ write_mem_to_bus(uint32_t addr, uint32_t val, int size)
         }
         case 0x800000 ... 0xFFFFFF:
         {
-            uint32_t pci_addr = (__builtin_ctz((uint16_t)(addr >> 11)) << 11) | (addr & 0x7ff);
+            uint32_t pci_addr = addr & 0x7ff;
+            uint32_t idsel = __builtin_ctz((addr & 0x7FFFFF) & ~0x7ff);
+            pci_addr |= idsel << 11;
             switch (size) {
                 case 1:
                     pci_mpc105_write_reg(pci_addr, val);

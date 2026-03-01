@@ -126,7 +126,7 @@ void reset_ppc(int hard)
 void execppc(int32_t cycs)
 {
     while (cycs > 0) {
-        int32_t cyc_period = (cycs > 2000) ? 2000 : cycs;
+        int32_t cyc_period = 1;
         ppc_cpu_run_single(cyc_period);
         cycs -= cyc_period;
         tsc += cyc_period;

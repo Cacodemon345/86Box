@@ -35,6 +35,7 @@
 #include "cpu.h"
 #include <86box/machine.h>
 #include <86box/sound.h>
+#include <86box/scsi_ncr53c8xx.h>
 #include <86box/nvr_ps2.h>
 
 int
@@ -111,6 +112,7 @@ machine_at_ps440_init(const machine_t *model)
 
     device_add(&ibm_ultimedia_device);
     device_add(&s3_vision864_onboard_pci_device);
+    device_add(&ncr53c810_onboard_pci_device);
 
     return ret;
 }
