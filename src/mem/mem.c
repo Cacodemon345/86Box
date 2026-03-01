@@ -764,6 +764,7 @@ write_mem_to_bus(uint32_t addr, uint32_t val, int size)
                     pci_mpc105_write_regl(pci_addr, val);
                     break;
             }
+            break;
         }
         case 0x01000000 ... 0x3f7fffff:
         {
