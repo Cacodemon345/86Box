@@ -35,6 +35,7 @@
 #include "cpu.h"
 #include <86box/machine.h>
 #include <86box/sound.h>
+#include <86box/nvr_ps2.h>
 
 int
 machine_at_vpc2007_init(const machine_t *model)
@@ -71,6 +72,8 @@ machine_at_vpc2007_init(const machine_t *model)
     return ret;
 }
 extern const device_t mpc105_device;
+extern const device_t port_8xx_device;
+
 int
 machine_at_ps440_init(const machine_t *model)
 {
@@ -86,15 +89,12 @@ machine_at_ps440_init(const machine_t *model)
 
     pci_init(PCI_CONFIG_TYPE_1);
     pci_register_slot(0x00, PCI_CARD_NORTHBRIDGE, 0, 0, 0, 0);
-    pci_register_slot(0x07, PCI_CARD_SOUTHBRIDGE, 0, 0, 0, 4);
-    pci_register_slot(0x08, PCI_CARD_NORMAL,      1, 2, 3, 4);
-    pci_register_slot(0x09, PCI_CARD_NORMAL,      1, 2, 3, 4);
-    pci_register_slot(0x0A, PCI_CARD_NORMAL,      1, 2, 3, 4);
-    pci_register_slot(0x0B, PCI_CARD_NORMAL,      1, 2, 3, 4);
-    pci_register_slot(0x0C, PCI_CARD_NORMAL,      1, 2, 3, 4);
-    pci_register_slot(0x0D, PCI_CARD_NORMAL,      1, 2, 3, 4);
-    pci_register_slot(0x0E, PCI_CARD_NORMAL,      1, 2, 3, 4);
-    pci_register_slot(0x0F, PCI_CARD_NORMAL,      1, 2, 3, 4);
+    pci_register_slot(11, PCI_CARD_SOUTHBRIDGE, 0, 0, 0, 4);
+    pci_register_slot(1, PCI_CARD_SCSI, 1, 2, 3, 4);
+    pci_register_slot(2, PCI_CARD_VIDEO, 1, 2, 3, 4);
+    pci_register_slot(3, PCI_CARD_NETWORK, 1, 2, 3, 4);
+    pci_register_slot(4, PCI_CARD_NORMAL, 1, 2, 3, 4);
+    pci_register_slot(5, PCI_CARD_NORMAL, 1, 2, 3, 4);
     device_add(&sio_zb_device);
 
     device_add(&amd_flash_29f040a_device);
@@ -103,7 +103,13 @@ machine_at_ps440_init(const machine_t *model)
     mem_set_mem_state_both(0xFF000000, 0x1000000, MEM_READ_ROMCS | MEM_WRITE_ROMCS);
 
     device_add(&mpc105_device);
+    device_add(&port_8xx_device);
     device_add_params(&pc873xx_device, (void *) (PCX730X_398 | PCX73XX_IDE_PRI | PCX73XX_IDE_SEC | PCX73XX_FDC_ON));
+    
+    // They reused the RTC designs from the PS/2s in this machine.
+    device_add(&ps2_nvr_55ls_device);
+
+    device_add(&s3_vision864_onboard_pci_device);
 
     return ret;
 }

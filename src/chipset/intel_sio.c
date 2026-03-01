@@ -549,7 +549,10 @@ sio_init(const device_t *info)
         io_sethandler(0x00b2, 0x0001, NULL, NULL, NULL, sio_apm_out, NULL, NULL, dev);
     }
 
-    dev->port_92 = device_add(&port_92_pci_device);
+    dev->port_92 = device_add(is_ppc ? &port_92_device : &port_92_pci_device);
+    if (is_ppc) {
+        port_92_set_features(dev->port_92, 1, 0);
+    }
 
     dma_set_sg_base(0x04);
     dma_set_params(1, 0xffffffff);

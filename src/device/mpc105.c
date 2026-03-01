@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <wchar.h>
+#include <stdbool.h>
 #define HAVE_STDARG_H
 #include <86box/86box.h>
 #include <86box/machine.h>
@@ -25,6 +26,31 @@ typedef struct mpc105_t {
     uint8_t bus_index;
     uint8_t slot;
 } mpc105_t;
+
+extern bool little_endian_mem;
+extern uint8_t sys_cntl;
+extern bool iomap;
+
+static void
+mpc105_update_ram_mapping(mpc105_t* dev)
+{
+    mem_set_mem_state_cpu_both(0, mem_size * 1024, 0);
+    for (int i = 0; i < 8; i++) {
+        if (dev->regs[0xA0] & (1 << i)) {
+            uint32_t begin = 0;
+            uint32_t end = 0;
+
+            begin = (((uint32_t)dev->regs[0x80 + i]) | (((uint32_t)dev->regs[0x88 + i] & 0x3) << 8)) << 20;
+            end = (((uint32_t)dev->regs[0x90 + i]) | (((uint32_t)dev->regs[0x98 + i] & 0x3) << 8)) << 20;
+            end |= 0x000FFFFF;
+            if (end > 0x7FFFFFFF) {
+                end = 0x7FFFFFFF;
+            }
+            uint32_t size = (end - begin) + 1;
+            mem_set_mem_state_cpu_both(begin, size, MEM_READ_INTERNAL | MEM_WRITE_INTERNAL);
+        }
+    }
+}
 
 static void
 mpc105_write(int func, int addr, UNUSED(int len), uint8_t val, void *priv)
@@ -57,11 +83,6 @@ mpc105_write(int func, int addr, UNUSED(int len), uint8_t val, void *priv)
         case 0x1e:
         case 0x34:
         case 0x3d:
-        case 0x67:
-        case 0xdc:
-        case 0xdd:
-        case 0xde:
-        case 0xdf:
             return;
 
         case 0x04:
@@ -72,26 +93,14 @@ mpc105_write(int func, int addr, UNUSED(int len), uint8_t val, void *priv)
         case 0x1f:
             return;
 
-        case 0x1c:
-        case 0x1d:
-        case 0x20:
-        case 0x22:
-        case 0x24:
-        case 0x26:
-            val &= 0xf0;    /* SiS datasheets say 0Fh for 1Ch but that's clearly an erratum since the
-                               definition of the bits is identical to the other vendors' AGP bridges. */
-            break;
-
         case 0x3c:
-            if (!(dev->ctl & 0x80))
-                return;
-            break;
+            return;
 
         case 0x3e:
-            break;
+            return;
 
         case 0x3f:
-            break;
+            return;
 
         case 0x40:
             return;
@@ -100,6 +109,26 @@ mpc105_write(int func, int addr, UNUSED(int len), uint8_t val, void *priv)
             return;
         
         case 0x42:
+            return;
+
+        case 0x70:
+        case 0xA8 ... 0xAB:
+        case 0xAC ... 0xAF:
+        case 0xBA:
+        case 0xBB:
+        case 0xC0:
+        case 0xC4:
+            dev->regs[addr] = val;
+            return;
+
+        case 0x80 ... 0xA0:
+            dev->regs[addr] = val;
+            mpc105_update_ram_mapping(dev);
+            return;
+        
+        case 0xF0 ... 0xF3:
+            dev->regs[addr] = val;
+            mpc105_update_ram_mapping(dev);
             return;
 
         default:
@@ -119,6 +148,23 @@ mpc105_read(int func, int addr, UNUSED(int len), void *priv)
         ret = 0xff;
     else
         ret = dev->regs[addr];
+
+    if (func == 0) {
+        switch (addr) {
+            case 0xA8:
+                ret &= ~(1 << 5);
+                ret |= little_endian_mem << 5;
+                break;
+            case 0xBA:
+                ret &= ~(1 << 2);
+                ret |= iomap << 2;
+                break;
+            case 0xAA:
+                ret &= ~8;
+                ret |= !(iomap) ? 8 : 0;
+                break;
+        }
+    }
 
     return ret;
 }
@@ -148,11 +194,6 @@ mpc105_reset(void *priv)
 static void *
 mpc105_init(const device_t *info)
 {
-    uint8_t interrupts[4];
-    uint8_t interrupt_mask;
-    uint8_t add_type;
-    uint8_t slot_count;
-
     mpc105_t *dev = (mpc105_t *) calloc(1, sizeof(mpc105_t));
 
     pci_add_card(PCI_ADD_NORTHBRIDGE, mpc105_read, mpc105_write, dev, &dev->slot);

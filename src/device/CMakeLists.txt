@@ -66,6 +66,7 @@ add_library(dev OBJECT
     unittester.c
     zenith_scratchpad.c
     mpc105.c
+    port_8xx_ppc.c
 )
 
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT MSVC)

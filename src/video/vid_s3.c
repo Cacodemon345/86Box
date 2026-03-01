@@ -128,7 +128,8 @@ enum {
     S3_SPEA_MERCURY_LITE_PCI,
     S3_86C805_ONBOARD,
     S3_DIAMOND_STEALTH64_968,
-    S3_WINNER1000_805
+    S3_WINNER1000_805,
+    S3_VISION864_ONBOARD
 };
 
 enum {
@@ -11415,6 +11416,11 @@ s3_init(const device_t *info)
             chip    = S3_VISION864;
             video_inform(VIDEO_FLAG_TYPE_SPECIAL, &timing_s3_vision864_vlb);
             break;
+        case S3_VISION864_ONBOARD:
+            bios_fn = NULL;
+            chip    = S3_VISION864;
+            video_inform(VIDEO_FLAG_TYPE_SPECIAL, &timing_s3_vision864_vlb);
+            break;
         case S3_PARADISE_BAHAMAS64:
             bios_fn = ROM_PARADISE_BAHAMAS64;
             chip    = S3_VISION864;
@@ -13533,4 +13539,18 @@ const device_t s3_trio64v2_dx_onboard_pci_device = {
     .speed_changed = s3_speed_changed,
     .force_redraw  = s3_force_redraw,
     .config        = s3_trio64v_onboard_config
+};
+
+const device_t s3_vision864_onboard_pci_device = {
+    .name          = "S3 Vision864 On-Board PCI",
+    .internal_name = "vision864_onboard_pci",
+    .flags         = DEVICE_PCI,
+    .local         = S3_VISION864_ONBOARD,
+    .init          = s3_init,
+    .close         = s3_close,
+    .reset         = s3_reset,
+    .available     = NULL,
+    .speed_changed = s3_speed_changed,
+    .force_redraw  = s3_force_redraw,
+    .config        = s3_standard_config
 };

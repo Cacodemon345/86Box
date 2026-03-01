@@ -43,6 +43,10 @@ port_92_readb(uint16_t port, void *priv)
     const port_92_t *dev = (port_92_t *) priv;
 
     if (port == 0x92) {
+        if (is_ppc) {
+            ret = dev->reg & 0x3;
+            return ret;
+        }
         /* Return bit 1 directly from mem_a20_alt, so the
            pin can be reset independently of the device. */
         if (dev->flags & PORT_92_KEY)

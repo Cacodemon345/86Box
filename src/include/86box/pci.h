@@ -298,6 +298,14 @@ extern uint8_t     pci_read(uint16_t port, void *priv);
 extern uint16_t    pci_readw(uint16_t port, void *priv);
 extern uint32_t    pci_readl(uint16_t port, void *priv);
 
+/* MPC105: Handle direct reads/writes */
+extern void pci_mpc105_write_reg(uint32_t addr, uint8_t val);
+extern void pci_mpc105_write_regw(uint32_t addr, uint16_t val);
+extern void pci_mpc105_write_regl(uint32_t addr, uint32_t val);
+extern uint8_t pci_mpc105_read_reg(uint32_t addr);
+extern uint16_t pci_mpc105_read_regw(uint32_t addr);
+extern uint32_t pci_mpc105_read_regl(uint32_t addr);
+
 extern uint8_t     pci_register_bus(void);
 extern void        pci_remap_bus(uint8_t bus_index, uint8_t bus_number);
 extern void        pci_register_bus_slot(int bus, int card, int type, int inta, int intb, int intc, int intd);

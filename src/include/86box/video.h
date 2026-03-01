@@ -581,6 +581,7 @@ extern const device_t s3_elsa_winner2000_pro_x_964_pci_device;
 extern const device_t s3_elsa_winner2000_pro_x_pci_device;
 extern const device_t s3_trio64v2_dx_pci_device;
 extern const device_t s3_trio64v2_dx_onboard_pci_device;
+extern const device_t s3_vision864_onboard_pci_device;
 
 /* S3 ViRGE */
 extern const device_t s3_virge_325_pci_device;

@@ -594,6 +594,82 @@ pci_reg_read(uint16_t port)
     return ret;
 }
 
+
+void pci_mpc105_write_reg(uint32_t addr, uint8_t val)
+{
+    int pci_index_lcl = addr & 0xff;
+    int pci_func_lcl  = (addr >> 8) & 7;
+    int pci_card_lcl  = (addr >> 11) & 31;
+    int pci_bus_lcl   = (addr >> 16) & 0xff;
+
+    uint8_t slot = pci_card_to_slot_mapping[pci_bus_number_to_index_mapping[pci_bus]][pci_card];
+
+    if (slot != PCI_CARD_INVALID) {
+        if (pci_cards[slot].write) {
+            pci_cards[slot].write(pci_func_lcl, pci_index_lcl, pci_access_len, val, pci_cards[slot].priv);
+        }
+    }
+}
+
+void pci_mpc105_write_regw(uint32_t addr, uint16_t val)
+{
+    pci_access_len = 2;
+    pci_mpc105_write_reg(addr, val & 0xFF);
+    pci_mpc105_write_reg(addr + 1, (val >> 8) & 0xFF);
+    pci_access_len = 1;
+}
+
+void pci_mpc105_write_regl(uint32_t addr, uint32_t val)
+{
+    pci_access_len = 4;
+    pci_mpc105_write_reg(addr, val & 0xFF);
+    pci_mpc105_write_reg(addr + 1, (val >> 8) & 0xFF);
+    pci_mpc105_write_reg(addr + 2, (val >> 16) & 0xFF);
+    pci_mpc105_write_reg(addr + 3, (val >> 24) & 0xFF);
+    pci_access_len = 1;
+}
+
+uint8_t pci_mpc105_read_reg(uint32_t addr)
+{
+    uint8_t slot = 0;
+    uint8_t ret  = 0xff;
+
+    int pci_index_lcl = addr & 0xff;
+    int pci_func_lcl  = (addr >> 8) & 7;
+    int pci_card_lcl  = (addr >> 11) & 31;
+    int pci_bus_lcl   = (addr >> 16) & 0xff;
+
+    slot = pci_card_to_slot_mapping[pci_bus_number_to_index_mapping[pci_bus_lcl]][pci_card_lcl];
+    if (slot != PCI_CARD_INVALID) {
+        if (pci_cards[slot].read)
+            ret = pci_cards[slot].read(pci_func_lcl, pci_index_lcl, pci_access_len, pci_cards[slot].priv);
+    }
+
+    return ret;
+}
+
+uint16_t pci_mpc105_read_regw(uint32_t addr)
+{
+    uint8_t ret = 0;
+    pci_access_len = 2;
+    ret |= pci_mpc105_read_reg(addr);
+    ret |= (pci_mpc105_read_reg(addr + 1) << 8);
+    pci_access_len = 1;
+    return ret;
+}
+
+uint32_t pci_mpc105_read_regl(uint32_t addr)
+{
+    uint32_t ret = 0;
+    pci_access_len = 4;
+    ret |= pci_mpc105_read_reg(addr);
+    ret |= (pci_mpc105_read_reg(addr + 1) << 8);
+    ret |= (pci_mpc105_read_reg(addr + 2) << 16);
+    ret |= (pci_mpc105_read_reg(addr + 3) << 24);
+    pci_access_len = 1;
+    return ret;
+}
+
 uint8_t
 pci_read(uint16_t port, UNUSED(void *priv))
 {

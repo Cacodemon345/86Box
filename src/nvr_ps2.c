@@ -56,11 +56,17 @@ typedef struct ps2_nvr_t {
     char *fn;
 } ps2_nvr_t;
 
+extern int is_ppc;
+
 static uint8_t
 ps2_nvr_read(uint16_t port, void *priv)
 {
     const ps2_nvr_t *nvr = (ps2_nvr_t *) priv;
     uint8_t          ret = 0xff;
+
+    if (port >= 0x76 && is_ppc) {
+        port ^= 1;
+    }
 
     switch (port) {
         case 0x74:
@@ -86,6 +92,10 @@ static void
 ps2_nvr_write(uint16_t port, uint8_t val, void *priv)
 {
     ps2_nvr_t *nvr = (ps2_nvr_t *) priv;
+
+    if (port >= 0x76 && is_ppc) {
+        port ^= 1;
+    }
 
     switch (port) {
         case 0x74:
@@ -124,7 +134,7 @@ ps2_nvr_init(const device_t *info)
     nvr->fn = (char *) malloc(c + 1);
     sprintf(nvr->fn, "%s_sec.nvr", machine_get_nvr_name());
 
-    io_sethandler(0x0074, 3,
+    io_sethandler(0x0074, is_ppc ? 4 : 3,
                   ps2_nvr_read, NULL, NULL, ps2_nvr_write, NULL, NULL, nvr);
 
     fp = nvr_fopen(nvr->fn, "rb");

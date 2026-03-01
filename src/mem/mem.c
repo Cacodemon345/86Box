@@ -23,6 +23,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <wchar.h>
+#include <stdbool.h>
 #define HAVE_STDARG_H
 #include <86box/86box.h>
 #include <86box/version.h>
@@ -37,6 +38,7 @@
 #include <86box/mem.h>
 #include <86box/plat.h>
 #include <86box/rom.h>
+#include <86box/pci.h>
 #include <86box/gdbstub.h>
 #ifdef USE_DYNAREC
 #    include "codegen_public.h"
@@ -668,6 +670,124 @@ getpccache(uint32_t a)
     return is_ppc ? NULL : (uint8_t *) &ff_pccache;
 }
 
+extern bool little_endian_mem;
+extern uint8_t sys_cntl;
+extern bool iomap;
+
+extern int     picinterrupt(void);
+uint32_t
+read_mem_from_bus(uint32_t addr, int size)
+{
+    addr &= ~(1 << 31);
+    switch (addr) {
+        case 0x0 ... 0x7FFFFF:
+        {
+            uint16_t io_addr = iomap ? (addr & 0xFFFF) : ((addr & 0x1F) | ((addr & 0x007FFF000) >> 7));
+            switch (size) {
+                case 1:
+                    return inb(io_addr);
+                case 2:
+                    return inw(io_addr);
+                case 4:
+                    return inl(io_addr);
+            }
+            return inl(io_addr);
+        }
+        case 0x800000 ... 0xFFFFFF:
+        {
+            uint32_t pci_addr = (__builtin_ctz((uint16_t)(addr >> 11)) << 11) | (addr & 0x7ff);
+            switch (size) {
+                case 1:
+                    return pci_mpc105_read_reg(pci_addr);
+                case 2:
+                    return pci_mpc105_read_regw(pci_addr);
+                case 4:
+                    return pci_mpc105_read_regl(pci_addr);
+            }
+        }
+        case 0x1000000 ... 0xF7FFFFF:
+        {
+            fatal("PCI I/O read attempted\n");
+        }
+        case 0x3ffffff0 ... 0x3fffffff:
+        {
+            return picinterrupt();
+        }
+        case 0x40000000 ... 0x7effffff:
+        {
+            addr &= 0x3FFFFFFF;
+            switch (size)
+            {
+                case 1:
+                    return mem_readb_phys(addr);
+                case 2:
+                    return mem_readw_phys(addr);
+                case 4:
+                    return mem_readl_phys(addr);
+            }
+        }
+    }
+}
+
+void
+write_mem_to_bus(uint32_t addr, uint32_t val, int size)
+{
+    addr &= ~(1 << 31);
+    switch (addr) {
+        case 0x0 ... 0x7FFFFF:
+        {
+            uint16_t io_addr = iomap ? (addr & 0xFFFF) : ((addr & 0x1F) | ((addr & 0x007FFF000) >> 7));
+            switch (size) {
+                case 1:
+                    outb(io_addr, val);
+                    break;
+                case 2:
+                    outw(io_addr, val);
+                    break;
+                case 4:
+                    outl(io_addr, val);
+                    break;
+            }
+            return outl(io_addr, val);
+        }
+        case 0x800000 ... 0xFFFFFF:
+        {
+            uint32_t pci_addr = (__builtin_ctz((uint16_t)(addr >> 11)) << 11) | (addr & 0x7ff);
+            switch (size) {
+                case 1:
+                    pci_mpc105_write_reg(pci_addr, val);
+                    break;
+                case 2:
+                    pci_mpc105_write_regw(pci_addr, val);
+                    break;
+                case 4:
+                    pci_mpc105_write_regl(pci_addr, val);
+                    break;
+            }
+        }
+        case 0x1000000 ... 0xF7FFFFF:
+        {
+            fatal("PCI I/O write attempted\n");
+        }
+        case 0x40000000 ... 0x7effffff:
+        {
+            addr &= 0x3FFFFFFF;
+            switch (size)
+            {
+                case 1:
+                    mem_writeb_phys(addr, val);
+                    break;
+                case 2:
+                    mem_writew_phys(addr, val);
+                    break;
+                case 4:
+                    mem_writel_phys(addr, val);
+                    break;
+            }
+        }
+    }
+}
+
 uint8_t
 read_mem_b(uint32_t addr)
 {
@@ -682,8 +802,11 @@ read_mem_b(uint32_t addr)
             addr |= 0xF00000;
         }
 
+        if (addr == 0xbfffeff0) {
+            return 0;
+        }
         if (addr >= 0x80000000 && addr < 0xFF000000) {
-            fatal("I/O ACCESS! (0x%x, %d)", addr, 1);
+            return read_mem_from_bus(addr, 1);
         }
     }
 
@@ -708,8 +831,12 @@ read_mem_w(uint32_t addr)
             addr |= 0xF00000;
         }
 
-        if (addr >= 0x80000000 && addr < 0xFF000000) {
-            fatal("I/O ACCESS! (0x%x, %d)", addr, 2);
+        if (addr == 0xbfffeff0) {
+            return 0;
+        }
+
+        if ((addr >= 0x80000000 && addr < 0xFF000000) && !(addr & 1)) {
+            return read_mem_from_bus(addr, 2);
         }
     }
 
@@ -741,8 +868,11 @@ read_mem_l(uint32_t addr)
             addr |= 0xF00000;
         }
 
-        if (addr >= 0x80000000 && addr < 0xFF000000) {
-            fatal("I/O ACCESS! (0x%x, %d)", addr, 4);
+        if (addr == 0xbfffeff0) {
+            return 0;
+        }
+        if ((addr >= 0x80000000 && addr < 0xFF000000) && !(addr & 3)) {
+            return read_mem_from_bus(addr, 4);
         }
     }
 
@@ -775,8 +905,8 @@ write_mem_b(uint32_t addr, uint8_t val)
             addr |= 0xF00000;
         }
 
-        if (addr >= 0x80000000 && addr < 0xFF000000) {
-            fatal("I/O ACCESS! (0x%x, %d, w)", addr, 1);
+        if ((addr >= 0x80000000 && addr < 0xFF000000)) {
+            write_mem_to_bus(addr, val, 1);
         }
     }
 
@@ -798,8 +928,8 @@ write_mem_w(uint32_t addr, uint16_t val)
             addr |= 0xF00000;
         }
 
-        if (addr >= 0x80000000 && addr < 0xFF000000) {
-            fatal("I/O ACCESS! (0x%x, %d, w)", addr, 2);
+        if ((addr >= 0x80000000 && addr < 0xFF000000) && !(addr & 1)) {
+            write_mem_to_bus(addr, val, 2);
         }
     }
 
@@ -832,8 +962,8 @@ write_mem_l(uint32_t addr, uint32_t val)
             addr |= 0xF00000;
         }
 
-        if (addr >= 0x80000000 && addr < 0xFF000000) {
-            fatal("I/O ACCESS! (0x%x, %d, w)", addr, 4);
+        if ((addr >= 0x80000000 && addr < 0xFF000000) && !(addr & 3)) {
+            write_mem_to_bus(addr, val, 4);
         }
     }
 
