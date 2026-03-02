@@ -728,6 +728,10 @@ read_mem_from_bus(uint32_t addr, int size)
                     return mem_readl_phys(addr);
             }
         }
+        default:
+        {
+            return -1;
+        }
     }
 }
 

@@ -105,7 +105,7 @@ machine_at_ps440_init(const machine_t *model)
 
     device_add(&mpc105_device);
     device_add(&port_8xx_device);
-    device_add_params(&pc873xx_device, (void *) (PCX730X_398 | PCX73XX_IDE_PRI | PCX73XX_IDE_SEC | PCX73XX_FDC_ON));
+    device_add_params(&pc873xx_device, (void *) (PCX730X_398 | PCX73XX_FDC_ON));
     
     // They reused the RTC designs from the PS/2s in this machine.
     device_add(&ps2_nvr_55ls_device);

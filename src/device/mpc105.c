@@ -34,22 +34,22 @@ extern bool iomap;
 static void
 mpc105_update_ram_mapping(mpc105_t* dev)
 {
-    mem_set_mem_state_cpu_both(0, mem_size * 1024, 0);
-    for (int i = 0; i < 8; i++) {
-        if (dev->regs[0xA0] & (1 << i)) {
-            uint32_t begin = 0;
-            uint32_t end = 0;
-
-            begin = (((uint32_t)dev->regs[0x80 + i]) | (((uint32_t)dev->regs[0x88 + i] & 0x3) << 8)) << 20;
-            end = (((uint32_t)dev->regs[0x90 + i]) | (((uint32_t)dev->regs[0x98 + i] & 0x3) << 8)) << 20;
-            end |= 0x000FFFFF;
-            if (end > 0x7FFFFFFF) {
-                end = 0x7FFFFFFF;
-            }
-            uint32_t size = (end - begin) + 1;
-            mem_set_mem_state_cpu_both(begin, size, MEM_READ_INTERNAL | MEM_WRITE_INTERNAL);
-        }
-    }
+    //mem_set_mem_state_cpu_both(0, mem_size * 1024, 0);
+    //for (int i = 0; i < 8; i++) {
+    //    if (dev->regs[0xA0] & (1 << i)) {
+    //        uint32_t begin = 0;
+    //        uint32_t end = 0;
+//
+    //        begin = (((uint32_t)dev->regs[0x80 + i]) | (((uint32_t)dev->regs[0x88 + i] & 0x3) << 8)) << 20;
+    //        end = (((uint32_t)dev->regs[0x90 + i]) | (((uint32_t)dev->regs[0x98 + i] & 0x3) << 8)) << 20;
+    //        end |= 0x000FFFFF;
+    //        if (end > 0x7FFFFFFF) {
+    //            end = 0x7FFFFFFF;
+    //        }
+    //        uint32_t size = (end - begin) + 1;
+    //        mem_set_mem_state_cpu_both(begin, size, MEM_READ_INTERNAL | MEM_WRITE_INTERNAL);
+    //    }
+    //}
 }
 
 static void
