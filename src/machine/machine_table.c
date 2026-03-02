@@ -22240,6 +22240,7 @@ const machine_t machines[] = {
         .kbc_device               = &kbc_at_device,
         .kbc_params               = KBC_VEN_IBM,
         .nvr_device               = &nvr_at_device,
+        .nvr_params               = NVR_AT,
         .kbc_p1                   = 0x00000cf0,
         .gpio                     = 0xffffffff,
         .gpio_acpi                = 0xffffffff,

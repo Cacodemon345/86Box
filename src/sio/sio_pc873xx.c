@@ -46,6 +46,8 @@ typedef struct pc873xx_t {
     fdc_t    *fdc;
     serial_t *uart[2];
     lpt_t    *lpt;
+
+    uint64_t  read_id;
 } pc873xx_t;
 
 static void
@@ -302,8 +304,14 @@ pc873xx_read(uint16_t port, void *priv)
 
     dev->tries = 0;
 
-    if (index)
-        ret = dev->cur_reg & 0x1f;
+    if (index) {
+        uint32_t id_read = dev->read_id;
+        dev->read_id++;
+        if (id_read < 2)
+            ret = id_read == 0 ? 0x88 : 0x0;
+        else
+            ret = dev->cur_reg & 0x1f;
+    }
     else {
         if (dev->cur_reg == 8)
             ret = 0x10;
@@ -326,6 +334,7 @@ pc873xx_reset(pc873xx_t *dev)
     dev->regs[0x03] = 0x01;
     dev->regs[0x05] = 0x0D;
     dev->regs[0x08] = 0x70;
+    dev->read_id    = 0;
 
     /*
         0 = 360 rpm @ 500 kbps for 3.5"
@@ -343,6 +352,12 @@ pc873xx_reset(pc873xx_t *dev)
 
     if (dev->has_ide)
         ide_handler(dev);
+}
+
+void
+pc873xx_reset_dev(void *dev)
+{
+    pc873xx_reset(dev);
 }
 
 static void
@@ -405,7 +420,7 @@ const device_t pc873xx_device = {
     .local         = 0x00,
     .init          = pc873xx_init,
     .close         = pc873xx_close,
-    .reset         = NULL,
+    .reset         = pc873xx_reset_dev,
     .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
