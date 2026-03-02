@@ -675,6 +675,19 @@ extern uint8_t sys_cntl;
 extern bool iomap;
 
 extern int     picinterrupt(void);
+
+static inline uint32_t raven_pci_io_config(uint32_t addr)
+{
+    int i;
+
+    for (i = 0; i < 11; i++) {
+        if ((addr & (1 << (11 + i))) != 0) {
+            break;
+        }
+    }
+    return (addr & 0x7ff) |  (i << 11);
+}
+
 uint32_t
 read_mem_from_bus(uint32_t addr, int size)
 {
@@ -695,9 +708,7 @@ read_mem_from_bus(uint32_t addr, int size)
         }
         case 0x00800000 ... 0x00FFFFFF:
         {
-            uint32_t pci_addr = addr & 0x7ff;
-            uint32_t idsel = __builtin_ctz((addr & 0x7FFFFF) & ~0x7ff);
-            pci_addr |= idsel << 11;
+            uint32_t pci_addr = raven_pci_io_config(addr & 0x7FFFFF);
             switch (size) {
                 case 1:
                     return pci_mpc105_read_reg(pci_addr);
@@ -758,9 +769,7 @@ write_mem_to_bus(uint32_t addr, uint32_t val, int size)
         }
         case 0x800000 ... 0xFFFFFF:
         {
-            uint32_t pci_addr = addr & 0x7ff;
-            uint32_t idsel = __builtin_ctz((addr & 0x7FFFFF) & ~0x7ff);
-            pci_addr |= idsel << 11;
+            uint32_t pci_addr = raven_pci_io_config(addr & 0x7FFFFF);
             switch (size) {
                 case 1:
                     pci_mpc105_write_reg(pci_addr, val);

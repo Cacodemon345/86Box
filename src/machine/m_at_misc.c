@@ -89,8 +89,8 @@ machine_at_ps440_init(const machine_t *model)
     machine_at_ps2_init(model);
 
     pci_init(PCI_CONFIG_TYPE_1);
-    pci_register_slot(0x00, PCI_CARD_NORTHBRIDGE, 0, 0, 0, 0);
-    pci_register_slot(11, PCI_CARD_SOUTHBRIDGE, 0, 0, 0, 4);
+    pci_register_slot(0x0F, PCI_CARD_NORTHBRIDGE, 0, 0, 0, 0);
+    pci_register_slot(0, PCI_CARD_SOUTHBRIDGE, 0, 0, 0, 4);
     pci_register_slot(1, PCI_CARD_SCSI, 1, 2, 3, 4);
     pci_register_slot(2, PCI_CARD_VIDEO, 1, 2, 3, 4);
     pci_register_slot(3, PCI_CARD_NETWORK, 1, 2, 3, 4);
@@ -111,7 +111,7 @@ machine_at_ps440_init(const machine_t *model)
     device_add(&ps2_nvr_55ls_device);
 
     device_add(&ibm_ultimedia_device);
-    device_add(&s3_vision864_onboard_pci_device);
+    device_add(&s3_phoenix_trio64_pci_device);
     device_add(&ncr53c810_onboard_pci_device);
 
     return ret;
