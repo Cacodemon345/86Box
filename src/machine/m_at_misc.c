@@ -74,6 +74,50 @@ machine_at_vpc2007_init(const machine_t *model)
 }
 extern const device_t mpc105_device;
 extern const device_t port_8xx_device;
+extern const device_t dec_tulip_21040_device;
+
+int
+machine_at_motorola_ultra_init(const machine_t *model)
+{
+    int ret;
+
+    ret = bios_load_linear_szover("roms/machines/multra/multra.bin",
+                                0xfff00000, 262144 * 2, 0);
+
+    if (bios_only || !ret)
+        return ret;
+
+    machine_at_common_init(model);
+
+    pci_init(PCI_CONFIG_TYPE_1);
+    pci_register_slot(0x00, PCI_CARD_NORTHBRIDGE, 0, 0, 0, 0);
+    pci_register_slot(11, PCI_CARD_SOUTHBRIDGE, 0, 0, 0, 4);
+    pci_register_slot(12, PCI_CARD_SCSI, 1, 2, 3, 4);
+    pci_register_slot(13, PCI_CARD_VIDEO, 1, 2, 3, 4);
+    pci_register_slot(14, PCI_CARD_NETWORK, 1, 2, 3, 4);
+    pci_register_slot(15, PCI_CARD_NORMAL, 1, 2, 3, 4);
+    pci_register_slot(16, PCI_CARD_NORMAL, 1, 2, 3, 4);
+    device_add(&sio_zb_device);
+
+    device_add(&amd_flash_29f040a_device);
+    spd_register(SPD_TYPE_SDRAM, 0xF, 256); /* real VPC provides invalid SPD data */
+    
+    mem_set_mem_state_both(0xFF000000, 0x1000000, MEM_READ_ROMCS | MEM_WRITE_ROMCS);
+
+    device_add(&mpc105_device);
+    device_add(&port_8xx_device);
+    device_add_params(&pc87307_device, (void *) (PCX730X_PHOENIX_42I | PCX7307_PC87307));
+    
+    // They reused the RTC designs from the PS/2s in this machine.
+    device_add(&ps2_nvr_55ls_device);
+
+    device_add(&ibm_ultimedia_device);
+    device_add(&gd5434_onboard_pci_device);
+    device_add(&ncr53c810_onboard_pci_device);
+    //device_add_params(&dec_tulip_21040_device, (void*)(3 | (1 << 31)));
+
+    return ret;
+}
 
 int
 machine_at_ps440_init(const machine_t *model)
@@ -90,12 +134,12 @@ machine_at_ps440_init(const machine_t *model)
 
     pci_init(PCI_CONFIG_TYPE_1);
     pci_register_slot(0x0F, PCI_CARD_NORTHBRIDGE, 0, 0, 0, 0);
-    pci_register_slot(0, PCI_CARD_SOUTHBRIDGE, 0, 0, 0, 4);
-    pci_register_slot(1, PCI_CARD_SCSI, 1, 2, 3, 4);
-    pci_register_slot(2, PCI_CARD_VIDEO, 1, 2, 3, 4);
-    pci_register_slot(3, PCI_CARD_NETWORK, 1, 2, 3, 4);
-    pci_register_slot(4, PCI_CARD_NORMAL, 1, 2, 3, 4);
+    pci_register_slot(1, PCI_CARD_SOUTHBRIDGE, 0, 0, 0, 4);
+    pci_register_slot(2, PCI_CARD_SCSI, 1, 2, 3, 4);
+    pci_register_slot(3, PCI_CARD_VIDEO, 1, 2, 3, 4);
+    pci_register_slot(4, PCI_CARD_NETWORK, 1, 2, 3, 4);
     pci_register_slot(5, PCI_CARD_NORMAL, 1, 2, 3, 4);
+    pci_register_slot(6, PCI_CARD_NORMAL, 1, 2, 3, 4);
     device_add(&sio_zb_device);
 
     device_add(&amd_flash_29f040a_device);

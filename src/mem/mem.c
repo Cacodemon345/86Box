@@ -685,7 +685,8 @@ static inline uint32_t raven_pci_io_config(uint32_t addr)
             break;
         }
     }
-    return (addr & 0x7ff) |  (i << 11);
+    pclog("PCI direct config I/O: 0x%x\n", (addr & 0x7ff) | (i << 11));
+    return (addr & 0x7ff) | (i << 11);
 }
 
 uint32_t
@@ -729,6 +730,9 @@ read_mem_from_bus(uint32_t addr, int size)
         case 0x40000000 ... 0x7effffff:
         {
             addr &= 0x3FFFFFFF;
+            if ((addr & 0xF0000) == 0xA0000) {
+                pclog("VGA access memory read\n");
+            }
             switch (size)
             {
                 case 1:
@@ -790,6 +794,9 @@ write_mem_to_bus(uint32_t addr, uint32_t val, int size)
         case 0x40000000 ... 0x7effffff:
         {
             addr &= 0x3FFFFFFF;
+            if ((addr & 0xF0000) == 0xA0000) {
+                pclog("VGA access memory\n");
+            }
             switch (size)
             {
                 case 1:

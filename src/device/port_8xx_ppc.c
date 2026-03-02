@@ -29,6 +29,9 @@ static uint32_t ram_sockets_end_addr[8];
 
 void port_8xx_write(uint16_t port, uint8_t val, void *priv)
 {
+    if (machines[machine].init == machine_at_motorola_ultra_init) {
+        return;
+    }
     switch (port) {
         case 0x92:
             little_endian_mem = val & 0x2;
@@ -67,6 +70,14 @@ void port_8xx_write(uint16_t port, uint8_t val, void *priv)
 
 uint8_t port_8xx_read(uint16_t port, void *priv)
 {
+    if (machines[machine].init == machine_at_motorola_ultra_init) {
+        switch (port){
+            case 0x800:
+                return 0x40;
+            default:
+                return 0xFF;
+        }
+    }
     switch (port) {
         default:
             return 0xFF;

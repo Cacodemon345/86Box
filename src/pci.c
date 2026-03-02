@@ -96,6 +96,7 @@ static uint32_t    pci_enable = 0x00000000;
 
 static void        pci_reset_regs(void);
 
+#define ENABLE_PCI_LOG 1
 #ifdef ENABLE_PCI_LOG
 int pci_do_log = ENABLE_PCI_LOG;
 
@@ -352,7 +353,7 @@ pci_reg_write(uint16_t port, uint8_t val)
         if (pci_cards[slot].write)
             pci_cards[slot].write(pci_func, pci_index | (port & 0x03), pci_access_len, val, pci_cards[slot].priv);
     }
-    pci_log("PCI: [WB] Mechanism #%i, slot %02X, %s card %02X:%02X, function %02X, index %02X, length %I = %02X\n",
+    pci_log("PCI: [WB] Mechanism #%i, slot %02X, %s card %02X:%02X, function %02X, index %02X, length %d = %02X\n",
             (port >= 0xc000) ? 2 : 1, slot,
             (slot == PCI_CARD_INVALID) ? "non-existent" : (pci_cards[slot].write ? "used" : "unused"),
             pci_card, pci_bus, pci_func, pci_index | (port & 0x03), pci_access_len, val);
