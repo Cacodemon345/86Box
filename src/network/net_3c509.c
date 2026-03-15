@@ -1083,7 +1083,7 @@ void* pnp_3c509b_init(const device_t* info)
     *(pnp_conf++) = 0x9e;       /* irq 8-15 */
     *(pnp_conf++) = 0x01;
 
-    *(pnp_conf++) = 0x78;
+    *(pnp_conf++) = 0x79;
 
     /* Calculate the 3Com EEPROM Checksums */    
     for (i = 0x00, j = 0x0000, k = 0x0000; i < 0x0f; i++) {
