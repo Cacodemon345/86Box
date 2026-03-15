@@ -14,6 +14,7 @@
  *          Copyright 2016-2018 Miran Grca.
  *          Copyright 2021 RichardG.
  */
+//#define ENABLE_ISAPNP_LOG 1
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>

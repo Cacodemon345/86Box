@@ -85,6 +85,7 @@ static const NETWORK_CARD net_cards[] = {
     /* ISA */
     { &threec501_device           },
     { &threec503_device           },
+    { &tcm509_device              },
     { &ne1000_compat_device       },
     { &ne2000_compat_8bit_device  },
     { &ne1000_device              },
