@@ -1137,7 +1137,7 @@ void* pnp_3c509b_init(const device_t* info)
     //isa_pnp_config_checksum((uint8_t*)&d->eeprom[0x18], pnp_conf, &pnp_size);
     {
         FILE* f = fopen("pnp.rom", "wb");
-        fwrite(&d->eeprom[0x18], pnp_size, 1, f);
+        fwrite(&d->eeprom[0x18], pnp_size + 1, 1, f);
         fclose(f);
     }
     d->dev = isapnp_add_card(pnp_config, pnp_size, tcm509_activate, NULL, NULL, NULL, d);
