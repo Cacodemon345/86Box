@@ -945,6 +945,8 @@ static void tcm509_activate(uint8_t ld, isapnp_device_config_t *config, void *pr
 
     dev->base_address = 0;
     dev->irq     = 0;
+    dev->res_config &= ~0xf000;
+    dev->addr_config &= ~0x001f;
     if (config->activate) {
         dev->base_address = config->io[0].base;
         if (dev->base_address != ISAPNP_IO_DISABLED)
@@ -952,6 +954,8 @@ static void tcm509_activate(uint8_t ld, isapnp_device_config_t *config, void *pr
 
         dev->irq    = config->irq[0].irq;
 
+        dev->res_config |= dev->irq << 12;
+        dev->addr_config |= (dev->base_address - 0x200)>>4;
         dev->eeprom[0x08] = dev->base_address;
         dev->eeprom[0x09] = dev->irq << 12;
     }
