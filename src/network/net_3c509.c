@@ -1146,6 +1146,8 @@ void* pnp_3c509b_init(const device_t* info)
     }
     d->dev = isapnp_add_card(pnp_config, pnp_size, tcm509_activate, NULL, NULL, NULL, d);
 
+    tcm509_reset(d);
+
     return d;
 }
 
