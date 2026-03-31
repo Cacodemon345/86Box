@@ -219,6 +219,7 @@ int is_k5;
 int is_k6;
 int is_p6;
 int is_cxsmm;
+int is_cx6x86;
 int hasfpu;
 
 int timing_rr;
@@ -284,6 +285,7 @@ uint8_t ccr4;
 uint8_t ccr5;
 uint8_t ccr6;
 uint8_t ccr7;
+uint8_t cxpmr;
 
 uint8_t reg_30 = 0x00;
 uint8_t arr[24] = { 0 };
@@ -549,8 +551,9 @@ cpu_set(void)
     is_k5      = !strcmp(cpu_f->manufacturer, "AMD") && (cpu_s->cpu_type > CPU_ENH_Am486DX) && (cpu_s->cpu_type < CPU_K6);
     is_k6      = (cpu_s->cpu_type >= CPU_K6) && !strcmp(cpu_f->manufacturer, "AMD");
     /* The Samuel 2 datasheet claims it's Celeron-compatible. */
-    is_p6    = (cpu_isintel && (cpu_s->cpu_type >= CPU_PENTIUMPRO)) || !strcmp(cpu_f->manufacturer, "VIA");
-    is_cxsmm = (!strcmp(cpu_f->manufacturer, "Cyrix") || !strcmp(cpu_f->manufacturer, "ST")) && (cpu_s->cpu_type >= CPU_Cx486S);
+    is_p6     = (cpu_isintel && (cpu_s->cpu_type >= CPU_PENTIUMPRO)) || !strcmp(cpu_f->manufacturer, "VIA");
+    is_cxsmm  = (!strcmp(cpu_f->manufacturer, "Cyrix") || !strcmp(cpu_f->manufacturer, "ST")) && (cpu_s->cpu_type >= CPU_Cx486S);
+    is_cx6x86 = (cpu_s->cpu_type >= CPU_Cx6x86) && (cpu_s->cpu_type <= CPU_Cx6x86L);
 
     cpu_isintel = cpu_isintel || !strcmp(cpu_f->manufacturer, "AMD");
 
@@ -4285,7 +4288,7 @@ cpu_write(uint16_t addr, uint8_t val, UNUSED(void *priv))
         cyrix_addr = val;
     else if (addr < 0xf1)  switch (cyrix_addr) {
         default:
-            if ((cyrix_addr >= 0xc0) && (cyrix_addr != 0xff))
+            if ((cyrix_addr >= 0xc0) && (cyrix_addr != 0xff) && (cyrix_addr != 0xf2))
                 fatal("Writing unimplemented Cyrix register %02X\n", cyrix_addr);
             break;
 
@@ -4379,6 +4382,10 @@ cpu_write(uint16_t addr, uint8_t val, UNUSED(void *priv))
         case 0xeb: /* CCR7 */
             ccr7 = val & 5;
             break;
+        case 0xf0: /* PMR (Cx5x86) */
+            if (cpu_s->cpu_type == CPU_Cx5x86)
+                cxpmr = val;
+            break;
     }
 }
 
@@ -4444,6 +4451,9 @@ cpu_read(uint16_t addr, UNUSED(void *priv))
             break;
         case 0xeb:
             ret = ccr7;
+            break;
+        case 0xf0: /* PMR (Cx5x86) */
+            ret = cxpmr;
             break;
         case 0xfe:
             ret = cpu_s->cyrix_id & 0xff;
