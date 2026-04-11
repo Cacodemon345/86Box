@@ -271,6 +271,55 @@ ROP_POP_SEG(FS, cpu_state.seg_fs)
 ROP_POP_SEG(GS, cpu_state.seg_gs)
 // clang-format on
 
+/*
+ * ENTER imm16, imm8 — only handle nesting level 0 (the common case).
+ * Level 0: push BP, BP = SP, SP -= imm16.
+ * Other levels fall back to interpreter.
+ */
+uint32_t
+ropENTER_w(codeblock_t *block, ir_data_t *ir, UNUSED(uint8_t opcode), UNUSED(uint32_t fetchdat), UNUSED(uint32_t op_32), uint32_t op_pc)
+{
+    uint16_t offset = fastreadw(cs + op_pc);
+    uint8_t  level  = fastreadb(cs + op_pc + 2);
+    int      sp_reg;
+
+    if (level != 0)
+        return 0;
+
+    uop_MOV_IMM(ir, IREG_oldpc, cpu_state.oldpc);
+    sp_reg = LOAD_SP_WITH_OFFSET(ir, -2);
+    uop_MEM_STORE_REG(ir, IREG_SS_base, sp_reg, IREG_BP);
+    SUB_SP(ir, 2);
+    uop_MOV(ir, IREG_BP, IREG_SP);
+    SUB_SP(ir, offset);
+
+    codegen_mark_code_present(block, cs + op_pc, 3);
+    return op_pc + 3;
+}
+uint32_t
+ropENTER_l(codeblock_t *block, ir_data_t *ir, UNUSED(uint8_t opcode), UNUSED(uint32_t fetchdat), UNUSED(uint32_t op_32), uint32_t op_pc)
+{
+    uint16_t offset = fastreadw(cs + op_pc);
+    uint8_t  level  = fastreadb(cs + op_pc + 2);
+    int      sp_reg;
+
+    if (level != 0)
+        return 0;
+
+    uop_MOV_IMM(ir, IREG_oldpc, cpu_state.oldpc);
+    sp_reg = LOAD_SP_WITH_OFFSET(ir, -4);
+    uop_MEM_STORE_REG(ir, IREG_SS_base, sp_reg, IREG_EBP);
+    SUB_SP(ir, 4);
+    if (stack32)
+        uop_MOV(ir, IREG_EBP, IREG_ESP);
+    else
+        uop_MOVZX(ir, IREG_EBP, IREG_SP);
+    SUB_SP(ir, offset);
+
+    codegen_mark_code_present(block, cs + op_pc, 3);
+    return op_pc + 3;
+}
+
 uint32_t
 ropLEAVE_16(UNUSED(codeblock_t *block), ir_data_t *ir, UNUSED(uint8_t opcode), UNUSED(uint32_t fetchdat), UNUSED(uint32_t op_32), uint32_t op_pc)
 {
