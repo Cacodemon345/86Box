@@ -86,7 +86,7 @@ codegen_ir_compile(ir_data_t *ir, codeblock_t *block)
 
     codegen_reg_mark_as_required();
     codegen_reg_process_dead_list(ir);
-    block_write_data = codeblock_allocator_get_ptr(block->head_mem_block);
+    block_write_data = codeblock_allocator_get_ptr(BLOCK_COLD(block)->head_mem_block);
     block_pos        = 0;
     codegen_backend_prologue(block);
 

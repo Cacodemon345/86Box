@@ -286,7 +286,8 @@ codegen_backend_init(void)
     codeblock_t *block;
 
     codeblock      = calloc(BLOCK_SIZE, sizeof(codeblock_t));
-    codeblock_hash = calloc(HASH_SIZE, sizeof(codeblock_t *));
+    codeblock_cold = calloc(BLOCK_SIZE, sizeof(codeblock_cold_t));
+    codeblock_hash = calloc(HASH_SIZE, sizeof(uint16_t));
 
     for (int c = 0; c < BLOCK_SIZE; c++) {
         codeblock[c].valid = 0;
@@ -295,9 +296,9 @@ codegen_backend_init(void)
     block_current         = 0;
     block_pos             = 0;
     block                 = &codeblock[block_current];
-    block->head_mem_block = codegen_allocator_allocate(NULL, block_current);
-    block->data           = codeblock_allocator_get_ptr(block->head_mem_block);
-    block_write_data      = block->data;
+    BLOCK_COLD(block)->head_mem_block = codegen_allocator_allocate(NULL, block_current);
+    block->data                       = codeblock_allocator_get_ptr(BLOCK_COLD(block)->head_mem_block);
+    block_write_data                  = block->data;
     build_loadstore_routines(block);
 
     codegen_fp_round = &block_write_data[block_pos];
@@ -322,7 +323,7 @@ codegen_backend_init(void)
 
     block_write_data = NULL;
 
-    codegen_allocator_clean_blocks(block->head_mem_block);
+    codegen_allocator_clean_blocks(BLOCK_COLD(block)->head_mem_block);
 
     asm("mrs %0, fpcr\n"
         : "=r"(cpu_state.old_fp_control));
@@ -371,7 +372,7 @@ codegen_backend_epilogue(codeblock_t *block)
     host_arm64_LDP_POSTIDX_X(block, REG_X29, REG_X30, REG_XSP, 16);
     host_arm64_RET(block, REG_X30);
 
-    codegen_allocator_clean_blocks(block->head_mem_block);
+    codegen_allocator_clean_blocks(BLOCK_COLD(block)->head_mem_block);
 }
 
 #endif

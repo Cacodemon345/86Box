@@ -294,16 +294,17 @@ codegen_backend_init(void)
     int          c;
 
     codeblock      = calloc(BLOCK_SIZE, sizeof(codeblock_t));
-    codeblock_hash = calloc(HASH_SIZE, sizeof(codeblock_t *));
+    codeblock_cold = calloc(BLOCK_SIZE, sizeof(codeblock_cold_t));
+    codeblock_hash = calloc(HASH_SIZE, sizeof(uint16_t));
 
     for (c = 0; c < BLOCK_SIZE; c++)
         codeblock[c].valid = 0;
 
-    block_current                           = 0;
-    block_pos                               = 0;
-    block                                   = &codeblock[block_current];
-    codeblock[block_current].head_mem_block = codegen_allocator_allocate(NULL, block_current);
-    codeblock[block_current].data           = codeblock_allocator_get_ptr(codeblock[block_current].head_mem_block);
+    block_current                                    = 0;
+    block_pos                                        = 0;
+    block                                            = &codeblock[block_current];
+    BLOCK_COLD_NR(block_current)->head_mem_block = codegen_allocator_allocate(NULL, block_current);
+    codeblock[block_current].data                    = codeblock_allocator_get_ptr(BLOCK_COLD_NR(block_current)->head_mem_block);
     block_write_data                        = codeblock[block_current].data;
     build_loadstore_routines(&codeblock[block_current]);
 

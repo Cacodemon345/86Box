@@ -56,8 +56,9 @@ codegen_set_loop_start(ir_data_t *ir, int first_instruction)
 int has_ea;
 extern uint32_t codegen_endpc;
 
-codeblock_t *codeblock;
-uint16_t    *codeblock_hash;
+codeblock_t      *codeblock;
+codeblock_cold_t *codeblock_cold;
+uint16_t         *codeblock_hash;
 
 void (*codegen_timing_start)(void);
 void (*codegen_timing_prefix)(uint8_t prefix, uint32_t fetchdat);
