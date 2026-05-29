@@ -30,6 +30,8 @@
 
 #include "evdev_mouse.hpp"
 
+#include <cmath>
+
 #include <atomic>
 #include <stdexcept>
 
@@ -124,7 +126,7 @@ RendererStack::RendererStack(QWidget *parent, int monitor_index)
         frameRateTimer->setSingleShot(false);
         frameRateTimer->setInterval(1000);
         connect(frameRateTimer, &QTimer::timeout, [this] {
-            this->setWindowTitle(QObject::tr("86Box Monitor #%1").arg(m_monitor_index + 1) + QString(" - ") + tr("%1 Hz").arg(QString::number(monitors[m_monitor_index].mon_actualrenderedframes.load()) + (monitors[m_monitor_index].mon_interlace ? "i" : "")));
+            this->setWindowTitle(QObject::tr("86Box Monitor #%1").arg(m_monitor_index + 1) + QString(" - ") + (monitors[m_monitor_index].mon_dpms ? tr("Monitor in sleep mode") : tr("%1 Hz").arg(QString::number(monitors[m_monitor_index].mon_actualrenderedframes.load()) + (monitors[m_monitor_index].mon_interlace ? "i" : ""))));
         });
         frameRateTimer->start(1000);
     }
@@ -274,11 +276,13 @@ RendererStack::wheelEvent(QWheelEvent *event)
     }
 
 #if !defined(Q_OS_WINDOWS) && !defined(__APPLE__)
-    double numSteps  = (double) event->angleDelta().y() / 120.0;
-    double numStepsW = (double) event->angleDelta().x() / 120.0;
-
-    mouse_set_z((int) numSteps);
-    mouse_set_w((int) numStepsW);
+    if (event->inverted()) {
+        mouse_set_z(-((short) event->angleDelta().y()));
+        mouse_set_w(-((short) event->angleDelta().x()));
+    } else {
+        mouse_set_z((short) event->angleDelta().y());
+        mouse_set_w((short) event->angleDelta().x());
+    }
 #endif
     event->accept();
 }

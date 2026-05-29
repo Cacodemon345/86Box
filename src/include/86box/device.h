@@ -106,8 +106,11 @@ enum {
 
     DEVICE_KBC        = 0x800000,   /* is a keyboard controller */
     DEVICE_SOFTRESET  = 0x1000000,  /* requires to be reset on soft reset */
+    DEVICE_HOTPLUG_IN = 0x2000000,  /* can be safely added without a hard reset */
+    DEVICE_HOTPLUG_OUT= 0x4000000,  /* can be safely closed without a hard reset */
+    DEVICE_HOTPLUG    = DEVICE_HOTPLUG_IN | DEVICE_HOTPLUG_OUT,
 
-    DEVICE_BIOS_ALIAS = 0x2000000,  /* use only BIOS names for aliases */
+    DEVICE_BIOS_ALIAS = 0x8000000,  /* use only BIOS names for aliases */
 
     DEVICE_ONBOARD    = 0x40000000, /* is on-board */
     DEVICE_PIT        = 0x80000000, /* device is a PIT */
@@ -243,6 +246,7 @@ extern void        device_set_config_hex16(const char *str, int val);
 extern void        device_set_config_hex20(const char *str, int val);
 extern void        device_set_config_mac(const char *str, int val);
 extern const char *device_get_config_string(const char *name);
+extern void        device_set_config_string(const char *str, const char *val);
 extern int         device_get_instance(void);
 #define device_get_config_bios device_get_config_string
 

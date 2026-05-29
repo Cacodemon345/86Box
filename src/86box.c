@@ -74,7 +74,6 @@
 #include <86box/isartc.h>
 #include <86box/lpt.h>
 #include <86box/serial.h>
-#include <86box/serial_passthrough.h>
 #include <86box/keyboard.h>
 #include <86box/mouse.h>
 #include <86box/gameport.h>
@@ -112,13 +111,6 @@
 #include <86box/nv/vid_nv_rivatimer.h>
 #include <86box/vfio.h>
 
-// Disable c99-designator to avoid the warnings about int ng
-#ifdef __clang__
-#    if __has_warning("-Wunused-but-set-variable")
-#        pragma clang diagnostic ignored "-Wunused-but-set-variable"
-#    endif
-#endif
-
 /* Stuff that used to be globally declared in plat.h but is now extern there
    and declared here instead. */
 int          dopause = 1;  /* system is paused */
@@ -135,9 +127,6 @@ int dump_on_exit        = 0; /* (O) dump regs on exit */
 int start_in_fullscreen = 0; /* (O) start in fullscreen */
 #ifdef _WIN32
 int force_debug = 0; /* (O) force debug output */
-#endif
-#ifdef USE_WX
-int video_fps = RENDER_FPS; /* (O) render speed in fps */
 #endif
 int settings_only     = 0; /* (O) show only the settings dialog */
 int confirm_exit_cmdl = 1; /* (O) do not ask for confirmation on quit if set to 0 */
@@ -181,8 +170,6 @@ int      force_43                               = 0;              /* (C) video *
 int      video_filter_method                    = 1;              /* (C) video */
 int      video_vsync                            = 0;              /* (C) video */
 int      video_framerate                        = -1;             /* (C) video */
-bool     serial_passthrough_enabled[SERIAL_MAX - 1] = { 0, 0, 0, 0, 0, 0, 0 }; /* (C) activation and kind of
-                                                                                  pass-through for serial ports */
 int      bugger_enabled                         = 0;              /* (C) enable ISAbugger */
 int      novell_keycard_enabled                 = 0;              /* (C) enable Novell NetWare 2.x key card emulation. */
 int      postcard_enabled                       = 0;              /* (C) enable POST card */
@@ -335,6 +322,7 @@ extern int writelnum;
 /* emulator % */
 int fps;
 int framecount;
+static uint32_t fps_sample_elapsed_ms = 1000;
 
 extern int CPUID;
 extern int output;
@@ -347,6 +335,7 @@ char  usr_path[1024]; /* path (dir) of user data */
 char  cfg_path[1024]; /* full path of config file */
 char  global_cfg_path[1024]; /* full path of config file */
 FILE *stdlog = NULL;  /* file to log output to */
+void (*pclog_hook)(const char *) = NULL; /* optional UI log hook */
 #if 0
 int   scrnsz_x = SCREEN_RES_X; /* current screen size, X */
 int   scrnsz_y = SCREEN_RES_Y; /* current screen size, Y */
@@ -364,7 +353,7 @@ int efscrnsz_y = SCREEN_RES_Y;
 
 __thread int is_cpu_thread = 0;
 
-static wchar_t mouse_msg[3][200];
+static char mouse_msg[3][200];
 
 static ATOMIC_INT do_pause_ack = 0;
 static ATOMIC_INT pause_ack = 0;
@@ -411,9 +400,9 @@ void
 pclog_ex(UNUSED(const char *fmt), UNUSED(va_list ap))
 {
 #ifndef RELEASE_BUILD
-    char temp[LOG_SIZE_BUFFER];
+    char *temp = calloc(1, LOG_SIZE_BUFFER);
 
-    if (strcmp(fmt, "") == 0)
+    if (!fmt || !fmt[0])
         return;
 
     pclog_ensure_stdlog_open();
@@ -427,9 +416,13 @@ pclog_ex(UNUSED(const char *fmt), UNUSED(va_list ap))
         seen = 0;
         strcpy(buff, temp);
         fprintf(stdlog, "%s", temp);
+        if (pclog_hook)
+            pclog_hook(temp);
     }
 
     fflush(stdlog);
+
+    free(temp);
 #endif
 }
 
@@ -474,6 +467,8 @@ always_log(const char *fmt, ...)
 
     vsprintf(temp, fmt, ap);
     fprintf(stdlog, "%s", temp);
+    if (pclog_hook)
+        pclog_hook(temp);
     fflush(stdlog);
     va_end(ap);
 }
@@ -482,7 +477,7 @@ always_log(const char *fmt, ...)
 void
 fatal(const char *fmt, ...)
 {
-    char    temp[LOG_SIZE_BUFFER];
+    char *temp = calloc(1, LOG_SIZE_BUFFER);
     va_list ap;
     char   *sp;
 
@@ -498,7 +493,13 @@ fatal(const char *fmt, ...)
     }
 
     vsprintf(temp, fmt, ap);
-    fprintf(stdlog, "%s", temp);
+
+    /* Make sure the message does not have a trailing newline. */
+    if ((sp = strchr(temp, '\n')) != NULL)
+        *sp = '\0';
+
+    /* Re-add the newline into the log. */
+    fprintf(stdlog, "%s\n", temp);
     fflush(stdlog);
     va_end(ap);
 
@@ -508,19 +509,16 @@ fatal(const char *fmt, ...)
     dumpregs(1);
 #endif
 
-    /* Make sure the message does not have a trailing newline. */
-    if ((sp = strchr(temp, '\n')) != NULL)
-        *sp = '\0';
-
     do_pause(2);
 
-    ui_msgbox(MBX_ERROR | MBX_FATAL | MBX_ANSI, temp);
+    ui_msgbox(MBX_ERROR | MBX_FATAL, temp);
 
     /* Cleanly terminate all of the emulator's components so as
        to avoid things like threads getting stuck. */
     do_stop();
 
     fflush(stdlog);
+    free(temp);
 
     exit(-1);
 }
@@ -541,7 +539,13 @@ fatal_ex(const char *fmt, va_list ap)
     }
 
     vsprintf(temp, fmt, ap);
-    fprintf(stdlog, "%s", temp);
+
+    /* Make sure the message does not have a trailing newline. */
+    if ((sp = strchr(temp, '\n')) != NULL)
+        *sp = '\0';
+
+    /* Re-add the newline into the log. */
+    fprintf(stdlog, "%s\n", temp);
     fflush(stdlog);
 
     nvr_save();
@@ -550,13 +554,9 @@ fatal_ex(const char *fmt, va_list ap)
     dumpregs(1);
 #endif
 
-    /* Make sure the message does not have a trailing newline. */
-    if ((sp = strchr(temp, '\n')) != NULL)
-        *sp = '\0';
-
     do_pause(2);
 
-    ui_msgbox(MBX_ERROR | MBX_FATAL | MBX_ANSI, temp);
+    ui_msgbox(MBX_ERROR | MBX_FATAL, temp);
 
     /* Cleanly terminate all of the emulator's components so as
        to avoid things like threads getting stuck. */
@@ -569,7 +569,7 @@ fatal_ex(const char *fmt, va_list ap)
 void
 warning(const char *fmt, ...)
 {
-    char    temp[LOG_SIZE_BUFFER];
+    char *temp = calloc(1, LOG_SIZE_BUFFER);
     va_list ap;
     char   *sp;
 
@@ -585,19 +585,24 @@ warning(const char *fmt, ...)
     }
 
     vsprintf(temp, fmt, ap);
-    fprintf(stdlog, "%s", temp);
-    fflush(stdlog);
-    va_end(ap);
 
     /* Make sure the message does not have a trailing newline. */
     if ((sp = strchr(temp, '\n')) != NULL)
         *sp = '\0';
 
+    /* Re-add the newline into the log. */
+    fprintf(stdlog, "%s\n", temp);
+    if (pclog_hook)
+        pclog_hook(temp);
+    fflush(stdlog);
+    va_end(ap);
+
     do_pause(2);
 
-    ui_msgbox(MBX_ERROR | MBX_ANSI, temp);
+    ui_msgbox(MBX_ERROR, temp);
 
     fflush(stdlog);
+    free(temp);
 
     do_pause(0);
 }
@@ -605,7 +610,7 @@ warning(const char *fmt, ...)
 void
 warning_ex(const char *fmt, va_list ap)
 {
-    char  temp[LOG_SIZE_BUFFER];
+    char *temp = calloc(1, LOG_SIZE_BUFFER);
     char *sp;
 
     if (stdlog == NULL) {
@@ -618,18 +623,22 @@ warning_ex(const char *fmt, va_list ap)
     }
 
     vsprintf(temp, fmt, ap);
-    fprintf(stdlog, "%s", temp);
-    fflush(stdlog);
 
     /* Make sure the message does not have a trailing newline. */
     if ((sp = strchr(temp, '\n')) != NULL)
         *sp = '\0';
 
+
+    /* Re-add the newline into the log. */
+    fprintf(stdlog, "%s\n", temp);
+    fflush(stdlog);
+
     do_pause(2);
 
-    ui_msgbox(MBX_ERROR | MBX_ANSI, temp);
+    ui_msgbox(MBX_ERROR, temp);
 
     fflush(stdlog);
+    free(temp);
 
     do_pause(0);
 }
@@ -676,6 +685,21 @@ delete_nvr_file(uint8_t flash)
     free(fn);
     fn = NULL;
 }
+
+#ifdef _WIN32
+void
+pc_debug_console(void)
+{
+    if (!force_debug && AllocConsole()) {
+        force_debug = 1;
+        freopen("CONIN$", "r", stdin);
+        freopen("CONOUT$", "w", stdout);
+        freopen("CONOUT$", "w", stderr);
+    }
+    if (force_debug && vm_name[0])
+        SetConsoleTitle(vm_name);
+}
+#endif
 
 extern void  device_find_all_descs(void);
 
@@ -737,7 +761,7 @@ pc_show_usage(void)
             "\nA config file can be specified. If none is, the default file will be used.\n");
 
 #ifdef _WIN32
-    ui_msgbox(MBX_ANSI | MBX_INFO, p);
+    ui_msgbox(MBX_INFO, p);
 #else
     always_log("%s", p);
 #endif
@@ -768,9 +792,6 @@ pc_init(int argc, char *argv[])
     time_t           now;
     int              c;
     int              lvmp = 0;
-#ifdef ENABLE_NG
-    int ng = 0;
-#endif
 #ifdef _WIN32
     uint32_t *uid;
     uint32_t *shwnd;
@@ -845,7 +866,7 @@ usage:
             lvmp = 1;
 #ifdef _WIN32
         } else if (!strcasecmp(argv[c], "--debug") || !strcasecmp(argv[c], "-D")) {
-            force_debug = 1;
+            pc_debug_console();
 #endif
 #ifndef USE_SDL_UI
         } else if (!strcasecmp(argv[c], "--vmmpath") ||
@@ -1196,11 +1217,17 @@ usage:
      * If no --vmname parameter specified we'll use the
      *   working directory name as the VM's name.
      */
-    if (strlen(vm_name) == 0) {
+    if (!vm_name[0]) {
         char ltemp[1024] = { '\0' };
         path_get_dirname(ltemp, usr_path);
         strcpy(vm_name, path_get_filename(ltemp));
     }
+
+#ifdef _WIN32
+    /* Update debug console title with the VM name. */
+    if (force_debug)
+        pc_debug_console();
+#endif
 
     /*
      * This is where we start outputting to the log file,
@@ -1223,8 +1250,8 @@ usage:
     else
         strcpy(temp, "unknown");
 
-    pclog("#\n# %ls v%ls logfile, created %s\n#\n",
-          EMU_NAME_W, EMU_VERSION_FULL_W, temp);
+    pclog("#\n# %s v%s logfile, created %s\n#\n",
+          EMU_NAME, EMU_VERSION_FULL, temp);
 
     if (portable_mode) {
         pclog("# Portable mode enabled.\n");
@@ -1252,7 +1279,7 @@ usage:
         start_vmm = 0;
 #ifdef __APPLE__
         if (!strncmp(exe_path, "/private/var/folders/", 21)) {
-            ui_msgbox_header(MBX_FATAL, L"App Translocation", EMU_NAME_W L" cannot determine the emulated machine's location due to a macOS security feature. Please move the " EMU_NAME_W L" app to another folder (not /Applications), or make a copy of it and open that copy instead.");
+            ui_msgbox_header(MBX_FATAL, "App Translocation", EMU_NAME " cannot determine the emulated machine's location due to a macOS security feature. Please move the " EMU_NAME " app to another folder (not /Applications), or make a copy of it and open that copy instead.");
             return 0;
         }
 #endif
@@ -1406,13 +1433,13 @@ pc_init_roms(void)
 int
 pc_init_modules(void)
 {
-    int     c;
-    wchar_t temp[512];
-    char    tempc[512];
+    int  c;
+    char temp[512];
+    char tempc[512];
 
     /* Load the ROMs for the selected machine. */
     if (!machine_available(machine)) {
-        swprintf(temp, sizeof_w(temp), plat_get_string(STRING_HW_NOT_AVAILABLE_MACHINE), machine_getname(machine));
+        snprintf(temp, sizeof(temp), plat_get_string(STRING_HW_NOT_AVAILABLE_MACHINE), machine_getname(machine));
         c       = 0;
         machine = -1;
         while (machine_get_internal_name_ex(c) != NULL) {
@@ -1434,7 +1461,7 @@ pc_init_modules(void)
     if (!video_card_available(gfxcard[0])) {
         memset(tempc, 0, sizeof(tempc));
         device_get_name(video_card_getdevice(gfxcard[0]), 0, tempc);
-        swprintf(temp, sizeof_w(temp), plat_get_string(STRING_HW_NOT_AVAILABLE_VIDEO), tempc);
+        snprintf(temp, sizeof(temp), plat_get_string(STRING_HW_NOT_AVAILABLE_VIDEO), tempc);
         c = 0;
         while (video_get_internal_name(c) != NULL) {
             gfxcard[0] = -1;
@@ -1455,9 +1482,9 @@ pc_init_modules(void)
     // TODO
     for (uint8_t i = 1; i < GFXCARD_MAX; i ++) {
         if (!video_card_available(gfxcard[i])) {
-            char tempc[512] = { 0 };
+            memset(tempc, 0, sizeof(tempc));
             device_get_name(video_card_getdevice(gfxcard[i]), 0, tempc);
-            swprintf(temp, sizeof_w(temp), plat_get_string(STRING_HW_NOT_AVAILABLE_VIDEO2), tempc);
+            snprintf(temp, sizeof_w(temp), plat_get_string(STRING_HW_NOT_AVAILABLE_VIDEO2), tempc);
             ui_msgbox_header(MBX_INFO, plat_get_string(STRING_HW_NOT_AVAILABLE_TITLE), temp);
             gfxcard[i] = 0;
         }
@@ -1637,7 +1664,8 @@ pc_reset_hard_close(void)
     /* Turn off timer processing to avoid potential segmentation faults. */
     timer_close();
 
-    lpt_devices_close();
+    lpt_devices_close(0);
+    serial_devices_close(0);
 
     nvr_save();
     nvr_close();
@@ -1741,7 +1769,7 @@ pc_reset_hard_init(void)
     /* Reset and reconfigure the serial ports. */
     /* note: SLIP COM side has to be initialized before the network side */
     serial_standalone_init();
-    serial_passthrough_init();
+    serial_devices_init();
 
     /* Reset and reconfigure the Network Card layer. */
     network_reset();
@@ -1860,58 +1888,31 @@ void
 update_mouse_msg(void)
 {
 #ifdef USE_SDL_UI
-    wchar_t  wcpufamily[2048];
-    wchar_t  wcpu[2048];
-    wchar_t  wmachine[2048];
-    wchar_t *wcp;
-
-    mbstowcs(wmachine, machine_getname(machine), strlen(machine_getname(machine)) + 1);
+    char  cpufamily[128];
+    char *cp;
 
     if (!cpu_override)
-        mbstowcs(wcpufamily, cpu_f->name, strlen(cpu_f->name) + 1);
+        strncpy(cpufamily, cpu_f->name, sizeof(cpufamily) - 1);
     else
-        swprintf(wcpufamily, sizeof_w(wcpufamily), L"[U] %hs", cpu_f->name);
+        snprintf(cpufamily, sizeof(cpufamily), "[U] %s", cpu_f->name);
 
-    wcp = wcschr(wcpufamily, L'(');
-    if (wcp) /* remove parentheses */
-        *(wcp - 1) = L'\0';
-    mbstowcs(wcpu, cpu_s->name, strlen(cpu_s->name) + 1);
-    swprintf(mouse_msg[0], sizeof_w(mouse_msg[0]), L"%ls v%ls - %%i%%%% - %ls - %ls/%ls - %ls",
-             EMU_NAME_W, EMU_VERSION_FULL_W, wmachine, wcpufamily, wcpu,
+    cp = strchr(cpufamily, '(');
+    if (cp) /* remove parentheses */
+        *(cp - 1) = '\0';
+    snprintf(mouse_msg[0], sizeof(mouse_msg[0]), "%s v%s - %%i%%%% - %s - %s/%s - %s",
+             EMU_NAME, EMU_VERSION_FULL, machine_getname(machine), cpufamily, cpu_s->name,
              plat_get_string(STRING_MOUSE_CAPTURE));
-    swprintf(mouse_msg[1], sizeof_w(mouse_msg[1]), L"%ls v%ls - %%i%%%% - %ls - %ls/%ls - %ls",
-             EMU_NAME_W, EMU_VERSION_FULL_W, wmachine, wcpufamily, wcpu,
+    snprintf(mouse_msg[1], sizeof(mouse_msg[1]), "%s v%s - %%i%%%% - %s - %s/%s - %s",
+             EMU_NAME, EMU_VERSION_FULL, machine_getname(machine), cpufamily, cpu_s->name,
              (mouse_get_buttons() > 2) ? plat_get_string(STRING_MOUSE_RELEASE) : plat_get_string(STRING_MOUSE_RELEASE_MMB));
-    swprintf(mouse_msg[2], sizeof_w(mouse_msg[2]), L"%ls v%ls - %%i%%%% - %ls - %ls/%ls",
-             EMU_NAME_W, EMU_VERSION_FULL_W, wmachine, wcpufamily, wcpu);
+    snprintf(mouse_msg[2], sizeof(mouse_msg[2]), "%s v%s - %%i%%%% - %s - %s/%s",
+             EMU_NAME, EMU_VERSION_FULL, machine_getname(machine), cpufamily, cpu_s->name);
 #else
-#ifdef __APPLE__
-    /*
-     * On macOS, BSD swprintf fails (returns -1) when the format string
-     * or a %ls argument contains non-ASCII wide characters (e.g. the
-     * native key symbols ⌘ U+2318, ⌫ U+232B) and the C locale is
-     * active.  Store just the message suffixes here; the title update
-     * path in pc_render_monitor_dispatch() builds the full string
-     * without swprintf.
-     */
-    wcsncpy(mouse_msg[0], plat_get_string(STRING_MOUSE_CAPTURE), sizeof_w(mouse_msg[0]) - 1);
-    mouse_msg[0][sizeof_w(mouse_msg[0]) - 1] = L'\0';
-
-    {
-        wchar_t *rel = (mouse_get_buttons() > 2) ? plat_get_string(STRING_MOUSE_RELEASE)
-                                                  : plat_get_string(STRING_MOUSE_RELEASE_MMB);
-        wcsncpy(mouse_msg[1], rel, sizeof_w(mouse_msg[1]) - 1);
-        mouse_msg[1][sizeof_w(mouse_msg[1]) - 1] = L'\0';
-    }
-
-    mouse_msg[2][0] = L'\0';
-#else
-    swprintf(mouse_msg[0], sizeof_w(mouse_msg[0]), L"%%i%%%% - %ls",
+    snprintf(mouse_msg[0], sizeof(mouse_msg[0]), "%%i%%%% - %s",
              plat_get_string(STRING_MOUSE_CAPTURE));
-    swprintf(mouse_msg[1], sizeof_w(mouse_msg[1]), L"%%i%%%% - %ls",
+    snprintf(mouse_msg[1], sizeof(mouse_msg[1]), "%%i%%%% - %s",
              (mouse_get_buttons() > 2) ? plat_get_string(STRING_MOUSE_RELEASE) : plat_get_string(STRING_MOUSE_RELEASE_MMB));
-    wcsncpy(mouse_msg[2], L"%i%%", sizeof_w(mouse_msg[2]));
-#endif
+    strncpy(mouse_msg[2], "%i%%", sizeof(mouse_msg[2]));
 #endif
 }
 
@@ -1943,7 +1944,8 @@ pc_close(UNUSED(thread_t *ptr))
     /* Turn off timer processing to avoid potential segmentation faults. */
     timer_close();
 
-    lpt_devices_close();
+    lpt_devices_close(0);
+    serial_devices_close(0);
 
     for (uint8_t i = 0; i < FDD_NUM; i++)
         fdd_close(i);
@@ -1985,7 +1987,7 @@ pc_close(UNUSED(thread_t *ptr))
 static void
 _ui_window_title(void *s)
 {
-    ui_window_title((wchar_t *) s);
+    ui_window_title((char *) s);
     free(s);
 }
 #endif
@@ -2002,8 +2004,8 @@ ack_pause(void)
 void
 pc_run(void)
 {
-    int     mouse_msg_idx;
-    wchar_t temp[200];
+    int  mouse_msg_idx;
+    char temp[200];
 
     /* Trigger a hard reset if one is pending. */
     if (hard_reset_pending) {
@@ -2038,27 +2040,34 @@ pc_run(void)
     }
 
     if (title_update) {
+        int      speed_percent;
+        int      target_fps;
+        uint32_t elapsed_ms;
+        int64_t  numerator;
+
         mouse_msg_idx = ((mouse_type == MOUSE_TYPE_NONE) || (mouse_input_mode >= 1)) ? 2 : !!mouse_capture;
+        target_fps    = force_10ms ? 100 : 1000;
+        elapsed_ms    = fps_sample_elapsed_ms ? fps_sample_elapsed_ms : 1;
+
 #ifdef SCREENSHOT_MODE
         if (force_10ms)
             fps = ((fps + 2) / 5) * 5;
         else
             fps = ((fps + 20) / 50) * 50;
 #endif
-#ifdef __APPLE__
         /*
-         * mouse_msg[] stores suffixes only on macOS (see update_mouse_msg).
-         * Build the title without passing non-ASCII chars through swprintf.
+         * Use real sample duration for title speed percent so delayed timer
+         * callbacks do not create false dip/rebound spikes in speed reporting.
          */
-        swprintf(temp, sizeof_w(temp), L"%i%%", fps / (force_10ms ? 1 : 10));
-        if (mouse_msg[mouse_msg_idx][0]) {
-            wcsncat(temp, L" - ", sizeof_w(temp) - wcslen(temp) - 1);
-            wcsncat(temp, mouse_msg[mouse_msg_idx], sizeof_w(temp) - wcslen(temp) - 1);
-        }
+        numerator     = (int64_t) fps * 100000LL;
+        speed_percent = (int) ((numerator + ((int64_t) elapsed_ms * target_fps / 2)) /
+                               ((int64_t) elapsed_ms * target_fps));
+
+        snprintf(temp, sizeof(temp), mouse_msg[mouse_msg_idx], speed_percent);
+#ifdef __APPLE__
         /* Needed due to modifying the UI on the non-main thread is a big no-no. */
-        dispatch_async_f(dispatch_get_main_queue(), wcsdup((const wchar_t *) temp), _ui_window_title);
+        dispatch_async_f(dispatch_get_main_queue(), strdup((const char *) temp), _ui_window_title);
 #else
-        swprintf(temp, sizeof_w(temp), mouse_msg[mouse_msg_idx], fps / (force_10ms ? 1 : 10));
         ui_window_title(temp);
 #endif
         title_update = 0;
@@ -2069,6 +2078,14 @@ pc_run(void)
 void
 pc_onesec(void)
 {
+    static uint32_t last_sample_ms = 0;
+    uint32_t        now_ms         = plat_get_ticks();
+
+    fps_sample_elapsed_ms = last_sample_ms ? (now_ms - last_sample_ms) : 1000;
+    if (!fps_sample_elapsed_ms)
+        fps_sample_elapsed_ms = 1;
+    last_sample_ms = now_ms;
+
     fps        = framecount;
     framecount = 0;
 
@@ -2237,8 +2254,8 @@ do_pause(int p)
 // Helper to find an accelerator key and return it's index in acc_keys
 int FindAccelerator(const char *name) {
     for (int x = 0; x < NUM_ACCELS; x++) {
-        if(strcmp(acc_keys[x].name, name) == 0)
-            return(x);
+        if (!strcmp(acc_keys[x].name, name))
+            return x;
     }
 
     // No key was found

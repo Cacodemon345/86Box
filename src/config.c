@@ -68,7 +68,6 @@
 #include <86box/fdc_ext.h>
 #include <86box/gameport.h>
 #include <86box/keyboard.h>
-#include <86box/serial_passthrough.h>
 #include <86box/machine.h>
 #include <86box/mouse.h>
 #include <86box/thread.h>
@@ -421,7 +420,6 @@ static void
 load_machine(void)
 {
     ini_section_t cat = ini_find_section(config, "Machine");
-    ini_section_t migration_cat;
     const char   *p;
     const char   *migrate_from = NULL;
     int           c;
@@ -456,6 +454,7 @@ load_machine(void)
         { .old = "dellvenus", .new = "vs440fx", .new_bios = "dellvenus" },
         { .old = "gw2kvenus", .new = "vs440fx", .new_bios = "gw2kvenus" },
         { .old = "lgibmx7g", .new = "ms6119", .new_bios = "lgibmx7g" },
+        { .old = "apas3", .new = "vim863s", .new_bios = NULL },
         { 0 }
     };
 
@@ -467,10 +466,8 @@ load_machine(void)
                 machine = machine_get_machine_from_internal_name(machine_migrations[i].new);
                 if (machine != -1) {
                     migrate_from = p;
-                    if (machine_migrations[i].new_bios) {
-                        migration_cat = ini_find_or_create_section(config, machine_get_device(machine)->name);
-                        ini_section_set_string(migration_cat, "bios", machine_migrations[i].new_bios);
-                    }
+                    if (machine_migrations[i].new_bios)
+                        ini_set_string(config, machine_get_device(machine)->name, "bios", machine_migrations[i].new_bios);
                 }
                 break;
             }
@@ -663,7 +660,7 @@ load_video(void)
                 if (old != NULL) {
                     ini_section_delete_var(old, "bios_ver");
                     ini_section_delete_var(old, "memory");
-                    ini_delete_section_if_empty(config, "Tseng Labs ET4000AX (TC6058AF) (ISA)");
+                    ini_delete_section_if_empty(config, old);
                 }
             } else if (!strcmp(p, "tgkorvga") || !strcmp(p, "et4000k_tg286_isa") || !strcmp(p, "kasan16vga")) {
                 gfxcard[0] = video_get_video_from_internal_name("et4000ax");
@@ -683,7 +680,7 @@ load_video(void)
                 ini_section_set_int(new, "memory", mem);
                 if (old != NULL) {
                     ini_section_delete_var(old, "memory");
-                    ini_delete_section_if_empty(config, on);
+                    ini_delete_section_if_empty(config, old);
                 }
             } else {
                 gfxcard[0] = video_get_video_from_internal_name(p);
@@ -1135,26 +1132,60 @@ load_ports(void)
         sprintf(temp, "serial%d_enabled", c + 1);
         com_ports[c].enabled = !!ini_section_get_int(cat, temp, (c >= 2) ? 0 : 1);
 
+        /* Get old serial passthrough enable. */
         sprintf(temp, "serial%d_passthrough_enabled", c + 1);
-        serial_passthrough_enabled[c] = !!ini_section_get_int(cat, temp, 0);
+        int old_enable = ini_section_get_int(cat, temp, 0);
+        ini_section_delete_var(cat, temp);
 
-        if (serial_passthrough_enabled[c])
-            config_log("Serial Port %d: passthrough enabled.\n\n", c + 1);
-
-        /* Migrate serial passthrough config section. Doing it here (instead of
-           the device.c migration path) covers disabled passthroughs as well. */
+        /* Migrate serial passthrough device settings. */
         sprintf(temp, "Serial Passthrough Device #%i", c + 1);
         ini_section_t cat2 = ini_find_section(config, temp);
-        sprintf(temp, "Serial Passthrough #%i", c + 1);
-        if (cat2)
-            ini_rename_section(cat2, temp);
-        else
+        if (!cat2) {
+            sprintf(temp, "Serial Passthrough #%i", c + 1); /* as of 8699 */
             cat2 = ini_find_section(config, temp);
+        }
+        int old_mode = ini_section_get_int(cat2, "mode", -1);
+        if (old_mode >= 3) { /* passthrough (4 on 5.3 Windows due to enum mistake, 3 otherwise) */
+            sprintf(temp, "Serial Passthrough (COM) #%i", c + 1);
+            ini_rename_section(cat2, temp);
+            ini_section_delete_var(cat2, "mode");
+            p = ini_section_get_string(cat2, "host_serial_path", "");
+            if (p[0])
+                ini_section_set_string(cat2, "path", p);
+            p = "serial_passthrough";
+        } else { /* pipe/pty */
+#ifdef _WIN32
+            sprintf(temp, "Named Pipe (COM) #%i", c + 1);
+            ini_rename_section(cat2, temp);
+            if (old_enable || (old_mode >= 0) || cat2)
+                ini_set_int(config, temp, "mode", (old_mode == 1) ? CHAR_PIPE_MODE_CLIENT : CHAR_PIPE_MODE_SERVER);
+            p = ini_section_get_string(cat2, "named_pipe", (old_enable || (old_mode >= 0) || cat2) ? "\\\\.\\pipe\\86Box\\test" : ""); /* use old default path if there's any evidence of passthrough having been enabled */
+            if (p[0])
+                ini_set_string(config, temp, "path", p); /* create section if not present */
+            p = "pipe";
+#else
+            sprintf(temp, "Virtual Console (COM) #%i", c + 1);
+            ini_rename_section(cat2, temp);
+            if (old_enable || (old_mode >= 0) || cat2)
+                ini_set_int(config, temp, "mode", CHAR_STDIO_MODE_PTY);
+            p = "stdio";
+#endif
+        }
 
-        /* The addition of Windows named pipe client mode in v5.3 made a mess of
-           the enum IDs. Migrate the old HOSTSER ID (now TCP_CLNT) to the new one. */
-        if (ini_section_get_int(cat2, "mode", 0) == 3)
-            ini_section_set_int(cat2, "mode", SERPT_MODE_HOSTSER);
+        /* Clean up old serial passthrough device settings. */
+        ini_section_delete_var(cat2, "host_serial_path");
+        ini_section_delete_var(cat2, "named_pipe");
+        ini_section_delete_var(cat2, "data_bits");
+        ini_section_delete_var(cat2, "stop_bits");
+        ini_section_delete_var(cat2, "baudrate");
+
+        /* Migrate old serial passthrough enable. */
+        sprintf(temp, "serial%d_device", c + 1);
+        if (old_enable)
+            ini_section_set_string(cat, temp, p);
+        else
+            p = ini_section_get_string(cat, temp, "none");
+        com_ports[c].device = char_get_from_internal_name(p, DEVICE_COM);
     }
 
     for (int c = 0; c < PARALLEL_MAX; c++) {
@@ -1162,8 +1193,21 @@ load_ports(void)
         lpt_ports[c].enabled = !!ini_section_get_int(cat, temp, (c == 0) ? 1 : 0);
 
         sprintf(temp, "lpt%d_device", c + 1);
-        p                    = ini_section_get_string(cat, temp, "none");
-        lpt_ports[c].device  = lpt_device_get_from_internal_name(p);
+        p = ini_section_get_string(cat, temp, "none");
+        if (!strcmp(p, "plip")) {
+            /* Migrate old separate LPT PLIP device. */
+            int plip_num = network_card_get_from_internal_name(p);
+            for (int d = 0; d < NET_CARD_MAX; d++) {
+                if (net_cards_conf[d].device_num == plip_num) {
+                    sprintf(temp, "%s #%i", plip_device.name, d + 1);
+                    ini_set_int(config, temp, "port", c);
+                    break;
+                }
+            }
+            lpt_ports[c].device = 0;
+        } else {
+            lpt_ports[c].device = char_get_from_internal_name(!strcmp(p, "lpt_loopback") ? "loopback" : p, DEVICE_LPT);
+        }
     }
 
 #if 0
@@ -1647,7 +1691,7 @@ load_hard_disks(void)
 
 #if defined(ENABLE_CONFIG_LOG) && (ENABLE_CONFIG_LOG == 2)
         if (*p != '\0')
-            config_log("HDD%d: %ls\n", c, hdd[c].fn);
+            config_log("HDD%d: %s\n", c, hdd[c].fn);
 #endif
 
         sprintf(temp, "hdd_%02i_vhd_blocksize", c + 1);
@@ -1739,7 +1783,7 @@ load_floppy_and_cdrom_drives(void)
 
 #if defined(ENABLE_CONFIG_LOG) && (ENABLE_CONFIG_LOG == 2)
         if (*p != '\0')
-            config_log("Floppy%d: %ls\n", c, floppyfns[c]);
+            config_log("Floppy%d: %s\n", c, floppyfns[c]);
 #endif
 
         sprintf(temp, "fdd_%02i_turbo", c + 1);
@@ -1912,7 +1956,7 @@ load_floppy_and_cdrom_drives(void)
 
 #if defined(ENABLE_CONFIG_LOG) && (ENABLE_CONFIG_LOG == 2)
         if (*p != '\0')
-            config_log("CD-ROM%d: %ls\n", c, cdrom[c].image_path);
+            config_log("CD-ROM%d: %s\n", c, cdrom[c].image_path);
 #endif
 
         for (int i = 0; i < MAX_PREV_IMAGES; i++) {
@@ -3445,11 +3489,11 @@ save_ports(void)
         else
             ini_section_set_int(cat, temp, com_ports[c].enabled);
 
-        sprintf(temp, "serial%d_passthrough_enabled", c + 1);
-        if (serial_passthrough_enabled[c])
-            ini_section_set_int(cat, temp, 1);
-        else
+        sprintf(temp, "serial%d_device", c + 1);
+        if (com_ports[c].device == 0)
             ini_section_delete_var(cat, temp);
+        else
+            ini_section_set_string(cat, temp, char_get_device(com_ports[c].device)->internal_name);
     }
 
     for (int c = 0; c < PARALLEL_MAX; c++) {
@@ -3464,7 +3508,7 @@ save_ports(void)
         if (lpt_ports[c].device == 0)
             ini_section_delete_var(cat, temp);
         else
-            ini_section_set_string(cat, temp, lpt_device_get_internal_name(lpt_ports[c].device));
+            ini_section_set_string(cat, temp, char_get_device(lpt_ports[c].device)->internal_name);
     }
 
 #if 0
@@ -3508,17 +3552,20 @@ save_image_file(char *cat, char *var, char *src)
     char *above2     = NULL;
     char *above3     = NULL;
 
-    if ((slash = memrmem(usr_path + strlen(usr_path) - 2, usr_path, "/")) != NULL) {
+    size_t len = strlen(usr_path);
+    if ((len >= 2) && ((slash = memrmem(usr_path + len - 2, usr_path, "/")) != NULL)) {
         slash++;
         above = (char *) calloc(1, slash - usr_path + 1);
         memcpy(above, usr_path, slash - usr_path);
 
-        if ((slash = memrmem(above + strlen(above) - 2, above, "/")) != NULL) {
+        len = strlen(above);
+        if ((len >= 2) && ((slash = memrmem(above + len - 2, above, "/")) != NULL)) {
             slash++;
             above2 = (char *) calloc(1, slash - above + 1);
             memcpy(above2, above, slash - above);
 
-            if ((slash = memrmem(above2 + strlen(above2) - 2, above2, "/")) != NULL) {
+            len = strlen(above2);
+            if ((len >= 2) && ((slash = memrmem(above2 + len - 2, above2, "/")) != NULL)) {
                 slash++;
                 above3 = (char *) calloc(1, slash - above2 + 1);
                 memcpy(above3, above2, slash - above2);

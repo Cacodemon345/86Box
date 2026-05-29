@@ -19,9 +19,12 @@
 #include <86box/video.h>
 #include <86box/ui.h>
 #include <86box/version.h>
-#include <86box/unix_sdl.h>
-#include <86box/unix_osd.h>
-#include <86box/unix_osd_font.h>
+
+#include "sdl_shader.h"
+#include "sdl_monitor.h"
+#include "sdl_render.h"
+#include "sdl_osd.h"
+#include "sdl_osd_font.h"
 
 static int SCREEN_W = 640;
 static int SCREEN_H = 480;
@@ -37,17 +40,15 @@ static int BOX_H = 160;
 
 // interface to SDL environment
 extern SDL_Window         *sdl_win;
-extern SDL_Renderer       *sdl_render;
 extern SDL_mutex          *sdl_mutex;
 
-// interface back to main unix monitor implementation
-extern void unix_executeLine(char *line);
-
 // interface to the currently set window title, this can't be seen normally in a fullscreen setup
-extern wchar_t sdl_win_title[512];
-char sdl_win_title_mb[512] = "";
+extern char sdl_win_title[512];
 
-static SDL_Texture *font_texture = NULL;
+/* Private software renderer for OSD drawing (no dependency on main window renderer). */
+static SDL_Surface  *osd_surface  = NULL;
+static SDL_Renderer *osd_sw_render = NULL;
+static SDL_Texture  *font_texture = NULL;
 
 typedef enum {
     STATE_MENU,
@@ -178,8 +179,7 @@ void draw_menu(SDL_Renderer *renderer, int selected)
 
     draw_text(renderer, "MAIN MENU", x0 + 20, y0 + 5, (SDL_Color){255,255,255,255});
 
-    wcstombs(sdl_win_title_mb, sdl_win_title, 256);
-    draw_text(renderer, sdl_win_title_mb, x0 + 120, y0 + 5, (SDL_Color){255,255,255,255});
+    draw_text(renderer, sdl_win_title, x0 + 120, y0 + 5, (SDL_Color){255,255,255,255});
 
     for (int i = 0; i < MENU_ITEMS; i++)
     {
@@ -247,15 +247,45 @@ void draw_file_selector(SDL_Renderer *renderer,
 #endif
 }
 
+static void osd_ensure_surface(int w, int h)
+{
+    if (osd_surface && osd_surface->w == w && osd_surface->h == h)
+        return;
+
+    if (osd_sw_render) {
+        if (font_texture) {
+            SDL_DestroyTexture(font_texture);
+            font_texture = NULL;
+        }
+        SDL_DestroyRenderer(osd_sw_render);
+        osd_sw_render = NULL;
+    }
+    if (osd_surface) {
+        SDL_FreeSurface(osd_surface);
+        osd_surface = NULL;
+    }
+
+    osd_surface = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ABGR8888);
+    if (!osd_surface) {
+        fprintf(stderr, "OSD: cannot create surface: %s\n", SDL_GetError());
+        return;
+    }
+
+    osd_sw_render = SDL_CreateSoftwareRenderer(osd_surface);
+    if (!osd_sw_render) {
+        fprintf(stderr, "OSD: cannot create software renderer: %s\n", SDL_GetError());
+        SDL_FreeSurface(osd_surface);
+        osd_surface = NULL;
+        return;
+    }
+}
+
 void osd_init(void)
 {
-    // debug: fprintf(stderr, "OSD INIT\n");
+    osd_ensure_surface(SCREEN_W, SCREEN_H);
 
-    if (font_texture == NULL)
+    if (font_texture == NULL && osd_sw_render)
     {
-        // debug: fprintf(stderr, "OSD INIT FONT\n");
-
-        // Carica font bitmap (font.bmp 128x128, 16x16 caratteri, 8x8 ciascuno)
         SDL_RWops *rwop  = SDL_RWFromConstMem(_________font_bmp, _________font_bmp_len);
         if (!rwop)
         {
@@ -263,29 +293,32 @@ void osd_init(void)
             return;
         }
 
-        // auto-closes the stream
         SDL_Surface *font_surface = SDL_LoadBMP_RW(rwop, 1);
         if (!font_surface) {
             fprintf(stderr, "Cannot create a surface using RW stream: %s\n", SDL_GetError());
             return;
         }
 
-        // Imposta trasparenza sul nero puro
         SDL_SetColorKey(font_surface, SDL_TRUE, SDL_MapRGB(font_surface->format, 0, 0, 0));
-        font_texture = SDL_CreateTextureFromSurface(sdl_render, font_surface);
+        font_texture = SDL_CreateTextureFromSurface(osd_sw_render, font_surface);
         SDL_FreeSurface(font_surface);
     }
 }
 
 void osd_deinit(void)
 {
-    // nothing to do
-    // debug: fprintf(stderr, "OSD DEINIT\n");
-
-    // will be implicitly freed on exit
-    // SDL_DestroyTexture(font_texture);
-
-    font_texture = NULL;
+    if (font_texture) {
+        SDL_DestroyTexture(font_texture);
+        font_texture = NULL;
+    }
+    if (osd_sw_render) {
+        SDL_DestroyRenderer(osd_sw_render);
+        osd_sw_render = NULL;
+    }
+    if (osd_surface) {
+        SDL_FreeSurface(osd_surface);
+        osd_surface = NULL;
+    }
 }
 
 int osd_open(SDL_Event event)
@@ -318,43 +351,70 @@ static void osd_cmd_run(char *c)
 {
     char *l = calloc(strlen(c)+2, 1);
     strcpy(l, c);
-    unix_executeLine(l);
+    monitor_execute_line(l);
     free(l);
 }
 
-void osd_present(void)
+void osd_present(int fb_w, int fb_h)
 {
-    // shortcut
     if (!osd_is_open)
         return;
 
-#ifndef OSD_INSIDE_MAIN_LOOP
-    SDL_LockMutex(sdl_mutex);
-#endif
+    /* Update layout to match framebuffer. */
+    SCREEN_W = fb_w;
+    SCREEN_H = fb_h;
+    BOX_W = (SCREEN_W / 4) * 3;
+    BOX_H = (SCREEN_H / 4) * 3;
+    max_visible = (BOX_H - TITLE_HEIGHT) / LINE_HEIGHT;
+
+    /* Ensure surface matches emulator framebuffer size. */
+    osd_ensure_surface(fb_w, fb_h);
+    if (!osd_sw_render || !osd_surface)
+        return;
+
+    /* Recreate font texture if surface was resized. */
+    if (!font_texture)
+        osd_init();
+
+    /* Clear to transparent. */
+    SDL_SetRenderDrawColor(osd_sw_render, 0, 0, 0, 0);
+    SDL_RenderClear(osd_sw_render);
 
     if (state == STATE_MENU) {
-        draw_menu(sdl_render, selected);
+        draw_menu(osd_sw_render, selected);
     }
     else if (state == STATE_FILESELECT_FLOPPY) {
-        draw_file_selector(sdl_render, "SELECT FLOPPY IMAGE", files, file_count, file_selected, scroll_offset, max_visible);
+        draw_file_selector(osd_sw_render, "SELECT FLOPPY IMAGE", files, file_count, file_selected, scroll_offset, max_visible);
     }
     else if (state == STATE_FILESELECT_CD) {
-        draw_file_selector(sdl_render, "SELECT CD ISO IMAGE", files, file_count, file_selected, scroll_offset, max_visible);
+        draw_file_selector(osd_sw_render, "SELECT CD ISO IMAGE", files, file_count, file_selected, scroll_offset, max_visible);
     }
     else if (state == STATE_FILESELECT_RDISK) {
-        draw_file_selector(sdl_render, "SELECT REMOVABLE DISK IMAGE", files, file_count, file_selected, scroll_offset, max_visible);
+        draw_file_selector(osd_sw_render, "SELECT REMOVABLE DISK IMAGE", files, file_count, file_selected, scroll_offset, max_visible);
     }
     else if (state == STATE_FILESELECT_CART) {
-        draw_file_selector(sdl_render, "SELECT CARTRIDGE IMAGE", files, file_count, file_selected, scroll_offset, max_visible);
+        draw_file_selector(osd_sw_render, "SELECT CARTRIDGE IMAGE", files, file_count, file_selected, scroll_offset, max_visible);
     }
     else if (state == STATE_FILESELECT_MO) {
-        draw_file_selector(sdl_render, "SELECT MO IMAGE", files, file_count, file_selected, scroll_offset, max_visible);
+        draw_file_selector(osd_sw_render, "SELECT MO IMAGE", files, file_count, file_selected, scroll_offset, max_visible);
     }
 
-
-#ifndef OSD_INSIDE_MAIN_LOOP
-    SDL_UnlockMutex(sdl_mutex);
+    /* Shader builds upload through the GL overlay path; shader-off builds composite in unix_sdl.c. */
+#ifdef USE_SDL_SHADER_PIPELINE
+    SDL_LockSurface(osd_surface);
+    sdl_shader_draw_overlay(osd_surface->pixels, osd_surface->w, osd_surface->h);
+    SDL_UnlockSurface(osd_surface);
 #endif
+}
+
+int osd_is_visible(void)
+{
+    return osd_is_open;
+}
+
+SDL_Surface *osd_get_surface(void)
+{
+    return osd_surface;
 }
 
 int osd_handle(SDL_Event event)
@@ -529,7 +589,7 @@ int osd_handle(SDL_Event event)
                         if (state == STATE_FILESELECT_MO)
                             sprintf(cmd, "moload 0 %s 0", files[file_selected]);
 
-                        unix_executeLine(cmd);
+                        monitor_execute_line(cmd);
                         state = STATE_MENU;
                     }
                         return 0;

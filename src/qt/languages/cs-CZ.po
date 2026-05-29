@@ -1,7 +1,7 @@
 msgid ""
 msgstr ""
-"PO-Revision-Date: 2026-04-05 18:51+0000\n"
-"Last-Translator: Alexander Babikov <lemondrops358@gmail.com>\n"
+"PO-Revision-Date: 2026-04-27 21:00+0000\n"
+"Last-Translator: David Hrdlička <hrdlickadavid@outlook.com>\n"
 "Language-Team: Czech <https://weblate.86box.net/projects/86box/86box/cs/>\n"
 "Language: cs-CZ\n"
 "MIME-Version: 1.0\n"
@@ -177,7 +177,6 @@ msgstr "Převod na odstíny šedi:"
 msgid "Average"
 msgstr "Průměr"
 
-#, fuzzy
 msgid "Overscan"
 msgstr "Přesah obrazu"
 
@@ -356,19 +355,19 @@ msgid "Machine type:"
 msgstr "Typ počítače:"
 
 msgid "[1989] i486 (Socket 168 and 1)"
-msgstr ""
+msgstr "[1989] i486 (sokety 168 a 1)"
 
 msgid "[1994] i486 (Miscellaneous)"
-msgstr ""
+msgstr "[1994] i486 (ostatní)"
 
 msgid "[1995] Socket 7 (Single Voltage)"
-msgstr ""
+msgstr "[1995] Soket 7 (jednonapěťový)"
 
 msgid "[1996] Socket 7 (Dual Voltage)"
-msgstr ""
+msgstr "[1996] Soket 7 (dvojnapěťový)"
 
 msgid "Miscellaneous"
-msgstr ""
+msgstr "Ostatní"
 
 msgid "Machine:"
 msgstr "Počítač:"
@@ -530,43 +529,43 @@ msgid "CD-ROM controller:"
 msgstr "Řadič CD-ROM:"
 
 msgid "Mitsumi interface"
-msgstr ""
+msgstr "Rozhraní Mitsumi"
 
 msgid "MKE/Panasonic interface"
-msgstr ""
+msgstr "Rozhraní MKE/Panasonic"
 
 msgid "MKE/Panasonic interface (Creative)"
-msgstr ""
+msgstr "Rozhraní MKE/Panasonic (Creative)"
 
 msgid "IDE Controller"
 msgstr "Řadič IDE"
 
 msgid "IDE Controller (Dual-Channel)"
-msgstr ""
+msgstr "Řadič IDE (dvoukanálový)"
 
 msgid "PC/AT IDE Controller"
-msgstr ""
+msgstr "Řadič IDE pro PC/AT"
 
 msgid "PC/AT IDE Controller (Dual-Channel)"
-msgstr ""
+msgstr "Řadič IDE pro PC/AT (dvoukanálový)"
 
 msgid "PC/AT XTIDE (Primary Only)"
-msgstr ""
+msgstr "XTIDE pro PC/AT (pouze primární kanál)"
 
 msgid "PS/2 AT XTIDE (1.1.5) (Primary Only)"
-msgstr ""
+msgstr "AT XTIDE pro PS/2 (1.1.5) (pouze primární kanál)"
 
 msgid "CMD PCI-0646 (Tertiary and Quaternary)"
-msgstr ""
+msgstr "CMD PCI-0646 (terciární a kvartérní kanál)"
 
 msgid "CMD PCI-0648 (Tertiary and Quaternary)"
-msgstr ""
+msgstr "CMD PCI-0648 (terciární a kvartérní kanál)"
 
 msgid "CMD PCI-0649 (Tertiary and Quaternary)"
-msgstr ""
+msgstr "CMD PCI-0649 (terciární a kvartérní kanál)"
 
 msgid "McIDE Controller"
-msgstr ""
+msgstr "Řadič McIDE"
 
 msgid "Tertiary IDE Controller"
 msgstr "Třetí řadič IDE"
@@ -769,17 +768,17 @@ msgstr "Základní sektorové obrazy"
 msgid "Surface images"
 msgstr "Obrazy povrchu"
 
-msgid "Machine \"%hs\" is not available due to missing ROMs in the roms/machines directory. Switching to an available machine."
-msgstr "Počítač \"%hs\" není dostupný, jelikož chybí obraz jeho paměti ROM ve složce \"roms/machines\". Konfigurace se přepne na jiný dostupný počítač."
+msgid "Machine \"%s\" is not available due to missing ROMs in the roms/machines directory. Switching to an available machine."
+msgstr "Počítač \"%s\" není dostupný, jelikož chybí obraz jeho paměti ROM ve složce \"roms/machines\". Konfigurace se přepne na jiný dostupný počítač."
 
-msgid "Video card \"%hs\" is not available due to missing ROMs in the roms/video directory. Switching to an available video card."
-msgstr "Video adaptér \"%hs\" není dostupný, jelikož chybí obraz jeho paměti ROM ve složce \"roms/video\". Konfigurace se přepne na jiný dostupný adaptér."
+msgid "Video card \"%s\" is not available due to missing ROMs in the roms/video directory. Switching to an available video card."
+msgstr "Video adaptér \"%s\" není dostupný, jelikož chybí obraz jeho paměti ROM ve složce \"roms/video\". Konfigurace se přepne na jiný dostupný adaptér."
 
-msgid "Video card #2 \"%hs\" is not available due to missing ROMs in the roms/video directory. Disabling the second video card."
-msgstr "Video adaptér 2 \"%hs\" není dostupný, jelikož chybí obraz jeho paměti ROM ve složce \"roms/video\". Druhá grafická karta se zakáže."
+msgid "Video card #2 \"%s\" is not available due to missing ROMs in the roms/video directory. Disabling the second video card."
+msgstr "Video adaptér 2 \"%s\" není dostupný, jelikož chybí obraz jeho paměti ROM ve složce \"roms/video\". Druhá grafická karta se zakáže."
 
-msgid "Device \"%hs\" is not available due to missing ROMs. Ignoring the device."
-msgstr "Zařízení \"%hs\" není dostupné, jelikož chybí obraz jeho paměti ROM. Zařízení je ignorováno."
+msgid "Device \"%s\" is not available due to missing ROMs. Ignoring the device."
+msgstr "Zařízení \"%s\" není dostupné, jelikož chybí obraz jeho paměti ROM. Zařízení je ignorováno."
 
 msgid "Machine"
 msgstr "Počítač"
@@ -1456,11 +1455,32 @@ msgstr "Zvolený soubor bude přepsán. Opravdu jej chcete použít?"
 msgid "Unsupported disk image"
 msgstr "Nepodporovaný obraz disku"
 
-msgid "Overwrite"
-msgstr "Přepsat"
+msgid "Unable to read device"
+msgstr ""
 
-msgid "Don't overwrite"
-msgstr "Nepřepisovat"
+msgid "Could not determine block device size. Make sure you have permission to access this device."
+msgstr ""
+
+msgid "Device too large"
+msgstr ""
+
+msgid "Block device is too large to be used as a hard disk."
+msgstr ""
+
+msgid "Block device detected"
+msgstr ""
+
+msgid "Detected block device: %1\nSize: %2 MB\nGeometry: %3 cylinders, %4 heads, %5 sectors"
+msgstr ""
+
+msgid "Failed to write the disk image."
+msgstr ""
+
+msgid "Failed to read the disk image."
+msgstr ""
+
+msgid "The disk image has been successfully created."
+msgstr ""
 
 msgid "Raw image"
 msgstr "Surový obraz"
@@ -1788,17 +1808,17 @@ msgstr "MiB"
 msgid "GiB"
 msgstr "GiB"
 
-msgid "Network Card #1"
-msgstr "Síťový adaptér 1"
+msgid "Adapter 1"
+msgstr "Adaptér 1"
 
-msgid "Network Card #2"
-msgstr "Síťový adaptér 2"
+msgid "Adapter 2"
+msgstr "Adaptér 2"
 
-msgid "Network Card #3"
-msgstr "Síťový adaptér 3"
+msgid "Adapter 3"
+msgstr "Adaptér 3"
 
-msgid "Network Card #4"
-msgstr "Síťový adaptér 4"
+msgid "Adapter 4"
+msgstr "Adaptér 4"
 
 msgid "Mode:"
 msgstr "Režim:"
@@ -1972,7 +1992,7 @@ msgid "BIOS Language"
 msgstr "Jazyk BIOS"
 
 msgid "Variant"
-msgstr ""
+msgstr "Varianta"
 
 msgid "IBM 5161 Expansion Unit"
 msgstr "Rozšiřující jednotka IBM 5161"
@@ -2355,20 +2375,47 @@ msgstr "Velikost paměti EMS 2"
 msgid "Enable EMS"
 msgstr "Povolit EMS"
 
-msgid "Enable EMS 1"
-msgstr "Povolit EMS 1"
-
-msgid "Enable EMS 2"
-msgstr "Povolit EMS 2"
-
 msgid "Address for > 2 MB"
 msgstr "Adresa pro > 2 MB"
 
 msgid "Frame Address"
 msgstr "Adresa rámce"
 
-msgid "USA"
-msgstr "Spojené státy"
+msgid "English"
+msgstr ""
+
+msgid "English (US)"
+msgstr ""
+
+msgid "English (UK)"
+msgstr ""
+
+msgid "English (Canada)"
+msgstr ""
+
+msgid "German"
+msgstr ""
+
+msgid "French"
+msgstr ""
+
+msgid "Spanish"
+msgstr ""
+
+msgid "Swedish"
+msgstr ""
+
+msgid "Italian"
+msgstr ""
+
+msgid "Portuguese"
+msgstr ""
+
+msgid "Norwegian"
+msgstr ""
+
+msgid "Greek"
+msgstr ""
 
 msgid "Danish"
 msgstr "Dánština"
@@ -2566,9 +2613,6 @@ msgstr "Odstíny šedi"
 msgid "Color"
 msgstr "Barevný"
 
-msgid "U.S. English"
-msgstr "Americká angličtina"
-
 msgid "Scandinavian"
 msgstr "Skandinávské"
 
@@ -2648,38 +2692,82 @@ msgid "Protection Dongle for Savage Quest"
 msgstr "Ochranný klíč pro Savage Quest"
 
 msgid "Loopback Plug"
-msgstr ""
+msgstr "Loopback adaptér"
 
-#, fuzzy
 msgid "Serial Passthrough"
-msgstr "Zařízení průchodu sériového portu"
+msgstr "Průchod sériového portu"
 
-msgid "Passthrough Mode"
-msgstr "Režim průchodu"
-
-msgid "Host Serial Device"
+msgid "Host serial device"
 msgstr "Hostitelské sériové zařízení"
 
-msgid "Name of pipe"
-msgstr "Název pojmenované roury"
+msgid "Named Pipe"
+msgstr "Pojmenovaná roura"
 
-msgid "Data bits"
-msgstr "Datové bity"
+msgid "Output file"
+msgstr ""
 
-msgid "Stop bits"
-msgstr "Stop bity"
+msgid "Append to file if it exists"
+msgstr ""
 
-msgid "Baud Rate of Passthrough"
-msgstr "Přenosová rychlost průchodu"
+msgid "Input file"
+msgstr ""
 
-msgid "Named Pipe (Server)"
-msgstr "Pojmenovaná roura (server)"
+msgid "Loop input file"
+msgstr ""
 
-msgid "Named Pipe (Client)"
-msgstr "Pojmenovaná roura (klient)"
+msgid "Require STROBE signal"
+msgstr ""
 
-msgid "Host Serial Passthrough"
-msgstr "Průchod sériového portu hostitele"
+msgid "Loopback Type"
+msgstr ""
+
+msgid "Parallel cable"
+msgstr ""
+
+msgid "Unidirectional (8-bit) / LapLink (4-bit)"
+msgstr ""
+
+msgid "Bidirectional (8-bit)"
+msgstr ""
+
+msgid "Pipe path"
+msgstr ""
+
+msgid "FIFO / terminal"
+msgstr ""
+
+msgid "Mode"
+msgstr ""
+
+msgid "Server"
+msgstr "Server"
+
+msgid "Client"
+msgstr "Klient"
+
+msgid "Reconnect automatically"
+msgstr ""
+
+msgid "Use standard input/output"
+msgstr ""
+
+msgid "Create pseudoterminal"
+msgstr ""
+
+msgid "Start terminal emulator"
+msgstr ""
+
+msgid "Run custom command"
+msgstr ""
+
+msgid "Custom command"
+msgstr ""
+
+msgid "Run custom command in terminal"
+msgstr ""
+
+msgid "Virtual Console"
+msgstr ""
 
 msgid "E&ject %1"
 msgstr "&Vyjmout %1"
@@ -2723,8 +2811,8 @@ msgstr "[Obecný] 1998 (5400 ot./m)"
 msgid "[Generic] 2000 (7200 RPM)"
 msgstr "[Obecný] 2000 (7200 ot./m)"
 
-msgid "IBM 8514/A clone (ISA)"
-msgstr "Klon IBM 8514/A (ISA)"
+msgid "IBM 8514/A clone"
+msgstr "Klon IBM 8514/A"
 
 msgid "Vendor"
 msgstr "Výrobce"
@@ -2742,10 +2830,10 @@ msgid "Generic PC/AT Memory Expansion"
 msgstr "Obecné rozšíření paměti PC/AT"
 
 msgid "Generic MM58167 RTC"
-msgstr ""
+msgstr "Obecné hodiny reálného času MM58167"
 
 msgid "OPL2Board (External Device)"
-msgstr ""
+msgstr "OPL2Board (externí zařízení)"
 
 msgid "Unable to find Dot-Matrix fonts"
 msgstr "Nebylo možné nalézt písma pro jehličkovou tiskárnu"
@@ -2811,10 +2899,10 @@ msgid "Could not load file %1"
 msgstr "Nebylo možné načíst soubor %1"
 
 msgid "Emulator"
-msgstr ""
+msgstr "Emulátor"
 
 msgid "Input"
-msgstr ""
+msgstr "Vstup"
 
 msgid "Key bindings"
 msgstr "Nastavení kláves"
@@ -3023,8 +3111,8 @@ msgstr "Exportovat…"
 msgid "Export EDID"
 msgstr "Exportovat EDID"
 
-msgid "EDID file \"%ls\" is too large."
-msgstr "Soubor EDID \"%ls\" je příliš velký."
+msgid "EDID file \"%s\" is too large."
+msgstr "Soubor EDID \"%s\" je příliš velký."
 
 msgid "OpenGL input scale"
 msgstr "Měřítko vstupu OpenGL"
@@ -3066,10 +3154,163 @@ msgid "Raw"
 msgstr "Surový"
 
 msgid "Use EDC/ECC emulation"
-msgstr ""
+msgstr "Povolit emulaci EDC/ECC"
 
 msgid "Audio output device:"
 msgstr "Výstupní zvukové zařízení:"
 
 msgid "System Default"
 msgstr "Výchozí nastavení systému"
+
+msgid "Unable to open image or folder \"%s\"."
+msgstr ""
+
+msgid "Unable to open cue sheet \"%s\"."
+msgstr ""
+
+msgid "Unable to open MDS file \"%s\"."
+msgstr ""
+
+msgid "Unable to load CD-ROM image \"%s\"."
+msgstr ""
+
+msgid "Unable to load image \"%s\": mdsx.so is missing, which is required for Daemon Tools MDS v2 and MDX image support."
+msgstr ""
+
+msgid "The DVD image \"%s\" has been inserted into a drive that does not support DVD media and will be ignored."
+msgstr ""
+
+msgid "%s: Could not connect to %s: %s"
+msgstr ""
+
+msgid "%s: Could not create %s: %s"
+msgstr ""
+
+msgid "%s: Attached to %s"
+msgstr ""
+
+msgid "%s: Virtual console already in use by %s"
+msgstr ""
+
+msgid "%s: Could not create terminal: %s"
+msgstr ""
+
+msgid "Auto-detect"
+msgstr ""
+
+msgid "Channel"
+msgstr ""
+
+msgid "Both Channels"
+msgstr ""
+
+msgid "Left Channel"
+msgstr ""
+
+msgid "Right Channel"
+msgstr ""
+
+msgid "Allow Flash BIOS Updates"
+msgstr ""
+
+msgid "Slot #"
+msgstr ""
+
+msgid "Parallel Port"
+msgstr ""
+
+msgid "Paper Size"
+msgstr ""
+
+msgid "Legal (sideways)"
+msgstr ""
+
+msgid "B4 (sideways)"
+msgstr ""
+
+msgid "Quality"
+msgstr ""
+
+msgid "Draft"
+msgstr ""
+
+msgid "(Near) Letter"
+msgstr ""
+
+msgid "Auto LF"
+msgstr ""
+
+msgid "Tandy PSSJ Clone"
+msgstr ""
+
+msgid "PC-CM (Color)"
+msgstr ""
+
+msgid "PC-MM (Monochrome)"
+msgstr ""
+
+msgid "White Monochrome"
+msgstr ""
+
+msgid "Hardware font"
+msgstr ""
+
+msgid "Diagnostic mode"
+msgstr ""
+
+msgid "CGA monitor"
+msgstr ""
+
+msgid "MDA monitor"
+msgstr ""
+
+msgid "Television"
+msgstr ""
+
+msgid "Invert LCD colors"
+msgstr ""
+
+msgid "LCD (CGA mode)"
+msgstr ""
+
+msgid "LCD (MDA mode)"
+msgstr ""
+
+msgid "Disabled (250h)"
+msgstr ""
+
+msgid "Enabled (350h)"
+msgstr ""
+
+msgid "Test mode"
+msgstr ""
+
+msgid "32 MB"
+msgstr ""
+
+msgid "64 MB"
+msgstr ""
+
+msgid "2048 MB"
+msgstr ""
+
+msgid "Refresh rate"
+msgstr ""
+
+msgid "US (CP 437)"
+msgstr ""
+
+msgid "IBM Nordic (CP 437-Nordic)"
+msgstr ""
+
+msgid "Czech Kamenicky (CP 895) #1"
+msgstr ""
+
+msgid "Czech Kamenicky (CP 895) #2"
+msgstr ""
+
+msgid "932 (Japanese)"
+msgstr ""
+
+msgid "938 (Traditional Chinese)"
+msgstr ""

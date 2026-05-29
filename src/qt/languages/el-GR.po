@@ -1,7 +1,7 @@
 msgid ""
 msgstr ""
-"PO-Revision-Date: 2026-04-05 18:51+0000\n"
-"Last-Translator: Alexander Babikov <lemondrops358@gmail.com>\n"
+"PO-Revision-Date: 2026-05-24 12:01+0000\n"
+"Last-Translator: DimMan88 <dimman88@hotmail.com>\n"
 "Language-Team: Greek <https://weblate.86box.net/projects/86box/86box/el/>\n"
 "Language: el-GR\n"
 "MIME-Version: 1.0\n"
@@ -177,7 +177,6 @@ msgstr "Τύπος μετατροπής κλίμακας του γκρι:"
 msgid "Average"
 msgstr "Σχετικό"
 
-#, fuzzy
 msgid "Overscan"
 msgstr "Υπερσάρωση"
 
@@ -356,19 +355,19 @@ msgid "Machine type:"
 msgstr "Τύπος συστήματος:"
 
 msgid "[1989] i486 (Socket 168 and 1)"
-msgstr ""
+msgstr "[1989] i486 (Socket 168 και 1)"
 
 msgid "[1994] i486 (Miscellaneous)"
-msgstr ""
+msgstr "[1994] i486 (Ανάμεικτα)"
 
 msgid "[1995] Socket 7 (Single Voltage)"
-msgstr ""
+msgstr "[1995] Socket 7 (Μονό Voltage)"
 
 msgid "[1996] Socket 7 (Dual Voltage)"
-msgstr ""
+msgstr "[1996] Socket 7 (Διπλό Voltage)"
 
 msgid "Miscellaneous"
-msgstr ""
+msgstr "Διάφορα"
 
 msgid "Machine:"
 msgstr "Σύστημα:"
@@ -530,13 +529,13 @@ msgid "CD-ROM controller:"
 msgstr "Ελεγκτής CD-ROM:"
 
 msgid "Mitsumi interface"
-msgstr ""
+msgstr "Διεπαφή Mitsumi"
 
 msgid "MKE/Panasonic interface"
-msgstr ""
+msgstr "Διεπαφή MKE/Panasonic"
 
 msgid "MKE/Panasonic interface (Creative)"
-msgstr ""
+msgstr "Διεπαφή MKE/Panasonic (Creative)"
 
 msgid "IDE Controller"
 msgstr "Ελεγκτής IDE"
@@ -769,17 +768,17 @@ msgstr "Εικόνες βασικού τόμου"
 msgid "Surface images"
 msgstr "Εικόνες επιφάνειας"
 
-msgid "Machine \"%hs\" is not available due to missing ROMs in the roms/machines directory. Switching to an available machine."
-msgstr "Το σύστημα \"%hs\" δεν είναι διαθέσιμο λόγω έλλειψης των ROMs στον κατάλογο roms/machines. Αλλάξτε σε διαθέσιμο σύστημα."
+msgid "Machine \"%s\" is not available due to missing ROMs in the roms/machines directory. Switching to an available machine."
+msgstr "Το σύστημα \"%s\" δεν είναι διαθέσιμο λόγω έλλειψης των ROMs στον κατάλογο roms/machines. Αλλάξτε σε διαθέσιμο σύστημα."
 
-msgid "Video card \"%hs\" is not available due to missing ROMs in the roms/video directory. Switching to an available video card."
-msgstr "Η κάρτα γραφικών \"%hs\" δεν είναι διαθέσιμη λόγω έλλειψης των ROMs στον κατάλογο roms/video. Αλλάξτε σε διαθέσιμη κάρτα γραφικών."
+msgid "Video card \"%s\" is not available due to missing ROMs in the roms/video directory. Switching to an available video card."
+msgstr "Η κάρτα γραφικών \"%s\" δεν είναι διαθέσιμη λόγω έλλειψης των ROMs στον κατάλογο roms/video. Αλλάξτε σε διαθέσιμη κάρτα γραφικών."
 
-msgid "Video card #2 \"%hs\" is not available due to missing ROMs in the roms/video directory. Disabling the second video card."
-msgstr "Η κάρτα γραφικών #2 \"%hs\" δεν είναι διαθέσιμη λόγω έλλειψης των ROMs στον κατάλογο roms/video. Αλλάξτε σε διαθέσιμη κάρτα γραφικών."
+msgid "Video card #2 \"%s\" is not available due to missing ROMs in the roms/video directory. Disabling the second video card."
+msgstr "Η κάρτα γραφικών #2 \"%s\" δεν είναι διαθέσιμη λόγω έλλειψης των ROMs στον κατάλογο roms/video. Αλλάξτε σε διαθέσιμη κάρτα γραφικών."
 
-msgid "Device \"%hs\" is not available due to missing ROMs. Ignoring the device."
-msgstr "Η συσκευή \"%hs\" δεν είναι διαθέσιμη λόγω έλλειψης των ROMs. Παράκαμψη συσκευής."
+msgid "Device \"%s\" is not available due to missing ROMs. Ignoring the device."
+msgstr "Η συσκευή \"%s\" δεν είναι διαθέσιμη λόγω έλλειψης των ROMs. Παράκαμψη συσκευής."
 
 msgid "Machine"
 msgstr "Σύστημα"
@@ -1469,11 +1468,32 @@ msgstr "Το επιλεγμένο αρχείο θα επανεγγραφεί. Θ
 msgid "Unsupported disk image"
 msgstr "Μη υποστηριζόμενη εικόνα δίσκου"
 
-msgid "Overwrite"
-msgstr "Επανεγγραφή"
+msgid "Unable to read device"
+msgstr ""
 
-msgid "Don't overwrite"
-msgstr "Να μην γίνει επανεγγραφή"
+msgid "Could not determine block device size. Make sure you have permission to access this device."
+msgstr ""
+
+msgid "Device too large"
+msgstr ""
+
+msgid "Block device is too large to be used as a hard disk."
+msgstr ""
+
+msgid "Block device detected"
+msgstr ""
+
+msgid "Detected block device: %1\nSize: %2 MB\nGeometry: %3 cylinders, %4 heads, %5 sectors"
+msgstr ""
+
+msgid "Failed to write the disk image."
+msgstr ""
+
+msgid "Failed to read the disk image."
+msgstr ""
+
+msgid "The disk image has been successfully created."
+msgstr ""
 
 msgid "Raw image"
 msgstr "Εικόνα Raw"
@@ -1822,17 +1842,17 @@ msgstr "MiB"
 msgid "GiB"
 msgstr "GiB"
 
-msgid "Network Card #1"
-msgstr "Κάρτα δικτύου #1"
+msgid "Adapter 1"
+msgstr "Προσαρμογέας 1"
 
-msgid "Network Card #2"
-msgstr "Κάρτα δικτύου #2"
+msgid "Adapter 2"
+msgstr "Προσαρμογέας 2"
 
-msgid "Network Card #3"
-msgstr "Κάρτα δικτύου #3"
+msgid "Adapter 3"
+msgstr "Προσαρμογέας 3"
 
-msgid "Network Card #4"
-msgstr "Κάρτα δικτύου #4"
+msgid "Adapter 4"
+msgstr "Προσαρμογέας 4"
 
 msgid "Mode:"
 msgstr "Λειτουργία:"
@@ -2006,7 +2026,7 @@ msgid "BIOS Language"
 msgstr "Γλώσσα BIOS"
 
 msgid "Variant"
-msgstr ""
+msgstr "Παραλλαγή"
 
 msgid "IBM 5161 Expansion Unit"
 msgstr "Επέκταση μονάδας IBM 5161"
@@ -2389,20 +2409,47 @@ msgstr "Μέγεθος μνήμης EMS 2"
 msgid "Enable EMS"
 msgstr "Ενεργοποίηση EMS"
 
-msgid "Enable EMS 1"
-msgstr "Ενεργοποίηση EMS 1"
-
-msgid "Enable EMS 2"
-msgstr "Ενεργοποίηση EMS 2"
-
 msgid "Address for > 2 MB"
 msgstr "Διεύθυνση για > 2 MB"
 
 msgid "Frame Address"
 msgstr "Διεύθυνση πλαισίου"
 
-msgid "USA"
-msgstr "ΗΠΑ"
+msgid "English"
+msgstr ""
+
+msgid "English (US)"
+msgstr ""
+
+msgid "English (UK)"
+msgstr ""
+
+msgid "English (Canada)"
+msgstr ""
+
+msgid "German"
+msgstr ""
+
+msgid "French"
+msgstr ""
+
+msgid "Spanish"
+msgstr ""
+
+msgid "Swedish"
+msgstr ""
+
+msgid "Italian"
+msgstr ""
+
+msgid "Portuguese"
+msgstr ""
+
+msgid "Norwegian"
+msgstr ""
+
+msgid "Greek"
+msgstr ""
 
 msgid "Danish"
 msgstr "Δανικά"
@@ -2600,9 +2647,6 @@ msgstr "Κλίμακα του γκρι"
 msgid "Color"
 msgstr "Έγχρωμο"
 
-msgid "U.S. English"
-msgstr "Αγγλικά Η.Π."
-
 msgid "Scandinavian"
 msgstr "Σκανδιναβικά"
 
@@ -2682,38 +2726,82 @@ msgid "Protection Dongle for Savage Quest"
 msgstr "Dongle προστασίας για το Savage Quest"
 
 msgid "Loopback Plug"
+msgstr "Βύσμα Loopback"
+
+msgid "Serial Passthrough"
+msgstr "Σειριακή Διέλευση"
+
+msgid "Host serial device"
+msgstr "Σειριακή συσκευή οικοδεσπότη"
+
+msgid "Named Pipe"
+msgstr "Ονομασμένο Pipe"
+
+msgid "Output file"
 msgstr ""
 
-#, fuzzy
-msgid "Serial Passthrough"
-msgstr "Συσκευή Σειριακής Διέλευσης"
+msgid "Append to file if it exists"
+msgstr ""
 
-msgid "Passthrough Mode"
-msgstr "Λειτουργία Διέλευσης"
+msgid "Input file"
+msgstr ""
 
-msgid "Host Serial Device"
-msgstr "Σειριακή Συσκευή Οικοδεσπότη"
+msgid "Loop input file"
+msgstr ""
 
-msgid "Name of pipe"
-msgstr "Όνομα pipe"
+msgid "Require STROBE signal"
+msgstr ""
 
-msgid "Data bits"
-msgstr "Bits δεδομένων"
+msgid "Loopback Type"
+msgstr ""
 
-msgid "Stop bits"
-msgstr "Bits σταματήματος"
+msgid "Parallel cable"
+msgstr ""
 
-msgid "Baud Rate of Passthrough"
-msgstr "Ρυθμός Baud της Διέλευσης"
+msgid "Unidirectional (8-bit) / LapLink (4-bit)"
+msgstr ""
 
-msgid "Named Pipe (Server)"
-msgstr "Ονομασμένο Pipe (Διακομιστής)"
+msgid "Bidirectional (8-bit)"
+msgstr ""
 
-msgid "Named Pipe (Client)"
-msgstr "Ονομασμένο Pipe (Πελάτης)"
+msgid "Pipe path"
+msgstr ""
 
-msgid "Host Serial Passthrough"
-msgstr "Σειριακή Διέλευση Οικοδεσπότη"
+msgid "FIFO / terminal"
+msgstr ""
+
+msgid "Mode"
+msgstr ""
+
+msgid "Server"
+msgstr "Διακομιστής"
+
+msgid "Client"
+msgstr "Πελάτης"
+
+msgid "Reconnect automatically"
+msgstr ""
+
+msgid "Use standard input/output"
+msgstr ""
+
+msgid "Create pseudoterminal"
+msgstr ""
+
+msgid "Start terminal emulator"
+msgstr ""
+
+msgid "Run custom command"
+msgstr ""
+
+msgid "Custom command"
+msgstr ""
+
+msgid "Run custom command in terminal"
+msgstr ""
+
+msgid "Virtual Console"
+msgstr ""
 
 msgid "E&ject %1"
 msgstr "&Εξαγωγή %1"
@@ -2757,8 +2845,8 @@ msgstr "[Γενικό] 1998 (5400 RPM)"
 msgid "[Generic] 2000 (7200 RPM)"
 msgstr "[Γενικό] 2000 (7200 RPM)"
 
-msgid "IBM 8514/A clone (ISA)"
-msgstr "Κλώνος IBM 8514/A (ISA)"
+msgid "IBM 8514/A clone"
+msgstr "Κλώνος IBM 8514/A"
 
 msgid "Vendor"
 msgstr "Πωλητής"
@@ -2776,10 +2864,10 @@ msgid "Generic PC/AT Memory Expansion"
 msgstr "Γενική Επέκταση Μνήμης PC/AT"
 
 msgid "Generic MM58167 RTC"
-msgstr ""
+msgstr "Γενικό MM58167 RTC"
 
 msgid "OPL2Board (External Device)"
-msgstr ""
+msgstr "OPL2Board (Εξωτερική Συσκευή)"
 
 msgid "Unable to find Dot-Matrix fonts"
 msgstr "Αδυναμία εύρεσης γραμματοσειρών Dot-Matrix"
@@ -2853,10 +2941,10 @@ msgid "Could not load file %1"
 msgstr "Αδυναμία φόρτωσης αρχείου %1"
 
 msgid "Emulator"
-msgstr ""
+msgstr "Εξομοιωτής"
 
 msgid "Input"
-msgstr ""
+msgstr "Είσοδος"
 
 msgid "Key bindings"
 msgstr "Αντιστοιχίσεις πλήκτρων"
@@ -3081,14 +3169,14 @@ msgstr "Εξαγωγή…"
 msgid "Export EDID"
 msgstr "Εξαγωγή EDID"
 
-msgid "EDID file \"%ls\" is too large."
-msgstr "Το αρχείο EDID \"%ls\" είναι πολύ μεγάλο."
+msgid "EDID file \"%s\" is too large."
+msgstr "Το αρχείο EDID \"%s\" είναι πολύ μεγάλο."
 
 msgid "OpenGL input scale"
-msgstr "Κλίμακα OpenGL input"
+msgstr "Κλίμακα εισόδου OpenGL"
 
 msgid "OpenGL input stretch mode"
-msgstr "OpenGL input σε λειτουργία τεντώματος"
+msgstr "Είσοδος OpenGL σε λειτουργία τεντώματος"
 
 msgid "Color scheme"
 msgstr "Συνδυασμός χρωμάτων"
@@ -3124,10 +3212,163 @@ msgid "Raw"
 msgstr "Αρχικος"
 
 msgid "Use EDC/ECC emulation"
-msgstr ""
+msgstr "Χρήση εξομοίωσης EDC/ECC"
 
 msgid "Audio output device:"
 msgstr "Συσκευή εξόδου ήχου:"
 
 msgid "System Default"
 msgstr "Προεπιλογή Συστήματος"
+
+msgid "Unable to open image or folder \"%s\"."
+msgstr ""
+
+msgid "Unable to open cue sheet \"%s\"."
+msgstr ""
+
+msgid "Unable to open MDS file \"%s\"."
+msgstr ""
+
+msgid "Unable to load CD-ROM image \"%s\"."
+msgstr ""
+
+msgid "Unable to load image \"%s\": mdsx.so is missing, which is required for Daemon Tools MDS v2 and MDX image support."
+msgstr ""
+
+msgid "The DVD image \"%s\" has been inserted into a drive that does not support DVD media and will be ignored."
+msgstr ""
+
+msgid "%s: Could not connect to %s: %s"
+msgstr ""
+
+msgid "%s: Could not create %s: %s"
+msgstr ""
+
+msgid "%s: Attached to %s"
+msgstr ""
+
+msgid "%s: Virtual console already in use by %s"
+msgstr ""
+
+msgid "%s: Could not create terminal: %s"
+msgstr ""
+
+msgid "Auto-detect"
+msgstr ""
+
+msgid "Channel"
+msgstr ""
+
+msgid "Both Channels"
+msgstr ""
+
+msgid "Left Channel"
+msgstr ""
+
+msgid "Right Channel"
+msgstr ""
+
+msgid "Allow Flash BIOS Updates"
+msgstr ""
+
+msgid "Slot #"
+msgstr ""
+
+msgid "Parallel Port"
+msgstr ""
+
+msgid "Paper Size"
+msgstr ""
+
+msgid "Legal (sideways)"
+msgstr ""
+
+msgid "B4 (sideways)"
+msgstr ""
+
+msgid "Quality"
+msgstr ""
+
+msgid "Draft"
+msgstr ""
+
+msgid "(Near) Letter"
+msgstr ""
+
+msgid "Auto LF"
+msgstr ""
+
+msgid "Tandy PSSJ Clone"
+msgstr ""
+
+msgid "PC-CM (Color)"
+msgstr ""
+
+msgid "PC-MM (Monochrome)"
+msgstr ""
+
+msgid "White Monochrome"
+msgstr ""
+
+msgid "Hardware font"
+msgstr ""
+
+msgid "Diagnostic mode"
+msgstr ""
+
+msgid "CGA monitor"
+msgstr ""
+
+msgid "MDA monitor"
+msgstr ""
+
+msgid "Television"
+msgstr ""
+
+msgid "Invert LCD colors"
+msgstr ""
+
+msgid "LCD (CGA mode)"
+msgstr ""
+
+msgid "LCD (MDA mode)"
+msgstr ""
+
+msgid "Disabled (250h)"
+msgstr ""
+
+msgid "Enabled (350h)"
+msgstr ""
+
+msgid "Test mode"
+msgstr ""
+
+msgid "32 MB"
+msgstr ""
+
+msgid "64 MB"
+msgstr ""
+
+msgid "2048 MB"
+msgstr ""
+
+msgid "Refresh rate"
+msgstr ""
+
+msgid "US (CP 437)"
+msgstr ""
+
+msgid "IBM Nordic (CP 437-Nordic)"
+msgstr ""
+
+msgid "Czech Kamenicky (CP 895) #1"
+msgstr ""
+
+msgid "Czech Kamenicky (CP 895) #2"
+msgstr ""
+
+msgid "932 (Japanese)"
+msgstr ""
+
+msgid "938 (Traditional Chinese)"
+msgstr ""
