@@ -75,8 +75,9 @@ extern "C" {
 #include <iostream>
 #include <memory>
 
+#include "qt_defs.hpp"
 #include "qt_mainwindow.hpp"
-#include "qt_progsettings.hpp"
+#include "qt_preferences.hpp"
 #include "qt_settings.hpp"
 #include "cocoa_mouse.hpp"
 #include "qt_styleoverride.hpp"
@@ -100,6 +101,7 @@ extern int  qt_nvr_save(void);
 extern void exit_pause(void);
 
 bool cpu_thread_running = false;
+bool fast_forward = false;
 }
 
 #include <locale.h>
@@ -399,7 +401,8 @@ emu_LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         ret = CallNextHookEx(NULL, nCode, wParam, lParam);
 
     if (lpKdhs->scanCode == 0x00000045) {
-        if ((lpKdhs->flags & LLKHF_EXTENDED) && (lpKdhs->vkCode == 0x00000090)) {
+        if ((lpKdhs->flags & LLKHF_EXTENDED) && ((lpKdhs->vkCode == 0x00000090) ||
+                                                 (lpKdhs->vkCode == 0x00000013))) {
             /* NumLock. */
             lpKdhs->flags &= ~LLKHF_EXTENDED;
         } else if (!(lpKdhs->flags & LLKHF_EXTENDED) && (lpKdhs->vkCode == 0x00000013)) {
@@ -452,7 +455,7 @@ main_thread_fn()
 #endif
             drawits += static_cast<int>(new_time - old_time);
         old_time = new_time;
-        if (drawits > 0 && !dopause) {
+        if ((drawits > 0 || fast_forward) && !dopause) {
             /* Yes, so run frames now. */
             do {
 #ifdef USE_INSTRUMENT
@@ -478,8 +481,9 @@ main_thread_fn()
                 }
                 
                 drawits -= force_10ms ? 10 : 1;
-                if (drawits > 50)
+                if (drawits > 50 || fast_forward)
                     drawits = 0;
+
             } while (drawits > 0);
         } else {
             /* Just so we dont overload the host OS. */
@@ -577,6 +581,7 @@ main(int argc, char *argv[])
     }
 #endif
 
+    app.setApplicationName(EMU_NAME);
     Q_INIT_RESOURCE(qt_resources);
     Q_INIT_RESOURCE(qt_translations);
 
@@ -617,23 +622,14 @@ main(int argc, char *argv[])
 
     bool startMaximized = window_remember && monitor_settings[0].mon_window_maximized;
     fprintf(stderr, "Qt: version %s, platform \"%s\"\n", qVersion(), QApplication::platformName().toUtf8().data());
-    ProgSettings::loadTranslators(&app);
+    Preferences::loadTranslators(&app);
 #ifdef Q_OS_WINDOWS
-    QApplication::setFont(QFont(ProgSettings::getFontName(lang_id), 9));
+    QApplication::setFont(Preferences::getUIFont());
     SetCurrentProcessExplicitAppUserModelID(L"86Box.86Box");
 #endif
 
 #ifndef Q_OS_MACOS
-#    ifdef RELEASE_BUILD
-    app.setWindowIcon(QIcon(":/settings/qt/icons/86Box-green.ico"));
-#    elif defined ALPHA_BUILD
-    app.setWindowIcon(QIcon(":/settings/qt/icons/86Box-red.ico"));
-#    elif defined BETA_BUILD
-    app.setWindowIcon(QIcon(":/settings/qt/icons/86Box-yellow.ico"));
-#    else
-    app.setWindowIcon(QIcon(":/settings/qt/icons/86Box-gray.ico"));
-#    endif
-
+    app.setWindowIcon(QIcon(EMU_ICON_PATH));
 #    ifdef Q_OS_UNIX
     app.setDesktopFileName("net.86box.86Box");
 #    endif
@@ -889,6 +885,7 @@ main(int argc, char *argv[])
         QObject::connect(&discordupdate, &QTimer::timeout, &app, [] {
             discord_run_callbacks();
         });
+        discordupdate.setInterval(1000);
         if (enable_discord)
             discordupdate.start(1000);
     }

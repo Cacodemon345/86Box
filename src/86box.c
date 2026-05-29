@@ -83,6 +83,7 @@
 #include <86box/fdc.h>
 #include <86box/fdc_ext.h>
 #include <86box/hdd.h>
+#include <86box/hdd_audio.h>
 #include <86box/hdc.h>
 #include <86box/hdc_ide.h>
 #include <86box/scsi.h>
@@ -91,6 +92,7 @@
 #include <86box/cdrom_interface.h>
 #include <86box/rdisk.h>
 #include <86box/mo.h>
+#include <86box/scsi_tape.h>
 #include <86box/scsi_disk.h>
 #include <86box/cdrom_image.h>
 #include <86box/thread.h>
@@ -272,8 +274,28 @@ struct accelKey def_acc_keys[NUM_ACCELS] = {
     },
     {
         .name="screenshot",
-        .desc="Screenshot",
+        .desc="Take screenshot",
         .seq="Ctrl+F11"
+    },
+    {
+        .name="raw_screenshot",
+        .desc="Take raw screenshot",
+        .seq=""
+    },
+    {
+        .name="copy_screenshot",
+        .desc="Copy screenshot",
+        .seq=""
+    },
+    {
+        .name="copy_raw_screenshot",
+        .desc="Copy raw screenshot",
+        .seq=""
+    },
+    {
+        .name="fast_forward",
+        .desc="Fast forward",
+        .seq="Ctrl+Alt+F"
     },
     {
         .name="release_mouse",
@@ -482,8 +504,6 @@ fatal(const char *fmt, ...)
 
     nvr_save();
 
-    config_save();
-
 #ifdef ENABLE_808X_LOG
     dumpregs(1);
 #endif
@@ -525,8 +545,6 @@ fatal_ex(const char *fmt, va_list ap)
     fflush(stdlog);
 
     nvr_save();
-
-    config_save();
 
 #ifdef ENABLE_808X_LOG
     dumpregs(1);
@@ -642,7 +660,7 @@ delete_nvr_file(uint8_t flash)
 
     /* Set up the NVR file's name. */
     c       = strlen(machine_get_nvr_name()) + 5;
-    fn      = (char *) malloc(c + 1);
+    fn      = (char *) calloc(1, c + 1);
 
     if (fn == NULL)
         fatal("Error allocating memory for the removal of the %s file\n",
@@ -662,12 +680,12 @@ delete_nvr_file(uint8_t flash)
 extern void  device_find_all_descs(void);
 
 static void
-pc_show_usage(char *s)
+pc_show_usage(void)
 {
     char p[8192] = { 0 };
 
     sprintf(p,
-            "\n%sUsage: 86box [options] [cfg-file]\n\n"
+            "\nUsage: 86box [options] [cfg-file]\n\n"
             "Valid options are:\n\n"
             "-? or --help\t\t\t- show this information\n"
             "-A or --assetpath path\t\t- set 'path' to be asset path\n"
@@ -716,16 +734,12 @@ pc_show_usage(char *s)
             "-Y or --donothing\t\t- do not show any UI or run the emulation\n"
 #endif
             "-Z or --lastvmpath\t\t- the last param. is VM path rather than config\n"
-            "\nA config file can be specified. If none is, the default file will be used.\n",
-            s);
+            "\nA config file can be specified. If none is, the default file will be used.\n");
 
 #ifdef _WIN32
-    ui_msgbox(MBX_ANSI | ((s == NULL) ? MBX_INFO : MBX_WARNING), p);
+    ui_msgbox(MBX_ANSI | MBX_INFO, p);
 #else
-    if (s == NULL)
-        always_log("%s", p);
-    else
-        ui_msgbox(MBX_ANSI | MBX_WARNING, p);
+    always_log("%s", p);
 #endif
 }
 
@@ -825,7 +839,7 @@ usage:
                 }
             }
 
-            pc_show_usage("");
+            pc_show_usage();
             return 0;
         } else if (!strcasecmp(argv[c], "--lastvmpath") || !strcasecmp(argv[c], "-Z")) {
             lvmp = 1;
@@ -1219,6 +1233,13 @@ usage:
     pclog("# Emulator path: %s\n", exe_path);
     pclog("# Global configuration file: %s\n", global_cfg_path);
 
+    /* Initialize the keyboard accelerator list with default values */
+    for (int x = 0; x < NUM_ACCELS; x++) {
+        strcpy(acc_keys[x].name, def_acc_keys[x].name);
+        strcpy(acc_keys[x].desc, def_acc_keys[x].desc);
+        strcpy(acc_keys[x].seq, def_acc_keys[x].seq);
+    }
+
     /* Load the global configuration file. */
     config_load_global();
     config_save_global(); // hack
@@ -1277,16 +1298,12 @@ usage:
         cdrom_global_init();
         rdisk_global_init();
         mo_global_init();
-
-        /* Initialize the keyboard accelerator list with default values */
-        for (int x = 0; x < NUM_ACCELS; x++) {
-            strcpy(acc_keys[x].name, def_acc_keys[x].name);
-            strcpy(acc_keys[x].desc, def_acc_keys[x].desc);
-            strcpy(acc_keys[x].seq, def_acc_keys[x].seq);
-        }
+        tape_global_init();
 
         /* Load the configuration file. */
         config_load();
+        /* To save the global key binds. */
+        config_save_global();
 
         /* Clear the CMOS and/or BIOS flash file, if we were started with
            the relevant parameter(s). */
@@ -1354,7 +1371,7 @@ pc_init_roms(void)
         while (machine_get_internal_name_ex(c) != NULL) {
             m = machine_available(c);
             if (!m)
-                pclog("Missing machine: %s\n", machine_getname_ex(c));
+                pclog("Missing machine: %s\n", machine_getname(c));
             c++;
         }
 
@@ -1395,7 +1412,7 @@ pc_init_modules(void)
 
     /* Load the ROMs for the selected machine. */
     if (!machine_available(machine)) {
-        swprintf(temp, sizeof_w(temp), plat_get_string(STRING_HW_NOT_AVAILABLE_MACHINE), machine_getname());
+        swprintf(temp, sizeof_w(temp), plat_get_string(STRING_HW_NOT_AVAILABLE_MACHINE), machine_getname(machine));
         c       = 0;
         machine = -1;
         while (machine_get_internal_name_ex(c) != NULL) {
@@ -1477,6 +1494,9 @@ pc_init_modules(void)
         fdd_audio_load_profiles();
         fdd_audio_init();
     }
+    
+    hdd_audio_load_profiles();
+    hdd_audio_init();
 
     sound_init();
 
@@ -1507,6 +1527,8 @@ pc_init_modules(void)
 void
 pc_send_ca(uint16_t sc)
 {
+    keyboard_toggle_override();
+
     if (keyboard_mode >= 0x81) {
         /* Use R-Alt because PS/55 DOS and OS/2 assign L-Alt Kanji */
         keyboard_input(1, 0x1D);  /*  Ctrl key pressed */
@@ -1553,6 +1575,8 @@ pc_send_ca(uint16_t sc)
         if (keyboard_get_in_reset())
             return;
     }
+
+    keyboard_toggle_override();
 }
 
 /* Send the machine a Control-Alt-DEL sequence. */
@@ -1576,12 +1600,22 @@ pc_send_cae(void)
    extern void     softresetx86(void);
    extern void     hardresetx86(void);
 
+   extern void     biu_set_bus_cycle(int bus_cycle);
+   extern void     biu_set_bus_state(int bus_state);
+   extern void     biu_set_bus_next_state(int bus_next_state);
+   extern void     biu_set_cycle_t1(void);
+   extern void     biu_set_next_cycle(void);
+   extern int      biu_get_bus_cycle(void);
+   extern int      biu_get_bus_state(void);
+   extern int      biu_get_bus_next_state(void);
    extern void     prefetch_queue_set_pos(int pos);
    extern void     prefetch_queue_set_ip(uint16_t ip);
-   extern void     prefetch_queue_set_prefetching(int p);
+   extern void     prefetch_queue_set_in(uint16_t in);
+   extern void     prefetch_queue_set_suspended(int p);
    extern int      prefetch_queue_get_pos(void);
    extern uint16_t prefetch_queue_get_ip(void);
-   extern int      prefetch_queue_get_prefetching(void);
+   extern uint16_t prefetch_queue_get_in(void);
+   extern int      prefetch_queue_get_suspended(void);
    extern int      prefetch_queue_get_size(void);
  */
 static void
@@ -1623,6 +1657,8 @@ pc_reset_hard_close(void)
     rdisk_close();
 
     mo_close();
+
+    tape_close();
 
     scsi_disk_close();
 
@@ -1676,6 +1712,8 @@ pc_reset_hard_init(void)
 
     ide_hard_reset();
 
+    lpt_ports_reset();
+
     /* Initialize the actual machine and its basic modules. */
     machine_init();
 
@@ -1725,6 +1763,9 @@ pc_reset_hard_init(void)
 
     fdd_reset();
 
+    /* Reset HDD audio to pick up any profile changes */
+    hdd_audio_reset();
+
     /* Reset and reconfigure the SCSI layer. */
     scsi_card_init();
 
@@ -1736,6 +1777,8 @@ pc_reset_hard_init(void)
     cdrom_interface_reset();
 
     mo_hard_reset();
+
+    tape_hard_reset();
 
     rdisk_hard_reset();
 
@@ -1822,7 +1865,7 @@ update_mouse_msg(void)
     wchar_t  wmachine[2048];
     wchar_t *wcp;
 
-    mbstowcs(wmachine, machine_getname(), strlen(machine_getname()) + 1);
+    mbstowcs(wmachine, machine_getname(machine), strlen(machine_getname(machine)) + 1);
 
     if (!cpu_override)
         mbstowcs(wcpufamily, cpu_f->name, strlen(cpu_f->name) + 1);
@@ -1842,11 +1885,33 @@ update_mouse_msg(void)
     swprintf(mouse_msg[2], sizeof_w(mouse_msg[2]), L"%ls v%ls - %%i%%%% - %ls - %ls/%ls",
              EMU_NAME_W, EMU_VERSION_FULL_W, wmachine, wcpufamily, wcpu);
 #else
+#ifdef __APPLE__
+    /*
+     * On macOS, BSD swprintf fails (returns -1) when the format string
+     * or a %ls argument contains non-ASCII wide characters (e.g. the
+     * native key symbols ⌘ U+2318, ⌫ U+232B) and the C locale is
+     * active.  Store just the message suffixes here; the title update
+     * path in pc_render_monitor_dispatch() builds the full string
+     * without swprintf.
+     */
+    wcsncpy(mouse_msg[0], plat_get_string(STRING_MOUSE_CAPTURE), sizeof_w(mouse_msg[0]) - 1);
+    mouse_msg[0][sizeof_w(mouse_msg[0]) - 1] = L'\0';
+
+    {
+        wchar_t *rel = (mouse_get_buttons() > 2) ? plat_get_string(STRING_MOUSE_RELEASE)
+                                                  : plat_get_string(STRING_MOUSE_RELEASE_MMB);
+        wcsncpy(mouse_msg[1], rel, sizeof_w(mouse_msg[1]) - 1);
+        mouse_msg[1][sizeof_w(mouse_msg[1]) - 1] = L'\0';
+    }
+
+    mouse_msg[2][0] = L'\0';
+#else
     swprintf(mouse_msg[0], sizeof_w(mouse_msg[0]), L"%%i%%%% - %ls",
              plat_get_string(STRING_MOUSE_CAPTURE));
     swprintf(mouse_msg[1], sizeof_w(mouse_msg[1]), L"%%i%%%% - %ls",
              (mouse_get_buttons() > 2) ? plat_get_string(STRING_MOUSE_RELEASE) : plat_get_string(STRING_MOUSE_RELEASE_MMB));
     wcsncpy(mouse_msg[2], L"%i%%", sizeof_w(mouse_msg[2]));
+#endif
 #endif
 }
 
@@ -1869,8 +1934,6 @@ pc_close(UNUSED(thread_t *ptr))
     is_quit = 1;
 
     nvr_save();
-
-    config_save();
 
     plat_mouse_capture(0);
 
@@ -1909,6 +1972,8 @@ pc_close(UNUSED(thread_t *ptr))
     rdisk_close();
 
     mo_close();
+
+    tape_close();
 
     scsi_disk_close();
 
@@ -1980,11 +2045,20 @@ pc_run(void)
         else
             fps = ((fps + 20) / 50) * 50;
 #endif
-        swprintf(temp, sizeof_w(temp), mouse_msg[mouse_msg_idx], fps / (force_10ms ? 1 : 10));
 #ifdef __APPLE__
+        /*
+         * mouse_msg[] stores suffixes only on macOS (see update_mouse_msg).
+         * Build the title without passing non-ASCII chars through swprintf.
+         */
+        swprintf(temp, sizeof_w(temp), L"%i%%", fps / (force_10ms ? 1 : 10));
+        if (mouse_msg[mouse_msg_idx][0]) {
+            wcsncat(temp, L" - ", sizeof_w(temp) - wcslen(temp) - 1);
+            wcsncat(temp, mouse_msg[mouse_msg_idx], sizeof_w(temp) - wcslen(temp) - 1);
+        }
         /* Needed due to modifying the UI on the non-main thread is a big no-no. */
         dispatch_async_f(dispatch_get_main_queue(), wcsdup((const wchar_t *) temp), _ui_window_title);
 #else
+        swprintf(temp, sizeof_w(temp), mouse_msg[mouse_msg_idx], fps / (force_10ms ? 1 : 10));
         ui_window_title(temp);
 #endif
         title_update = 0;

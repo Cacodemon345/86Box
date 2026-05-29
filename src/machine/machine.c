@@ -69,7 +69,7 @@ machine_init_ex(int m)
     int ret = 0;
 
     if (!bios_only) {
-        machine_log("Initializing as \"%s\"\n", machine_getname());
+        machine_log("Initializing as \"%s\"\n", machine_getname(machine));
 
         machine_init_p1();
 
@@ -117,6 +117,9 @@ machine_init_ex(int m)
         cpu_fast_off_reset();
 
         pci_flags = 0x00000000;
+
+        if (machines[m].nvr_device)
+            device_add_params(machines[m].nvr_device, (void *) (uintptr_t) machines[m].nvr_params);
     }
 
     is_pcjr = 0;

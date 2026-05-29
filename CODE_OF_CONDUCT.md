@@ -3,7 +3,7 @@ In order for everyone to enjoy their time contributing to 86Box or otherwise bei
 
 ## 1. No illegal activity or GitHub ToS violations
 - 1.1. Do not distribute malware for non-research purposes. Post samples in a clearly named encrypted archive.
-- 1.2. Posting old software is allowed if at least 10 years old and out of support.
+- 1.2. Disclosure of copyrighted materials is permitted only if they are demo/trial versions, shareware, freeware, or open-source software, or if they are disclosed by the copyright holder or on the copyright holder’s behalf. If such materials need to be disclosed for testing or bug-fixing purposes, any available private channels should be used. Developers undertake to remove any materials obtained for such purposes as soon as they are no longer needed.
 - 1.3. Do not post NSFW content (defined at the staff's discretion).
 - 1.4. Do not do anything forbidden by the law or the Discord or GitHub Terms of Service.
 
@@ -14,7 +14,7 @@ In order for everyone to enjoy their time contributing to 86Box or otherwise bei
 - 2.4. Do not antagonize, defame, demean, blackmail, impersonate, dox others, bring outside drama, use intentionally offensive profile aspects, or otherwise post messages to start a fight (eg. platform wars). Discuss or debate the idea, not the person.
 - 2.5. Do not backseat moderate, spam, flood, unsolicitedly ping people, advertise without permission, or evade blocks.
 - 2.6. Do not speak on behalf of the project unless you are a team member. This includes all messages which could reasonably be understood as being an official position. Ask a team member if you're unsure about your message.
-- 2.7. Decisions by higher-ranked users supersede those by lower-ranked users.
+- 2.7. Decisions by higher-ranked users supersede those by lower-ranked users. This applies to moderation **and** emulator development. Rank and seniority must be earned.
 - 2.8. Do not engage in political discussions.
 - 2.9. Ignoring essential communication from team members does not exempt you from possible actions against you. Seniority must be earned.
 

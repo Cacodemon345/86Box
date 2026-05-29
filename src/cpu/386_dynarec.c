@@ -280,7 +280,7 @@ update_tsc(void)
         tsc += cycdiff;
 
     if (cycdiff > 0) {
-        if (TIMER_VAL_LESS_THAN_VAL(timer_target, (uint32_t) tsc))
+        if (TIMER_VAL_LESS_THAN_VAL(timer_target, (uint64_t) tsc))
             timer_process();
     }
 }
@@ -319,7 +319,7 @@ exec386_dynarec_int(void)
             fetchdat >>= 8;
 
 #    ifdef USE_DEBUG_REGS_486
-            trap |= !!(cpu_state.flags & T_FLAG);
+            trap = (trap & ~1) | (!!(cpu_state.flags & T_FLAG));
 #    else
             trap = cpu_state.flags & T_FLAG;
 #    endif
@@ -374,7 +374,9 @@ exec386_dynarec_int(void)
 
 block_ended:
     if (!cpu_state.abrt && !new_ne && trap) {
-        dr[6] |= (trap == 2) ? 0x8000 : 0x4000;
+        if (trap & 2) dr[6] |= 0x8000;
+        if (trap & 1) dr[6] |= 0x4000;
+        if (trap & 16) dr[6] |= 0x2000;
 
         trap = 0;
 #    ifndef USE_NEW_DYNAREC
@@ -445,16 +447,15 @@ exec386_dynarec_dyn(void)
         if (valid_block && (block->page_mask & *block->dirty_mask)) {
 #    ifdef USE_NEW_DYNAREC
             codegen_check_flush(page, page->dirty_mask, phys_addr);
-            if (block->pc == BLOCK_PC_INVALID)
-                valid_block = 0;
-            else if (block->flags & CODEBLOCK_IN_DIRTY_LIST)
+            if (block->valid && (block->flags & CODEBLOCK_IN_DIRTY_LIST))
                 block->flags &= ~CODEBLOCK_WAS_RECOMPILED;
+            else
 #    else
             codegen_check_flush(page, page->dirty_mask[(phys_addr >> 10) & 3], phys_addr);
             page->dirty_mask[(phys_addr >> 10) & 3] = 0;
+#    endif
             if (!block->valid)
                 valid_block = 0;
-#    endif
         }
         if (valid_block && block->page_mask2) {
             /* We don't want the second page to cause a page
@@ -476,16 +477,15 @@ exec386_dynarec_dyn(void)
             else if (block->page_mask2 & *block->dirty_mask2) {
 #    ifdef USE_NEW_DYNAREC
                 codegen_check_flush(page_2, page_2->dirty_mask, phys_addr_2);
-                if (block->pc == BLOCK_PC_INVALID)
-                    valid_block = 0;
-                else if (block->flags & CODEBLOCK_IN_DIRTY_LIST)
+                if (block->valid && (block->flags & CODEBLOCK_IN_DIRTY_LIST))
                     block->flags &= ~CODEBLOCK_WAS_RECOMPILED;
+                else
 #    else
                 codegen_check_flush(page_2, page_2->dirty_mask[(phys_addr_2 >> 10) & 3], phys_addr_2);
                 page_2->dirty_mask[(phys_addr_2 >> 10) & 3] = 0;
+#    endif
                 if (!block->valid)
                     valid_block = 0;
-#    endif
             }
         }
 #    ifdef USE_NEW_DYNAREC
@@ -865,7 +865,7 @@ exec386_dynarec(int32_t cycs)
             }
 
             if (cycdiff > 0) {
-                if (TIMER_VAL_LESS_THAN_VAL(timer_target, (uint32_t) tsc))
+                if (TIMER_VAL_LESS_THAN_VAL(timer_target, (uint64_t) tsc))
                     timer_process();
             }
 
@@ -894,7 +894,7 @@ exec386(int32_t cycs)
     cycles += cycs;
 
     while (cycles > 0) {
-        cycle_period = (timer_target - (uint32_t) tsc) + 1;
+        cycle_period = (timer_target - (uint64_t) tsc) + 1;
 
         x86_was_reset = 0;
         cycdiff       = 0;
@@ -942,7 +942,7 @@ exec386(int32_t cycs)
                 opcode = fetchdat & 0xFF;
                 fetchdat >>= 8;
 #ifdef USE_DEBUG_REGS_486
-                trap |= !!(cpu_state.flags & T_FLAG);
+                trap = (trap & ~1) | (!!(cpu_state.flags & T_FLAG));
 #else
                 trap = cpu_state.flags & T_FLAG;
 #endif
@@ -1021,6 +1021,7 @@ block_ended:
 #ifdef USE_DEBUG_REGS_486
                 if (trap & 2) dr[6] |= 0x8000;
                 if (trap & 1) dr[6] |= 0x4000;
+                if (trap & 16) dr[6] |= 0x2000;
 #endif
                 trap = 0;
 #ifndef USE_NEW_DYNAREC
@@ -1078,7 +1079,7 @@ block_ended:
                     fatal("Life expired\n");
             }
 
-            if (TIMER_VAL_LESS_THAN_VAL(timer_target, (uint32_t) tsc))
+            if (TIMER_VAL_LESS_THAN_VAL(timer_target, (uint64_t) tsc))
                 timer_process();
 
 #ifdef USE_GDBSTUB

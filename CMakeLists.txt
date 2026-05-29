@@ -11,7 +11,7 @@
 # Authors: David Hrdlička, <hrdlickadavid@outlook.com>
 #
 #          Copyright 2020-2021 David Hrdlička.
-#          Copyright 2021-2025 Jasmine Iwanek.
+#          Copyright 2021-2026 Jasmine Iwanek.
 #
 
 cmake_minimum_required(VERSION 3.16)
@@ -36,7 +36,7 @@ if(MUNT_EXTERNAL)
 endif()
 
 project(86Box
-    VERSION 5.4
+    VERSION 6.0
     DESCRIPTION "Emulator of x86-based systems"
     HOMEPAGE_URL "https://86box.net"
     LANGUAGES C CXX)
@@ -180,11 +180,9 @@ cmake_dependent_option(ISAMEM_RAMPAGE "AST Rampage"                             
 cmake_dependent_option(ISAMEM_IAB     "Intel Above Board"                        ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(ISAMEM_BRAT    "BocaRAM/AT"                               ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(OPL4ML         "OPL4-ML daughterboard"                    ON    "DEV_BRANCH"  OFF)
-cmake_dependent_option(PCL            "Generic PCL5e Printer"                    ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(SIO_DETECT     "Super I/O Detection Helper"               ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(WACOM          "Wacom Input Devices"                      ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(XL24           "ATI VGA Wonder XL24 (ATI-28800-6)"        ON    "DEV_BRANCH"  OFF)
-cmake_dependent_option(NETSWITCH      "Network Switch Support"                   ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(VFIO           "Virtual Function I/O"                     ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(SOFTMODEM      "AC'97 Softmodem"                          ON    "DEV_BRANCH"  OFF)
 
@@ -224,7 +222,7 @@ if(NOT EMU_BUILD_NUM)
     set(EMU_BUILD_NUM 0)
 endif()
 if(NOT EMU_COPYRIGHT_YEAR)
-    set(EMU_COPYRIGHT_YEAR 2025)
+    set(EMU_COPYRIGHT_YEAR 2026)
 endif()
 
 # Libasan

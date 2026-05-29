@@ -1,6 +1,6 @@
 msgid ""
 msgstr ""
-"PO-Revision-Date: 2025-12-30 13:56+0000\n"
+"PO-Revision-Date: 2026-04-05 18:51+0000\n"
 "Last-Translator: Alexander Babikov <lemondrops358@gmail.com>\n"
 "Language-Team: Russian <https://weblate.86box.net/projects/86box/86box/ru/>\n"
 "Language: ru-RU\n"
@@ -20,7 +20,7 @@ msgid "&Keyboard requires capture"
 msgstr "&Клавиатура требует захвата"
 
 msgid "&Right CTRL is left ALT"
-msgstr "&Правый CTRL - это левый ALT"
+msgstr "П&равый CTRL - это левый ALT"
 
 msgid "&Hard reset"
 msgstr "&Холодная перезагрузка"
@@ -145,53 +145,44 @@ msgstr "&Целочисленное масштабирование"
 msgid "4:&3 Integer scale"
 msgstr "4:&3 целочисленное масштабирование"
 
-msgid "EGA/(S)&VGA settings"
-msgstr "Настройки EGA/(S)&VGA"
+msgid "Inverted VGA monitor"
+msgstr "Инвертировать цвета VGA"
 
-msgid "&Inverted VGA monitor"
-msgstr "&Инвертировать цвета VGA"
+msgid "VGA screen type:"
+msgstr "Тип экрана VGA:"
 
-msgid "VGA screen &type"
-msgstr "&Тип экрана VGA"
-
-msgid "RGB &Color"
-msgstr "RGB &цветной"
+msgid "RGB Color"
+msgstr "RGB цветной"
 
 msgid "RGB (no brown)"
 msgstr "RGB (без коричневого)"
 
-msgid "&RGB Grayscale"
-msgstr "&RGB монохромный"
+msgid "RGB Grayscale"
+msgstr "RGB монохромный"
 
 msgid "Generic RGBI color monitor"
 msgstr "Стандартный цветной монитор RGBI"
 
-msgid "&Amber monitor"
-msgstr "&Янтарный оттенок"
+msgid "Amber monitor"
+msgstr "Янтарный оттенок"
 
-msgid "&Green monitor"
-msgstr "&Зелёный оттенок"
+msgid "Green monitor"
+msgstr "Зелёный оттенок"
 
-msgid "&White monitor"
-msgstr "&Белый оттенок"
+msgid "White monitor"
+msgstr "Белый оттенок"
 
-msgid "Grayscale &conversion type"
-msgstr "Тип монохромного &конвертирования"
+msgid "Grayscale conversion type:"
+msgstr "Тип монохромного конвертирования:"
 
-msgid "BT&601 (NTSC/PAL)"
-msgstr "BT&601 (NTSC/PAL)"
+msgid "Average"
+msgstr "Усреднённый"
 
-msgid "BT&709 (HDTV)"
-msgstr "BT&709 (HDTV)"
+msgid "Overscan"
+msgstr "Вылеты развёртки"
 
-msgid "&Average"
-msgstr "&Усреднённый"
-
-msgid "CGA/PCjr/Tandy/E&GA/(S)VGA overscan"
-msgstr "Вылеты развёртки CGA/PCjr/Tandy/E&GA/(S)VGA"
-
-msgid "Change contrast for &monochrome display"
-msgstr "Изменить контрастность &монохромного дисплея"
+msgid "Change contrast for monochrome display"
+msgstr "Изменить контрастность монохромного дисплея"
 
 msgid "&Media"
 msgstr "&Носители"
@@ -211,14 +202,26 @@ msgstr "&Обновление значков строки состояния"
 msgid "Take s&creenshot"
 msgstr "Сделать с&криншот"
 
+msgid "Take screenshot"
+msgstr "Сделать скриншот"
+
 msgid "Take &raw screenshot"
 msgstr "Сделать н&еобработанный скриншот"
+
+msgid "Take raw screenshot"
+msgstr "Сделать необработанный скриншот"
 
 msgid "C&opy screenshot"
 msgstr "Ско&пировать скриншот"
 
+msgid "Copy screenshot"
+msgstr "Скопировать скриншот"
+
 msgid "Copy r&aw screenshot"
 msgstr "Скопировать необработанный скрин&шот"
+
+msgid "Copy raw screenshot"
+msgstr "Скопировать необработанный скриншот"
 
 msgid "S&ound"
 msgstr "&Звук"
@@ -340,8 +343,32 @@ msgstr "Высота:"
 msgid "Lock to this size"
 msgstr "Зафиксировать размер"
 
+msgid "General"
+msgstr "Общие"
+
+msgid "Processor"
+msgstr "Процессор"
+
+msgid "Performance"
+msgstr "Производительность"
+
 msgid "Machine type:"
 msgstr "Тип машины:"
+
+msgid "[1989] i486 (Socket 168 and 1)"
+msgstr "[1989] i486 (Socket 168 и 1)"
+
+msgid "[1994] i486 (Miscellaneous)"
+msgstr "[1994] i486 (разное)"
+
+msgid "[1995] Socket 7 (Single Voltage)"
+msgstr "[1995] Socket 7 (без двойного питания)"
+
+msgid "[1996] Socket 7 (Dual Voltage)"
+msgstr "[1995] Socket 7 (двойное питание)"
+
+msgid "Miscellaneous"
+msgstr "Разное"
 
 msgid "Machine:"
 msgstr "Системная плата:"
@@ -361,8 +388,14 @@ msgstr "Скорость:"
 msgid "Frequency:"
 msgstr "Частота:"
 
+msgid "%1 MHz"
+msgstr "%1 МГц"
+
 msgid "FPU:"
 msgstr "FPU:"
+
+msgid "Internal"
+msgstr "Встроенный"
 
 msgid "Wait states:"
 msgstr "Циклы ожидания:"
@@ -385,6 +418,9 @@ msgstr "Включено (местное)"
 msgid "Enabled (UTC)"
 msgstr "Включено (UTC)"
 
+msgid "Use the 486 interpreter for 286 and 386 processors"
+msgstr "Использовать интерпретатор 486 для процессоров 286 и 386"
+
 msgid "Dynamic Recompiler"
 msgstr "Динамический рекомпилятор"
 
@@ -402,6 +438,9 @@ msgstr "Видеокарта 1:"
 
 msgid "Video #2:"
 msgstr "Видеокарта 2:"
+
+msgid "Monitor"
+msgstr "Монитор"
 
 msgid "Voodoo 1 or 2 Graphics"
 msgstr "Ускоритель Voodoo 1 или 2"
@@ -472,8 +511,8 @@ msgstr "Отдельный MPU-401"
 msgid "Use FLOAT32 sound"
 msgstr "FLOAT32 звук"
 
-msgid "FM synth driver"
-msgstr "Драйвер FM-синтезатора"
+msgid "FM synth driver:"
+msgstr "Драйвер FM-синтезатора:"
 
 msgid "Nuked (more accurate)"
 msgstr "Nuked (более точный)"
@@ -481,56 +520,8 @@ msgstr "Nuked (более точный)"
 msgid "YMFM (faster)"
 msgstr "YMFM (быстрее)"
 
-msgid "COM1 Device:"
-msgstr "Устройство COM1:"
-
-msgid "COM2 Device:"
-msgstr "Устройство COM2:"
-
-msgid "COM3 Device:"
-msgstr "Устройство COM3:"
-
-msgid "COM4 Device:"
-msgstr "Устройство COM4:"
-
-msgid "LPT1 Device:"
-msgstr "Устройство LPT1:"
-
-msgid "LPT2 Device:"
-msgstr "Устройство LPT2:"
-
-msgid "LPT3 Device:"
-msgstr "Устройство LPT3:"
-
-msgid "LPT4 Device:"
-msgstr "Устройство LPT4:"
-
 msgid "Internal LPT ECP DMA:"
 msgstr "DMA ECP встроенного LPT:"
-
-msgid "Serial port 1"
-msgstr "Последовательный порт COM1"
-
-msgid "Serial port 2"
-msgstr "Последовательный порт COM2"
-
-msgid "Serial port 3"
-msgstr "Последовательный порт COM3"
-
-msgid "Serial port 4"
-msgstr "Последовательный порт COM4"
-
-msgid "Parallel port 1"
-msgstr "Параллельный порт LPT1"
-
-msgid "Parallel port 2"
-msgstr "Параллельный порт LPT2"
-
-msgid "Parallel port 3"
-msgstr "Параллельный порт LPT3"
-
-msgid "Parallel port 4"
-msgstr "Параллельный порт LPT4"
 
 msgid "Floppy disk controller:"
 msgstr "Контроллер гибких дисков:"
@@ -538,11 +529,50 @@ msgstr "Контроллер гибких дисков:"
 msgid "CD-ROM controller:"
 msgstr "Контроллер CD-ROM:"
 
-msgid "[ISA16] Tertiary IDE Controller"
-msgstr "[ISA16] Третичный контроллер IDE"
+msgid "Mitsumi interface"
+msgstr "Интерфейс Mitsumi"
 
-msgid "[ISA16] Quaternary IDE Controller"
-msgstr "[ISA16] Четвертичный контроллер IDE"
+msgid "MKE/Panasonic interface"
+msgstr "Интерфейс MKE/Panasonic"
+
+msgid "MKE/Panasonic interface (Creative)"
+msgstr "Интерфейс MKE/Panasonic (Creative)"
+
+msgid "IDE Controller"
+msgstr "Контроллер IDE"
+
+msgid "IDE Controller (Dual-Channel)"
+msgstr "Контроллер IDE (двухканальный)"
+
+msgid "PC/AT IDE Controller"
+msgstr "Контроллер IDE PC/AT"
+
+msgid "PC/AT IDE Controller (Dual-Channel)"
+msgstr "Контроллер IDE PC/AT (двухканальный)"
+
+msgid "PC/AT XTIDE (Primary Only)"
+msgstr "PC/AT XTIDE (только первичный канал)"
+
+msgid "PS/2 AT XTIDE (1.1.5) (Primary Only)"
+msgstr "PS/2 AT XTIDE (1.1.5) (только первичный канал)"
+
+msgid "CMD PCI-0646 (Tertiary and Quaternary)"
+msgstr "CMD PCI-0646 (третичный и четвертичный)"
+
+msgid "CMD PCI-0648 (Tertiary and Quaternary)"
+msgstr "CMD PCI-0648 (третичный и четвертичный)"
+
+msgid "CMD PCI-0649 (Tertiary and Quaternary)"
+msgstr "CMD PCI-0649 (третичный и четвертичный)"
+
+msgid "McIDE Controller"
+msgstr "Контроллер McIDE"
+
+msgid "Tertiary IDE Controller"
+msgstr "Третичный контроллер IDE"
+
+msgid "Quaternary IDE Controller"
+msgstr "Четвертичный контроллер IDE"
 
 msgid "Hard disk controllers"
 msgstr "Контроллеры жёстких дисков"
@@ -570,6 +600,9 @@ msgstr "Жёсткие диски:"
 
 msgid "Firmware Version"
 msgstr "Версия прошивки"
+
+msgid "DSP Version"
+msgstr "Версия DSP"
 
 msgid "&New…"
 msgstr "&Создать…"
@@ -610,8 +643,8 @@ msgstr "Тип образа:"
 msgid "Block Size:"
 msgstr "Размер блока:"
 
-msgid "Floppy drives:"
-msgstr "Гибкие диски:"
+msgid "Floppy drives"
+msgstr "Дисководы гибких дисков"
 
 msgid "Turbo timings"
 msgstr "Турбо тайминги"
@@ -619,23 +652,26 @@ msgstr "Турбо тайминги"
 msgid "Check BPB"
 msgstr "Проверять BPB"
 
-msgid "CD-ROM drives:"
-msgstr "Дисководы CD-ROM:"
+msgid "CD-ROM drives"
+msgstr "Дисководы CD-ROM"
 
-msgid "MO drives:"
-msgstr "Магнитооптические дисководы:"
+msgid "MO drives"
+msgstr "Магнитооптические дисководы"
 
 msgid "MO:"
 msgstr "Дисководы MO:"
 
+msgid "Removable disk drives"
+msgstr "Дисководы съёмных дисков"
+
 msgid "Removable disks:"
 msgstr "Cъёмные диски:"
 
-msgid "Removable disk drives:"
-msgstr "Дисководы съёмных дисков:"
+msgid "Tape drives"
+msgstr "Стримеры"
 
-msgid "ZIP 250"
-msgstr "ZIP 250"
+msgid "Tape drives:"
+msgstr "Стримеры:"
 
 msgid "ISA RTC:"
 msgstr "ISA RTC:"
@@ -693,6 +729,15 @@ msgstr "&Съёмный диск %1 (%2): %3"
 
 msgid "Removable disk images"
 msgstr "Образы съёмных дисков"
+
+msgid "Tape %1 (%2): %3"
+msgstr "Стример %1 (%2): %3"
+
+msgid "&Tape %1 (%2): %3"
+msgstr "С&тример %1 (%2): %3"
+
+msgid "Tape images"
+msgstr "Образы магнитной ленты"
 
 msgid "Image %1"
 msgstr "Образ %1"
@@ -757,8 +802,14 @@ msgstr "Порты (COM и LPT)"
 msgid "Ports"
 msgstr "Порты"
 
+msgid "Serial ports"
+msgstr "Последовательные порты"
+
 msgid "Serial ports:"
 msgstr "Последовательные порты:"
+
+msgid "Parallel ports"
+msgstr "Параллельные порты"
 
 msgid "Parallel ports:"
 msgstr "Параллельные порты:"
@@ -805,14 +856,8 @@ msgstr "Шина"
 msgid "File"
 msgstr "Файл"
 
-msgid "C"
-msgstr "C"
-
-msgid "H"
-msgstr "H"
-
-msgid "S"
-msgstr "S"
+msgid "Geometry"
+msgstr "Геометрия"
 
 msgid "KB"
 msgstr "КБ"
@@ -1027,15 +1072,6 @@ msgstr "Для автоматического преобразования фа�
 msgid "Don't show this message again"
 msgstr "Больше не показывать это сообщение"
 
-msgid "Don't exit"
-msgstr "Не выходить"
-
-msgid "Reset"
-msgstr "Перезагрузить"
-
-msgid "Don't reset"
-msgstr "Не перезагружать"
-
 msgid "CD-ROM images"
 msgstr "Образы CD-ROM"
 
@@ -1156,8 +1192,8 @@ msgstr "Невозможно открыть выбранный файл конф
 msgid "Use regular expressions in search box"
 msgstr "Использовать регулярные выражения в поле поиска"
 
-msgid "%1 machine(s) are currently active. Are you sure you want to exit the VM manager anyway?"
-msgstr "%1 машина(ы) в настоящее время активна(ы). Вы уверены, что всё равно хотите выйти из менеджера виртуальной машины?"
+msgid "%n machine(s) are currently active. Are you sure you want to exit the VM manager anyway?"
+msgstr "%n машина(ы) в настоящее время активна(ы). Вы уверены, что всё равно хотите выйти из менеджера виртуальной машины?"
 
 msgid "Add new system wizard"
 msgstr "Мастер добавления новой системы"
@@ -1239,9 +1275,6 @@ msgstr "Введите новое отображаемое имя (оставь�
 
 msgid "Change &display name…"
 msgstr "Изменить &отображаемое имя…"
-
-msgid "Context Menu"
-msgstr "Контекстное меню"
 
 msgid "&Open folder…"
 msgstr "&Открыть папку…"
@@ -1543,9 +1576,6 @@ msgstr "DMF (кластер 2048)"
 msgid "2.88 MB"
 msgstr "2,88 МБ"
 
-msgid "ZIP 100"
-msgstr "ZIP 100"
-
 msgid "3.5\" 128 MB (ISO 10090)"
 msgstr "3,5\" 128 МБ (ISO 10090)"
 
@@ -1587,6 +1617,9 @@ msgstr "На 1,5% медленнее точного RPM"
 
 msgid "2% below perfect RPM"
 msgstr "На 2% медленнее точного RPM"
+
+msgid "Creating image…"
+msgstr "Создание образа…"
 
 msgid "(System Default)"
 msgstr "(Системный)"
@@ -1669,8 +1702,8 @@ msgstr "&Курсор/шайба"
 msgid "&Pen"
 msgstr "&Ручка"
 
-msgid "&Host CD/DVD Drive (%1:)"
-msgstr "CD/DVD привод &хоста (%1:)"
+msgid "&Host CD/DVD Drive (%1)"
+msgstr "CD/DVD привод &хоста (%1)"
 
 msgid "&Connected"
 msgstr "&Кабель подключен"
@@ -1798,18 +1831,6 @@ msgstr "Модульный Тестер 86Box"
 msgid "Novell NetWare 2.x Key Card"
 msgstr "Карта ключей Novell NetWare 2.x"
 
-msgid "Serial port passthrough 1"
-msgstr "Сквозной последовательный порт COM1"
-
-msgid "Serial port passthrough 2"
-msgstr "Сквозной последовательный порт COM2"
-
-msgid "Serial port passthrough 3"
-msgstr "Сквозной последовательный порт COM3"
-
-msgid "Serial port passthrough 4"
-msgstr "Сквозной последовательный порт COM4"
-
 msgid "Renderer &options…"
 msgstr "Параметры &рендеринга…"
 
@@ -1864,8 +1885,8 @@ msgstr "3M MicroTouch (последовательный)"
 msgid "Default Baud rate"
 msgstr "Скорость передачи данных по умолчанию"
 
-msgid "[COM] Standard Hayes-compliant Modem"
-msgstr "[COM] Стандартный Hayes-совместимый модем"
+msgid "Standard Hayes-compliant Modem"
+msgstr "Стандартный Hayes-совместимый модем"
 
 msgid "Roland MT-32 Emulation"
 msgstr "Эмуляция Roland MT-32"
@@ -1959,6 +1980,9 @@ msgstr "Версия BIOS"
 
 msgid "BIOS Language"
 msgstr "Язык BIOS"
+
+msgid "Variant"
+msgstr "Вариант"
 
 msgid "IBM 5161 Expansion Unit"
 msgstr "Блок расширения IBM 5161"
@@ -2223,9 +2247,6 @@ msgstr "Размер памяти"
 
 msgid "EMU8000 Address"
 msgstr "Адрес EMU8000"
-
-msgid "IDE Controller"
-msgstr "Контроллер IDE"
 
 msgid "Codec"
 msgstr "Кодек"
@@ -2611,8 +2632,11 @@ msgstr "Стандартный"
 msgid "High-Speed"
 msgstr "Высокоскоростной"
 
+msgid "LPT DAC / Covox Speech Thing"
+msgstr "LPT-ЦАП / Covox Speech Thing"
+
 msgid "Stereo LPT DAC"
-msgstr "Стереофонический ЦАП LPT"
+msgstr "Стереофонический LPT-ЦАП"
 
 msgid "Generic Text Printer"
 msgstr "Стандартный текстовый принтер"
@@ -2623,8 +2647,8 @@ msgstr "Стандартный матричный принтер ESC/P 2"
 msgid "Generic PostScript Printer"
 msgstr "Стандартный принтер PostScript"
 
-msgid "Generic PCL5e Printer"
-msgstr "Стандартный принтер PCL5e"
+msgid "Generic PCL Printer"
+msgstr "Стандартный принтер PCL"
 
 msgid "Parallel Line Internet Protocol"
 msgstr "Parallel Line Internet Protocol"
@@ -2632,8 +2656,11 @@ msgstr "Parallel Line Internet Protocol"
 msgid "Protection Dongle for Savage Quest"
 msgstr "Защитный донгл для Savage Quest"
 
-msgid "Serial Passthrough Device"
-msgstr "Устройство проброса через последовательный порт"
+msgid "Loopback Plug"
+msgstr "Loopback-кабель"
+
+msgid "Serial Passthrough"
+msgstr "Проброс через последовательный порт"
 
 msgid "Passthrough Mode"
 msgstr "Режим проброса"
@@ -2677,6 +2704,12 @@ msgstr "Сильное влияние на производительность"
 msgid "[Generic] RAM Disk (max. speed)"
 msgstr "[Стандартный] RAM-диск (макс. скорость)"
 
+msgid "[Generic] 1983 MFM (3600 RPM)"
+msgstr "[Стандартный] 1983 MFM (3600 RPM)"
+
+msgid "[Generic] 1983 RLL (3600 RPM)"
+msgstr "[Стандартный] 1983 RLL (3600 RPM)"
+
 msgid "[Generic] 1989 (3500 RPM)"
 msgstr "[Стандартный] 1989 (3500 RPM)"
 
@@ -2715,6 +2748,12 @@ msgstr "Стандартное расширение памяти PC/XT"
 
 msgid "Generic PC/AT Memory Expansion"
 msgstr "Стандартное расширение памяти PC/AT"
+
+msgid "Generic MM58167 RTC"
+msgstr "Стандартный RTC MM58167"
+
+msgid "OPL2Board (External Device)"
+msgstr "OPL2Board (внешнее устройство)"
 
 msgid "Unable to find Dot-Matrix fonts"
 msgstr "Невозможно найти матричные шрифты"
@@ -2779,8 +2818,14 @@ msgstr "Вниз"
 msgid "Could not load file %1"
 msgstr "Не удалось загрузить файл %1"
 
-msgid "Key Bindings:"
-msgstr "Привязки клавиш:"
+msgid "Emulator"
+msgstr "Эмулятор"
+
+msgid "Input"
+msgstr "Ввод"
+
+msgid "Key bindings"
+msgstr "Привязки клавиш"
 
 msgid "Action"
 msgstr "Действие"
@@ -2818,9 +2863,6 @@ msgstr "Переключить полноэкранный режим"
 msgid "Toggle UI in fullscreen"
 msgstr "Переключить UI в полноэкранном режиме"
 
-msgid "Screenshot"
-msgstr "Скриншот"
-
 msgid "Release mouse pointer"
 msgstr "Отпустить указатель мыши"
 
@@ -2845,8 +2887,8 @@ msgstr "Локальный коммутатор"
 msgid "Remote Switch"
 msgstr "Удалённый коммутатор"
 
-msgid "Switch:"
-msgstr "Номер коммутатора:"
+msgid "Shared secret:"
+msgstr "Общий секрет:"
 
 msgid "Hub Mode"
 msgstr "Режим концентратора"
@@ -3007,9 +3049,6 @@ msgstr "Светлая"
 msgid "Dark"
 msgstr "Тёмная"
 
-msgid "Search:"
-msgstr "Поиск:"
-
 msgid "Force interpretation"
 msgstr "Принудительная интерпретация"
 
@@ -3017,7 +3056,28 @@ msgid "Allow recompilation"
 msgstr "Разрешить рекомпиляцию"
 
 msgid "&Force interpretation"
-msgstr "&Принудительная интерпретация"
+msgstr "Пр&инудительная интерпретация"
 
 msgid "&Allow recompilation"
-msgstr "&Разрешить рекомпиляцию"
+msgstr "Разреш&ить рекомпиляцию"
+
+msgid "&Fast forward"
+msgstr "П&еремотка вперёд"
+
+msgid "Fast forward"
+msgstr "Перемотка вперёд"
+
+msgid "To change the system directory, stop all running machines."
+msgstr "Чтобы изменить системную папку, остановите все запущенные машины."
+
+msgid "Raw"
+msgstr "Сырой"
+
+msgid "Use EDC/ECC emulation"
+msgstr "Использовать эмуляцию EDC/ECC"
+
+msgid "Audio output device:"
+msgstr "Устройство вывода звука:"
+
+msgid "System Default"
+msgstr "Системный"

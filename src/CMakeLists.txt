@@ -13,7 +13,7 @@
 #
 #          Copyright 2020-2022 David Hrdlička.
 #          Copyright 2021      dob205.
-#          Copyright 2024      Jasmine Iwanek.
+#          Copyright 2024-2026 Jasmine Iwanek.
 #
 
 if(NOT CMAKE_TOP_LEVEL_PROCESSED)
@@ -34,6 +34,7 @@ add_executable(86Box
     dma.c
     ddma.c
     nmi.c
+    pci_dummy.c
     pic.c
     pit.c
     pit_fast.c
@@ -135,6 +136,7 @@ target_link_libraries(86Box
     sio
     snd
     usb
+    mdsx_dll
     utils
     vid
     voodoo
