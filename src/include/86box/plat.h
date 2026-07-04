@@ -53,6 +53,14 @@ enum {
     STRING_CHARDEV_TERMINAL_ERROR,    /* "%s: Could not create terminal: %s" */
 };
 
+struct plat_device_vol_locked_t
+{
+    uintptr_t vol_nums;
+    uintptr_t handles_vols[1];
+};
+
+typedef struct plat_device_vol_locked_t plat_device_vol_locked_t;
+
 /* The Win32 API uses _wcsicmp. */
 #ifdef _WIN32
 #    define wcscasecmp _wcsicmp
@@ -171,6 +179,10 @@ extern void     plat_clean_up(void);
 /* File mapping */
 extern plat_file_mapping_t plat_mmap_file(FILE *file);
 extern void plat_munmap_file(plat_file_mapping_t *file);
+
+/* Windows-specific physical disk handling. */
+extern plat_device_vol_locked_t* plat_lock_volumes(FILE* file);
+extern void                      plat_unlock_volumes(plat_device_vol_locked_t* vol);
 
 /* Resource management. */
 extern char *plat_get_string(int id);
