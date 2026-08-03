@@ -326,15 +326,6 @@ mitsumi_cdrom_read_timer(void* priv)
                 break;
             }
         }
-        if (dev->status_dma_pending) {
-            dev->cmdbuf[0] = (STAT_SPIN | STAT_READY | dev->stat);
-            dev->cmdbuf_count = 1;
-            dev->cmdbuf_idx = 0;
-            dev->status_dma_pending = 0;
-            {
-                picint(1 << dev->irq);
-            }
-        }
         if (!dev->buf_count) {
             pclog("DMA finished\n");
             dev->buf_idx = 0;
@@ -351,12 +342,12 @@ static uint8_t
 mitsumi_cdrom_get_flags(mcd_t* dev)
 {
     uint8_t ret = 0;
-    if (!dev->buf_count || !dev->data || dev->enable_dma)
+    if (!dev->buf_count || !dev->data)
         ret |= FLAG_NODATA;
     if (!dev->cmdbuf_count || !dev->newstat)
         ret |= FLAG_NOSTAT;
     if (!(ret & FLAG_NODATA) && !(ret & FLAG_NOSTAT))
-        ret |= (dev->early_status || dev->enable_dma) ? FLAG_NODATA : FLAG_NOSTAT;
+        ret |= (dev->early_status) ? FLAG_NODATA : FLAG_NOSTAT;
 
     return ret | FLAG_UNK | 1;
 }
@@ -383,6 +374,7 @@ mitsumi_cdrom_in(uint16_t port, void *priv)
             } else if (dev->cmdbuf_count && !(mitsumi_cdrom_get_flags(dev) & FLAG_NOSTAT)) {
                 dev->cmdbuf_count--;
                 pclog("Read port 0: cmdres = %02x\n", dev->cmdbuf[dev->cmdbuf_idx]);
+                dev->status_dma_pending = 0;
                 return dev->cmdbuf[dev->cmdbuf_idx++];
             }
             return 0xFF;
@@ -541,7 +533,6 @@ mitsumi_cdrom_out(uint16_t port, uint8_t val, void *priv)
                                     pclog("DMA kicked off\n");
                                     dma_set_drq(dev->dma, 1);
                                     dev->status_dma_pending = 1;
-                                    dev->cmdbuf_count = 0;
                                     break;
                                 }
                                 dev->cmdbuf_count = 1;
