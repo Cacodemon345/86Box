@@ -342,7 +342,7 @@ static uint8_t
 mitsumi_cdrom_get_flags(mcd_t* dev)
 {
     uint8_t ret = 0;
-    if (!dev->buf_count || !dev->data)
+    if (!dev->buf_count || !dev->data || dev->enable_dma)
         ret |= FLAG_NODATA;
     if (!dev->cmdbuf_count || !dev->newstat)
         ret |= FLAG_NOSTAT;
