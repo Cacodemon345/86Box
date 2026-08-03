@@ -25,6 +25,7 @@
 #include <limits.h>
 #define HAVE_STDARG_H
 #include <86box/86box.h>
+#include <86box/timer.h>
 #include <86box/device.h>
 #include <86box/io.h>
 #include <86box/pic.h>
@@ -112,6 +113,7 @@ typedef struct mcd_t {
     uint8_t  conf;
     uint8_t  enable_irq;
     uint8_t  enable_dma;
+    uint8_t  status_dma_pending;
     uint8_t  early_status;
     uint16_t dmalen;
     uint32_t readmsf;
@@ -134,6 +136,8 @@ typedef struct mcd_t {
         uint8_t att2;
         uint8_t att3;
     } cdrom_vols;
+
+    pc_timer_t timer;
 
     cdrom_t *cdrom_dev;
 } mcd_t;
@@ -307,6 +311,42 @@ mitsumi_cdrom_read_sector(mcd_t *dev, int first)
     return 1;
 }
 
+static void
+mitsumi_cdrom_read_timer(void* priv)
+{
+    mcd_t* dev = priv;
+
+    if (dev->enable_dma) {
+        while (dev->buf_count) {
+            if (dma_channel_write(dev->dma, dev->buf[dev->buf_idx] | (dev->buf[dev->buf_idx + 1] << 8)) == 0) {
+                pclog("DMA done %d\n", dev->buf_idx);
+                dev->buf_idx += 2;
+                dev->buf_count -= 2;
+            } else {
+                break;
+            }
+        }
+        if (dev->status_dma_pending) {
+            dev->cmdbuf[0] = (STAT_SPIN | STAT_READY | dev->stat);
+            dev->cmdbuf_count = 1;
+            dev->cmdbuf_idx = 0;
+            dev->status_dma_pending = 0;
+            {
+                picint(1 << dev->irq);
+            }
+        }
+        if (!dev->buf_count) {
+            pclog("DMA finished\n");
+            dev->buf_idx = 0;
+            mitsumi_cdrom_read_sector(dev, 0);
+            if (!dev->buf_count) {
+                return;
+            }
+        }
+    }
+    timer_on_auto(&dev->timer, (1000000.0 / (176400.0 * 2.)) * 2048);
+}
+
 static uint8_t
 mitsumi_cdrom_get_flags(mcd_t* dev)
 {
@@ -316,7 +356,7 @@ mitsumi_cdrom_get_flags(mcd_t* dev)
     if (!dev->cmdbuf_count || !dev->newstat)
         ret |= FLAG_NOSTAT;
     if (!(ret & FLAG_NODATA) && !(ret & FLAG_NOSTAT))
-        ret |= dev->early_status ? FLAG_NODATA : FLAG_NOSTAT;
+        ret |= (dev->early_status || dev->enable_dma) ? FLAG_NODATA : FLAG_NOSTAT;
 
     return ret | FLAG_UNK | 1;
 }
@@ -495,15 +535,14 @@ mitsumi_cdrom_out(uint16_t port, uint8_t val, void *priv)
                                     dev->readcount = 0xFFFFFFFF; // keep fetching sectors indefinitely.
                                 }
                                 read_res = mitsumi_cdrom_read_sector(dev, 1);
+                                dev->status_dma_pending = 0;
                                 if (dev->enable_dma && read_res > 0) {
-                                    do {
-                                        while (dev->buf_count) {
-                                            dma_channel_write(dev->dma, dev->buf[dev->buf_idx] | (dev->buf[dev->buf_idx + 1] << 8));
-                                            dev->buf_idx += 2;
-                                            dev->buf_count -= 2;
-                                        }
-                                        dev->buf_idx = 0;
-                                    } while ((read_res = mitsumi_cdrom_read_sector(dev, 0)) > 0);
+                                    timer_on_auto(&dev->timer, (1000000.0 / (176400.0 * 2.)) * 2048);
+                                    pclog("DMA kicked off\n");
+                                    dma_set_drq(dev->dma, 1);
+                                    dev->status_dma_pending = 1;
+                                    dev->cmdbuf_count = 0;
+                                    break;
                                 }
                                 dev->cmdbuf_count = 1;
                                 if (read_res < 0) {
@@ -716,6 +755,8 @@ mitsumi_cdrom_init(UNUSED(const device_t *info))
     uint16_t base = device_get_config_hex16("base");
     dev->irq  = device_get_config_int("irq");
     dev->dma  = device_get_config_int("dma");
+
+    timer_add(&dev->timer, mitsumi_cdrom_read_timer, dev, 0);
 
     io_sethandler(base, 4,
                   mitsumi_cdrom_in, NULL, NULL, mitsumi_cdrom_out, NULL, NULL, dev);
