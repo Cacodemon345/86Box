@@ -690,7 +690,7 @@ mitsumi_cdrom_out(uint16_t port, uint8_t val, void *priv)
             dev->cur_control  = val;
             break;
         case 3:
-            mitsumi_cdrom_reset(dev);
+            // mitsumi_cdrom_reset(dev);
             break;
         default:
             break;
