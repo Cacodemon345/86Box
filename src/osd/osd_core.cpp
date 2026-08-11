@@ -28,14 +28,18 @@
 #include <86box/ui.h>
 #include <86box/version.h>
 #include <86box/cdrom.h>
-#include <86box/mem.h>
 extern "C"
 {
+#include <86box/mem.h>
+#include "cpu.h"
+#include "x86seg_common.h"
 #include <86box/rom.h>
+extern uint32_t  abrt_error;
 }
 
 #include "osd_core.hpp"
 #include "osd_explorer.hpp"
+#include "imgui_memory_editor.h"
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -679,8 +683,57 @@ bool osd_core_build_ui(void)
 
 int osd_percentage = 0;
 
+MemoryEditor editor;
+bool hex_state_init = false;
+
 void osd_core_draw_indicators(void)
 {
+    if (!hex_state_init) {
+        editor.ReadFn = [](const ImU8* mem, size_t off, void* user_data) -> uint8_t
+        {
+            startblit();
+            auto    orig_cpu_abrt        = cpu_state.abrt;
+            auto    orig_cpu_abrt_reason = abrt_error;
+            cpl_override                 = 1;
+            uint8_t ret                  = readmembl(off);
+            cpl_override                 = 0;
+            if (cpu_state.abrt != orig_cpu_abrt) {
+                if (cpu_state.abrt == ABRT_PF) {
+                    cpu_state.abrt = orig_cpu_abrt;
+                    abrt_error     = orig_cpu_abrt_reason;
+                    endblit();
+                    return ret;
+                }
+            }
+
+            endblit();
+            return ret;
+        };
+        editor.WriteFn = [](ImU8* mem, size_t off, ImU8 d, void* user_data) -> void
+        {
+            startblit();
+            auto    orig_cpu_abrt        = cpu_state.abrt;
+            auto    orig_cpu_abrt_reason = abrt_error;
+            cpl_override                 = 1;
+            (void)writemembl(off, d);
+            cpl_override                 = 0;
+            if (cpu_state.abrt != orig_cpu_abrt) {
+                if (cpu_state.abrt == ABRT_PF) {
+                    cpu_state.abrt = orig_cpu_abrt;
+                    abrt_error     = orig_cpu_abrt_reason;
+                    endblit();
+                    return;
+                }
+            }
+
+            endblit();
+            return;
+        };
+        hex_state_init = 1;
+    }
+
+    editor.DrawWindow("MemoryEditor", (void*)1, 0x100000000);
+
 #if 0
     ImGuiWindowFlags window_flags = 0;
     window_flags |= ImGuiWindowFlags_NoBackground;
