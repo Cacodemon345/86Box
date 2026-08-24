@@ -93,6 +93,7 @@ typedef struct pcmcia_socket_pd67xx {
     pcmcia_socket_t socket;
 } pcmcia_socket_pd67xx;
 
+#define ENABLE_PD6710_LOG 1
 #ifdef ENABLE_PD6710_LOG
 int pd6710_do_log = ENABLE_PD6710_LOG;
 
@@ -354,6 +355,7 @@ pd67xx_io_read_1(uint16_t port, void *priv)
         return 0xFF;
 
     port += pd67xx->io_offsets[0];
+
     return pd67xx->socket.io_read(port, pd67xx->socket.card_priv);
 }
 

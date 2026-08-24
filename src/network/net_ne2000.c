@@ -585,7 +585,7 @@ static uint32_t
 nic_read(nic_t *dev, uint32_t addr, unsigned len)
 {
     uint32_t retval = 0;
-    int      off    = addr - dev->base_address;
+    int      off    = addr & 0x1f;
 
     nelog(3, "%s: read addr %x, len %d\n", dev->name, addr, len);
 
@@ -637,7 +637,7 @@ nic_readl(uint16_t addr, void *priv)
 static void
 nic_write(nic_t *dev, uint32_t addr, uint32_t val, unsigned len)
 {
-    int off = addr - dev->base_address;
+    int off = addr & 0x1f;
 
     nelog(3, "%s: write addr %x, value %x len %d\n", dev->name, addr, val, len);
 
