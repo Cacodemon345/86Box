@@ -1858,22 +1858,24 @@ MainWindow::refreshMediaMenu()
     ui->actionACPI_Shutdown->setEnabled(!!acpi_enabled);
     ui_update_force_interpreter();
     for (uint8_t i = 0; i < 4; i++) {
-        QMenu *menu       = new QMenu(ui->menuPCMCIA);
-        auto   menuAction = ui->menuPCMCIA->addMenu(menu);
-        menuAction->setText(QString::fromLatin1(pcmcia_sockets[i]->device_name));
-        auto action = menu->addAction(tr("&Connected"));
-        action->setParent(menu);
-        action->setCheckable(true);
-        action->setChecked(true);
-        ui->menuPCMCIA->menuAction()->setText("PCMCIA");
-        connect(action, &QAction::triggered, this, [this, i](bool checked) {
-            startblit();
-            if (checked == false)
-                pcmcia_socket_remove_card(pcmcia_sockets[i]);
-            else
-                pcmcia_socket_insert_card(pcmcia_sockets[i], pcmcia_sockets[i]->card_priv_unconnected);
-            endblit();
-        });
+        if (pcmcia_sockets[i]) {
+            QMenu *menu       = new QMenu(ui->menuPCMCIA);
+            auto   menuAction = ui->menuPCMCIA->addMenu(menu);
+            menuAction->setText(QString::fromLatin1(pcmcia_sockets[i]->device_name));
+            auto action = menu->addAction(tr("&Connected"));
+            action->setParent(menu);
+            action->setCheckable(true);
+            action->setChecked(true);
+            ui->menuPCMCIA->menuAction()->setText("PCMCIA");
+            connect(action, &QAction::triggered, this, [this, i](bool checked) {
+                startblit();
+                if (checked == false)
+                    pcmcia_socket_remove_card(pcmcia_sockets[i]);
+                else
+                    pcmcia_socket_insert_card(pcmcia_sockets[i], pcmcia_sockets[i]->card_priv_unconnected);
+                endblit();
+            });
+        }
     }
 
     num_label->setToolTip(QShortcut::tr("Num Lock"));
