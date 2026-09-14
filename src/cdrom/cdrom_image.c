@@ -30,6 +30,7 @@
 #include <wchar.h>
 #include <zlib.h>
 #include <sys/stat.h>
+#include <stdalign.h>
 #ifndef _WIN32
 #    include <libgen.h>
 #endif
@@ -1600,7 +1601,7 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
     uint32_t session = 1;
     uint32_t real_track_num = 1;
     uint16_t media_type = 0;
-    char idbuffer[16];
+    alignas(16) char idbuffer[16];
 
     struct
     {
