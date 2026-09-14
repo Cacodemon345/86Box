@@ -1884,8 +1884,6 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                         track->idx[0].length = (sect_start_index1 - sect_start_pregap) / track->sector_size;
                         track->idx[0].start = sect_start_pregap / track->sector_size;
 
-                        track->idx[1].start += 150;
-                        track->idx[0].start += 150;
 
                         track->skip = sect_start_pregap;
 
