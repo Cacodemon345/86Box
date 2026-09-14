@@ -1928,18 +1928,24 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                     track_t* track = &img->tracks[img->tracks_num - 1];
                     track->attr = 0x14;
                     track->max_index = 1;
+                    track->idx[0].type = INDEX_SPECIAL;
+                    track->idx[1].type = INDEX_SPECIAL;
                     track->idx[1].start = MSFtoLBA(first_trk_num, media_type, 0);
 
                     image_insert_track(img, session, 0xa1);
                     track = &img->tracks[img->tracks_num - 1];
                     track->attr = 0x14;
                     track->max_index = 1;
+                    track->idx[0].type = INDEX_SPECIAL;
+                    track->idx[1].type = INDEX_SPECIAL;
                     track->idx[1].start = MSFtoLBA(last_trk_num, 0, 0);
 
                     image_insert_track(img, session, 0xa2);
                     track = &img->tracks[img->tracks_num - 1];
                     track->attr = 0x14;
                     track->max_index = 1;
+                    track->idx[0].type = INDEX_SPECIAL;
+                    track->idx[1].type = INDEX_SPECIAL;
                     track->idx[1].start = lead_out_length;
 
                     session++;
