@@ -1600,6 +1600,7 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
     uint32_t session = 1;
     uint32_t real_track_num = 1;
     uint16_t media_type = 0;
+    char idbuffer[16];
 
     struct
     {
@@ -1610,7 +1611,6 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
     nrg_cue_t* first = NULL;
 
     fseeko64(file, -12ll, SEEK_END);
-    char idbuffer[16] __attribute((aligned(16)));
     fread(idbuffer, 12, 1, file);
     bool nero5 = (idbuffer[0] == 'N' && idbuffer[1] == 'E' && idbuffer[2] == 'R' && idbuffer[3] == '5');
     bool nero4 = false;
@@ -2779,7 +2779,7 @@ image_load_cue(cd_image_t *img, const char *cuefile)
 static int
 image_load_nrg(cd_image_t *img, const char *nrgfile)
 {
-    FILE *fp = plat_fopen(nrgfile, "r");
+    FILE *fp = plat_fopen(nrgfile, "rb");
     if (fp == NULL)
         return 0;
 
