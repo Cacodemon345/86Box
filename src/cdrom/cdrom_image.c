@@ -1729,10 +1729,10 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                     fread(&last_trk_num, 1, 1, file);
 
                     for (real_track_num = first_trk_num; real_track_num <= last_trk_num; real_track_num++) {
-                        fseeko64(file, 13, SEEK_CUR);
+                        fseeko64(file, 12, SEEK_CUR);
                         uint16_t sect_size = read_uint16_nrg(file);
                         uint16_t sect_mode = read_uint16_nrg(file);
-                        uint16_t dummy = read_uint16_nrg(file);
+                        fseeko64(file, 2, SEEK_CUR);
                         uint64_t sect_start_pregap = read_uint64_nrg(file);
                         uint64_t sect_start_index1 = read_uint64_nrg(file);
                         uint64_t sect_end = read_uint64_nrg(file);
