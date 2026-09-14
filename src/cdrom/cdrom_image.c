@@ -1652,7 +1652,7 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                         fread(&cue_point->index, 1, 1, file);
                         fseeko64(file, 1, SEEK_CUR);
                         cue_point->start = read_uint32_nrg(file) + 150;
-
+                        cue_point->attr = ((cue_point->attr & 0xF) << 4) | ((cue_point->attr & 0xF0) >> 4);
                         cue_point->point = bcd2bin(cue_point->point);
                         cue_point->index = bcd2bin(cue_point->index);
 
@@ -1910,6 +1910,9 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                                     track->attr = cur->attr;
                                 }
                                 cur = cur->next;
+                            }
+                            if (track->idx[0].start == track->idx[1].start) {
+                                memset(&track->idx[0], 0, sizeof(track->idx[0]));
                             }
                         }
 
