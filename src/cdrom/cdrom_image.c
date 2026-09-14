@@ -1906,7 +1906,7 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                             while (cur) {
                                 if (cur->point == track->point) {
                                     if (track->idx[cur->index].file && cur->start > track->idx[cur->index].start) {
-                                        track->idx[cur->index].length -= track->idx[cur->index].start - cur->start;
+                                        track->idx[cur->index].length -= cur->start - track->idx[cur->index].start;
                                         track->idx[cur->index].start = cur->start;
                                     }
                                     track->attr = cur->attr;
