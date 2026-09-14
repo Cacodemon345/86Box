@@ -1869,18 +1869,15 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                                 track->subch_type = 0x08;
                                 break;
                         }
+                        int bin_error = 0;
 
                         track->max_index = 1;
-                        track->idx[1].file = (track_file_t *) calloc(1, sizeof(track_file_t));
-                        track->idx[1].file->fp = file;
-                        track->idx[1].file->close = bin_close;
-                        track->idx[1].file->get_length = bin_get_length;
-                        track->idx[1].file->read = bin_read;
-                        track->idx[1].file->priv = track->idx[1].file;
+                        track->idx[1].file = bin_init(0, nrgfile, &bin_error);
                         track->idx[1].start = sect_start_index1 / track->sector_size;
                         track->idx[1].length = (sect_end - sect_start_index1) / track->sector_size;
                         track->idx[1].type = INDEX_NORMAL;
                         track->idx[0] = track->idx[1];
+                        track->idx[0].file = bin_init(0, nrgfile, &bin_error);
                         track->idx[0].length = (sect_start_index1 - sect_start_pregap) / track->sector_size;
                         track->idx[0].start = sect_start_pregap / track->sector_size;
 
