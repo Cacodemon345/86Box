@@ -106,7 +106,7 @@ typedef struct track_t {
     uint8_t       mode;
     uint8_t       form;
     uint8_t       subch_type;
-    uint8_t       skip;
+    uint64_t      skip;
     uint8_t       max_index;
     uint32_t      sector_size;
     track_index_t idx[100];
