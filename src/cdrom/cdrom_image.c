@@ -1904,7 +1904,8 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                                         track->idx[cur->index].length -= cur->start - track->idx[cur->index].start;
                                         track->idx[cur->index].start = cur->start;
                                     }
-                                    track->attr = cur->attr;
+                                    if (cur->attr)
+                                        track->attr = cur->attr;
                                 }
                                 cur = cur->next;
                             }
@@ -1960,6 +1961,8 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
         fclose(file);
         return -1;
     }
+    for (int i = 0; i < img->tracks_num; i++)
+        __builtin_dump_struct(&img->tracks[i], &pclog);
     return 1 + !img->has_audio;
 }
 
