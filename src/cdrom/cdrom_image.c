@@ -1545,7 +1545,7 @@ static uint16_t
 read_uint16_nrg(FILE *infile)
 {
     uint16_t buffer;
-    fread(&buffer, sizeof(buffer), 1, infile);
+    fread(&buffer, 2, 1, infile);
     buffer = bswap16(buffer);
     return buffer;
 }
@@ -1554,7 +1554,7 @@ static uint32_t
 read_uint32_nrg(FILE *infile)
 {
     uint32_t buffer;
-    fread(&buffer, sizeof(buffer), 1, infile);
+    fread(&buffer, 4, 1, infile);
     buffer = bswap32(buffer);
     return buffer;
 }
@@ -1563,7 +1563,7 @@ static uint64_t
 read_uint64_nrg(FILE *infile)
 {
     uint64_t buffer;
-    fread(&buffer, sizeof(buffer), 1, infile);
+    fread(&buffer, 8, 1, infile);
     buffer = bswap64(buffer);
     return buffer;
 }
@@ -1717,9 +1717,9 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
             // Parse SINF chunks first to identify the sessions.
             // Also parse CUEX chunks to identify useful information.
             chunk_pos = ftello64(file);
-            fread(idbuffer, 4, 1, file);
+            *(uint32_t*)idbuffer = read_uint32_nrg(file); 
             uint32_t chunk_size = read_uint32_nrg(file);
-            switch(bswap32(*(uint32_t*)idbuffer)) {
+            switch(*(uint32_t*)idbuffer) {
                 case 'DAOX': {
                     uint64_t lead_out_length = 0;
                     uint8_t first_trk_num = 0;
@@ -1729,10 +1729,10 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                     fread(&last_trk_num, 1, 1, file);
 
                     for (real_track_num = first_trk_num; real_track_num <= last_trk_num; real_track_num++) {
-                        fseeko64(file, 12, SEEK_CUR);
+                        fseeko64(file, 13, SEEK_CUR);
                         uint16_t sect_size = read_uint16_nrg(file);
                         uint16_t sect_mode = read_uint16_nrg(file);
-                        fseeko64(file, 2, SEEK_CUR);
+                        uint16_t dummy = read_uint16_nrg(file);
                         uint64_t sect_start_pregap = read_uint64_nrg(file);
                         uint64_t sect_start_index1 = read_uint64_nrg(file);
                         uint64_t sect_end = read_uint64_nrg(file);
@@ -1744,6 +1744,41 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                             }
                             if (sect_mode == 0x0002 || sect_mode == 0x0003) {
                                 sect_mode = 0x0006;
+                            }
+                        }
+
+                        if (!sect_size) {
+                            switch (sect_mode) {
+                                case Data:
+                                    sect_size = 2048;
+                                    break;
+                                case DataM2F1:
+                                    sect_size = 2048;
+                                    break;
+                                case DataM2F2:
+                                    sect_size = 2336;
+                                    break;
+                                case Audio:
+                                case AudioAlt: // ???
+                                    sect_size = 2352;
+                                    break;
+                                case DataRaw:
+                                    sect_size = 2352;
+                                    break;
+                                case DataRawSub:
+                                    sect_size = 2448;
+                                    break;
+                                case AudioSub:
+                                    sect_size = 2448;
+                                    break;
+
+                                case DataM2Raw:
+                                    sect_size = 2352;
+                                    break;
+
+                                case DataM2RawSub:
+                                    sect_size = 2448;
+                                    break;
                             }
                         }
 
@@ -1775,45 +1810,46 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                                 track->mode = 1;
                                 track->form = 1;
                                 track->sector_size = 2048;
-                                track->attr = 0x41;
+                                track->attr = 0x14;
                                 break;
                             case DataM2F1:
                                 track->mode = 2;
                                 track->form = 1;
                                 track->sector_size = 2048;
-                                track->attr = 0x41;
+                                track->attr = 0x14;
                                 break;
                             case DataM2F2:
                                 track->mode = 2;
                                 track->form = 2;
                                 track->sector_size = 2336;
-                                track->attr = 0x41;
+                                track->attr = 0x14;
                                 break;
                             case Audio:
                             case AudioAlt: // ???
                                 track->mode = 0;
                                 track->form = 0;
                                 track->sector_size = 2352;
-                                track->attr = 0x01;
+                                track->attr = 0x10;
+                                img->has_audio = 1;
                                 break;
                             case DataRaw:
                                 track->mode = 1;
                                 track->form = 1;
                                 track->sector_size = 2352;
-                                track->attr = 0x41;
+                                track->attr = 0x14;
                                 break;
                             case DataRawSub:
                                 track->mode = 1;
                                 track->form = 1;
                                 track->sector_size = 2448;
-                                track->attr = 0x41;
+                                track->attr = 0x14;
                                 track->subch_type = 0x08;
                                 break;
                             case AudioSub:
                                 track->mode = 0;
                                 track->form = 0;
                                 track->sector_size = 2448;
-                                track->attr = 0x01;
+                                track->attr = 0x10;
                                 track->subch_type = 0x08;
                                 break;
 
@@ -1821,26 +1857,28 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                                 track->mode = 2;
                                 track->form = 2;
                                 track->sector_size = 2352;
-                                track->attr = 0x41;
+                                track->attr = 0x14;
                                 break;
 
                             case DataM2RawSub:
                                 track->mode = 2;
                                 track->form = 1;
                                 track->sector_size = 2448;
-                                track->attr = 0x41;
+                                track->attr = 0x14;
                                 track->subch_type = 0x08;
                                 break;
                         }
 
                         track->max_index = 1;
                         track->idx[1].file = (track_file_t *) calloc(1, sizeof(track_file_t));
+                        track->idx[1].file->fp = file;
                         track->idx[1].file->close = bin_close;
                         track->idx[1].file->get_length = bin_get_length;
                         track->idx[1].file->read = bin_read;
                         track->idx[1].file->priv = track->idx[1].file;
                         track->idx[1].start = sect_start_index1 / track->sector_size;
                         track->idx[1].length = (sect_end - sect_start_index1) / track->sector_size;
+                        track->idx[1].type = INDEX_NORMAL;
                         track->idx[0] = track->idx[1];
                         track->idx[0].length = (sect_start_index1 - sect_start_pregap) / track->sector_size;
                         track->idx[0].start = sect_start_pregap / track->sector_size;
@@ -1867,6 +1905,7 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                             while (cur) {
                                 if (cur->point == track->point) {
                                     if (track->idx[cur->index].file && cur->start > track->idx[cur->index].start) {
+                                        track->idx[cur->index].length -= track->idx[cur->index].start - cur->start;
                                         track->idx[cur->index].start = cur->start;
                                     }
                                     track->attr = cur->attr;
@@ -1885,19 +1924,19 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                     }
                     image_insert_track(img, session, 0xa0);
                     track_t* track = &img->tracks[img->tracks_num - 1];
-                    track->attr = 0x41;
+                    track->attr = 0x14;
                     track->max_index = 1;
                     track->idx[1].start = MSFtoLBA(first_trk_num, media_type, 0);
 
                     image_insert_track(img, session, 0xa1);
                     track = &img->tracks[img->tracks_num - 1];
-                    track->attr = 0x41;
+                    track->attr = 0x14;
                     track->max_index = 1;
                     track->idx[1].start = MSFtoLBA(last_trk_num, 0, 0);
 
                     image_insert_track(img, session, 0xa2);
                     track = &img->tracks[img->tracks_num - 1];
-                    track->attr = 0x41;
+                    track->attr = 0x14;
                     track->max_index = 1;
                     track->idx[1].start = lead_out_length;
 
@@ -1916,7 +1955,7 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
         fclose(file);
         return -1;
     }
-    return 0;
+    return 1 + !img->has_audio;
 }
 
 static int
