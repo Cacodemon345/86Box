@@ -1910,6 +1910,8 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                                 cur = cur->next;
                             }
                             if (track->idx[0].start == track->idx[1].start) {
+                                if (track->idx[0].file)
+                                    bin_close(track->idx[0].file);
                                 memset(&track->idx[0], 0, sizeof(track->idx[0]));
                             }
                         }
