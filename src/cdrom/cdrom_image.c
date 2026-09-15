@@ -1729,15 +1729,6 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                     fread(&first_trk_num, 1, 1, file);
                     fread(&last_trk_num, 1, 1, file);
 
-                    image_insert_track(img, session, 0xa0);
-                    int track_a0_idx = img->tracks_num - 1;
-
-                    image_insert_track(img, session, 0xa1);
-                    int track_a1_idx = img->tracks_num - 1;
-
-                    image_insert_track(img, session, 0xa2);
-                    int track_a2_idx = img->tracks_num - 1;
-
                     for (real_track_num = first_trk_num; real_track_num <= last_trk_num; real_track_num++) {
                         fseeko64(file, 12, SEEK_CUR);
                         uint16_t sect_size = read_uint16_nrg(file);
@@ -1933,7 +1924,16 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
 
                         // Can't do much if the indices don't exist here.
                     }
-                    
+
+                    image_insert_track(img, session, 0xa0);
+                    int track_a0_idx = img->tracks_num - 1;
+
+                    image_insert_track(img, session, 0xa1);
+                    int track_a1_idx = img->tracks_num - 1;
+
+                    image_insert_track(img, session, 0xa2);
+                    int track_a2_idx = img->tracks_num - 1;
+
                     track_t* track_a0 = &img->tracks[track_a0_idx];
                     track_a0->attr = 0x14;
                     track_a0->max_index = 1;
@@ -3672,8 +3672,6 @@ image_get_raw_track_info(const void *local, int *num, uint8_t *buffer)
                   buffer[old_len + 10]);
     }
 
-    for (int i = 0; i < img->tracks_num; i++)
-        __builtin_dump_struct((raw_track_info_t*)(buffer + 11 * i), &pclog);
     *num = img->tracks_num;
 }
 
@@ -3714,7 +3712,7 @@ image_read_sector(const void *local, uint8_t *buffer,
         if (ret > 0) {
             uint64_t       offset = 0ULL;
 
-            pclog("cdrom_read_sector(%08X): track %02X, index %02X, %016"
+            image_log(img->log, "cdrom_read_sector(%08X): track %02X, index %02X, %016"
                       PRIX64 ", %i, %i, %i, %i, 0x%llX\n",
                       lba, track, index, idx->start, trk->sector_size, track_is_raw,
                       trk->mode, trk->form, seek);
