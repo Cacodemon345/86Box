@@ -1818,7 +1818,7 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                         switch (sect_mode) {
                             case Data:
                                 track->mode = 1;
-                                track->form = 1;
+                                track->form = 0;
                                 track->sector_size = 2048;
                                 track->attr = 0x14;
                                 break;
@@ -1844,13 +1844,13 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                                 break;
                             case DataRaw:
                                 track->mode = 1;
-                                track->form = 1;
+                                track->form = 0;
                                 track->sector_size = 2352;
                                 track->attr = 0x14;
                                 break;
                             case DataRawSub:
                                 track->mode = 1;
-                                track->form = 1;
+                                track->form = 0;
                                 track->sector_size = 2448;
                                 track->attr = 0x14;
                                 track->subch_type = 0x08;
@@ -3735,7 +3735,7 @@ image_read_sector(const void *local, uint8_t *buffer,
                 /* Data, should reflect the actual sector type. */
                 buffer[3] = trk->mode;
                 buffer += 4;
-                if (trk->form >= 1) {
+                if (trk->form >= 1 && trk->mode == 2) {
                     offset += 8ULL;
 
                     /* Construct the CD-I/XA sub-header. */
