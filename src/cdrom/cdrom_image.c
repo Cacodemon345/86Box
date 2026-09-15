@@ -1729,6 +1729,15 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                     fread(&first_trk_num, 1, 1, file);
                     fread(&last_trk_num, 1, 1, file);
 
+                    image_insert_track(img, session, 0xa0);
+                    int track_a0_idx = img->tracks_num - 1;
+
+                    image_insert_track(img, session, 0xa1);
+                    int track_a1_idx = img->tracks_num - 1;
+
+                    image_insert_track(img, session, 0xa2);
+                    int track_a2_idx = img->tracks_num - 1;
+
                     for (real_track_num = first_trk_num; real_track_num <= last_trk_num; real_track_num++) {
                         fseeko64(file, 12, SEEK_CUR);
                         uint16_t sect_size = read_uint16_nrg(file);
@@ -1924,29 +1933,27 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
 
                         // Can't do much if the indices don't exist here.
                     }
-                    image_insert_track(img, session, 0xa0);
-                    track_t* track = &img->tracks[img->tracks_num - 1];
-                    track->attr = 0x14;
-                    track->max_index = 1;
-                    track->idx[0].type = INDEX_SPECIAL;
-                    track->idx[1].type = INDEX_SPECIAL;
-                    track->idx[1].start = MSFtoLBA(first_trk_num, media_type, 0);
+                    
+                    track_t* track_a0 = &img->tracks[track_a0_idx];
+                    track_a0->attr = 0x14;
+                    track_a0->max_index = 1;
+                    track_a0->idx[0].type = INDEX_SPECIAL;
+                    track_a0->idx[1].type = INDEX_SPECIAL;
+                    track_a0->idx[1].start = MSFtoLBA(first_trk_num, media_type, 0);
 
-                    image_insert_track(img, session, 0xa1);
-                    track = &img->tracks[img->tracks_num - 1];
-                    track->attr = 0x14;
-                    track->max_index = 1;
-                    track->idx[0].type = INDEX_SPECIAL;
-                    track->idx[1].type = INDEX_SPECIAL;
-                    track->idx[1].start = MSFtoLBA(last_trk_num, 0, 0);
+                    track_t* track_a1 = &img->tracks[track_a1_idx];
+                    track_a1->attr = 0x14;
+                    track_a1->max_index = 1;
+                    track_a1->idx[0].type = INDEX_SPECIAL;
+                    track_a1->idx[1].type = INDEX_SPECIAL;
+                    track_a1->idx[1].start = MSFtoLBA(last_trk_num, 0, 0);
 
-                    image_insert_track(img, session, 0xa2);
-                    track = &img->tracks[img->tracks_num - 1];
-                    track->attr = 0x14;
-                    track->max_index = 1;
-                    track->idx[0].type = INDEX_SPECIAL;
-                    track->idx[1].type = INDEX_SPECIAL;
-                    track->idx[1].start = lead_out_length;
+                    track_t* track_a2 = &img->tracks[track_a2_idx];
+                    track_a2->attr = 0x14;
+                    track_a2->max_index = 1;
+                    track_a2->idx[0].type = INDEX_SPECIAL;
+                    track_a2->idx[1].type = INDEX_SPECIAL;
+                    track_a2->idx[1].start = lead_out_length;
 
                     session++;
                     break;
@@ -1963,8 +1970,6 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
         fclose(file);
         return -1;
     }
-    for (int i = 0; i < img->tracks_num; i++)
-        __builtin_dump_struct(&img->tracks[i], &pclog);
     return 1 + !img->has_audio;
 }
 
@@ -3667,6 +3672,8 @@ image_get_raw_track_info(const void *local, int *num, uint8_t *buffer)
                   buffer[old_len + 10]);
     }
 
+    for (int i = 0; i < img->tracks_num; i++)
+        __builtin_dump_struct((raw_track_info_t*)(buffer + 11 * i), &pclog);
     *num = img->tracks_num;
 }
 
