@@ -1880,7 +1880,7 @@ image_load_nrg_fp(cd_image_t *img, FILE* file, const char* nrgfile)
                         track->idx[0].file = bin_init(0, nrgfile, &bin_error);
                         track->idx[0].length = (sect_start_index1 - sect_start_pregap) / track->sector_size;
                         track->idx[0].start = sect_start_pregap / track->sector_size;
-
+                        track->idx[1].file_start = (sect_start_index1 - sect_start_pregap) / track->sector_size;
 
                         track->skip = sect_start_pregap;
 
@@ -3707,10 +3707,10 @@ image_read_sector(const void *local, uint8_t *buffer,
         if (ret > 0) {
             uint64_t       offset = 0ULL;
 
-            image_log(img->log, "cdrom_read_sector(%08X): track %02X, index %02X, %016"
-                      PRIX64 ", %i, %i, %i, %i\n",
+            pclog("cdrom_read_sector(%08X): track %02X, index %02X, %016"
+                      PRIX64 ", %i, %i, %i, %i, 0x%llX\n",
                       lba, track, index, idx->start, trk->sector_size, track_is_raw,
-                      trk->mode, trk->form);
+                      trk->mode, trk->form, seek);
 
             memset(buffer, 0x00, 2448);
 
