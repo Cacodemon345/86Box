@@ -289,10 +289,17 @@ void
 plat_unlock_volumes(plat_device_vol_locked_t* vol)
 {
 #ifdef _WIN32
-    for (int i = 0; i < vol->vol_nums; i++) {
-        if (vol->handles_vols[i] != -1) {
-            DWORD bytesRet = 0;
+    DWORD bytesRet = 0;
+    for (uintptr_t i = 0; i < vol->vol_nums; i++) {
+        if (vol->handles_vols[i] != ((uintptr_t) (intptr_t) -1)) {
+            DeviceIoControl((HANDLE)vol->handles_vols[i], FSCTL_DISMOUNT_VOLUME, 0, 0, 0, 0, &bytesRet, nullptr);
             DeviceIoControl((HANDLE)vol->handles_vols[i], FSCTL_UNLOCK_VOLUME, 0, 0, 0, 0, &bytesRet, nullptr);
+        }
+    }
+    DeviceIoControl((HANDLE)vol->handle_disk, IOCTL_DISK_UPDATE_PROPERTIES, 0, 0, 0, 0, &bytesRet, nullptr);
+    (void)GetLogicalDrives();
+    for (uintptr_t i = 0; i < vol->vol_nums; i++) {
+        if (vol->handles_vols[i] != ((uintptr_t) (intptr_t) -1)) {
             CloseHandle((HANDLE)vol->handles_vols[i]);
         }
     }
@@ -324,15 +331,16 @@ plat_lock_volumes(FILE* file)
         //layout_info = (DRIVE_LAYOUT_INFORMATION_EX*)realloc(layout_info, sizeof(PARTITION_INFORMATION_EX) * (partCount + 1) + sizeof(DRIVE_LAYOUT_INFORMATION_EX));
         plat_device_vol_locked_t* locked_list = (plat_device_vol_locked_t*)calloc(1, sizeof(plat_device_vol_locked_t) + layout_info->PartitionCount * sizeof(uintptr_t));
         if (locked_list) {
+            locked_list->handle_disk = (uintptr_t)filehandle;
             locked_list->vol_nums = layout_info->PartitionCount;
             for (DWORD i = 0; i < layout_info->PartitionCount; i++) {
                 char path_name[256] = { 0 };
-                snprintf(path_name, sizeof(path_name) - 1, "\\\\?\\Harddisk%uPartition%lu", storage_num.DeviceNumber, i);
+                snprintf(path_name, sizeof(path_name) - 1, "\\\\?\\Harddisk%uPartition%lu", (unsigned int) storage_num.DeviceNumber, i);
                 locked_list->handles_vols[i] = (uintptr_t)CreateFileA(path_name, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, 0);
-                if (locked_list->handles_vols[i] != -1) {
+                if (locked_list->handles_vols[i] != ((uintptr_t) (intptr_t) -1)) {
                     if (DeviceIoControl((HANDLE)locked_list->handles_vols[i], FSCTL_LOCK_VOLUME, 0, 0, 0, 0, &bytesRet, nullptr)) {
                     } else {
-                        warning("Failed to lock partition %lu on disk %d.", i, storage_num.DeviceNumber);
+                        warning("Failed to lock partition %lu on disk %d.", i, (int) storage_num.DeviceNumber);
                     }
                 }
             }
