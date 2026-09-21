@@ -282,6 +282,10 @@ add_library(ui STATIC
     qt_cgasettingsdialog.hpp
     qt_cgasettingsdialog.cpp
     qt_cgasettingsdialog.ui
+
+    qt_physdiskdialog.cpp
+    qt_physdiskdialog.hpp
+    qt_physdiskdialog.ui
 )
 
 # Build the Qt ImGui backend separately so AUTOMOC skips it.
@@ -323,7 +327,7 @@ if(WIN32)
     enable_language(RC)
     target_sources(86Box PUBLIC 86Box-qt.rc)
     target_sources(plat PRIVATE win_dynld.c)
-    target_link_libraries(86Box dwmapi dwrite)
+    target_link_libraries(86Box dwmapi dwrite SetupAPI)
 
     # CMake 3.22 messed this up for clang/clang++
     # See https://gitlab.kitware.com/cmake/cmake/-/issues/22611
