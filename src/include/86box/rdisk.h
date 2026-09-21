@@ -107,8 +107,8 @@ static const rdisk_drive_type_t rdisk_drive_types[KNOWN_RDISK_DRIVE_TYPES] = {
     /* Firmware revision "1.03" is likewise an unconfirmed placeholder - the
        SparQ's EIDE Technical Reference doesn't give a real example string. */
     { "SYQUEST",  "SparQ 1.0GB",                "1.03", { 0, 0, 0, 0, 0, 1 }},
-    { "IMATION",  "SUPERDISK 120 ATAPI",        "04"    { 0, 0, 0, 1, 0 }},
-    { "IMATION",  "SUPERDISK  240       ATAPI", "04"    { 0, 0, 0, 1, 1 }}
+    { "IMATION",  "SUPERDISK 120 ATAPI",        "04"    { 0, 0, 0, 0, 0, 0, 1, 0 }},
+    { "IMATION",  "SUPERDISK 240 ATAPI",        "04"    { 0, 0, 0, 0, 0, 0, 1, 1 }}
 };
 
 enum {
