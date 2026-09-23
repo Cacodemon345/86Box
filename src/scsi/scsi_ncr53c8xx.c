@@ -2507,9 +2507,9 @@ ncr53c8xx_pci_write(UNUSED(int func), int addr, UNUSED(int len), uint8_t val, vo
             /* Then let's calculate the new I/O base. */
             ncr53c8xx_pci_bar[3].addr &= (dev->bios_mask | 0x00000001);
             dev->BIOSBase = ncr53c8xx_pci_bar[3].addr & dev->bios_mask;
-            ncr53c8xx_log("BIOS BAR: %08X\n", dev->BIOSBase | ncr53c8xx_pci_bar[3].addr_regs[0]);
+            pclog("BIOS BAR: %08X\n", dev->BIOSBase | ncr53c8xx_pci_bar[3].addr_regs[0]);
             /* Log the new base. */
-            ncr53c8xx_log("NCR53c8xx: New BIOS base is %08X\n", dev->BIOSBase);
+            pclog("NCR53c8xx: New BIOS base is %08X\n", dev->BIOSBase);
             /* We're done, so get out of the here. */
             if (ncr53c8xx_pci_bar[3].addr_regs[0] & 0x01)
                 ncr53c8xx_bios_set_addr(dev, dev->BIOSBase);
@@ -2535,7 +2535,12 @@ ncr53c8xx_init(const device_t *info)
     dev->chip_rev = 0;
     dev->chip     = info->local & 0xff;
 
-    if ((dev->chip != CHIP_810) && (dev->chip != CHIP_820) && !(info->local & 0x8000)) {
+    if (info->local & 0x10000) {
+        dev->has_bios = 3;
+        rom_init(&dev->bios, device_get_bios_file(info, device_get_config_bios("bios_rev"), 0), 0xd0000, 0x8000, 0x7fff, 0, MEM_MAPPING_EXTERNAL);
+        dev->bios.rom[0x7fff] += (dev->bios.rom[0x0020] - dev->chip);
+        dev->bios.rom[0x0020] = dev->chip;
+    } else if ((dev->chip != CHIP_810) && (dev->chip != CHIP_820) && !(info->local & 0x8000)) {
         dev->has_bios = device_get_config_int("bios");
 
         /* We have to auto-patch the BIOS to have the correct PCI Device ID, because for some reason, they all ship with
@@ -2601,7 +2606,10 @@ ncr53c8xx_init(const device_t *info)
     ncr53c8xx_pci_bar[1].addr_regs[0] = 0;
     ncr53c8xx_pci_regs[0x04]          = 3;
 
-    if (dev->has_bios == 2) {
+    if (dev->has_bios == 3) {
+        ncr53c8xx_pci_bar[3].addr = 0xffff8000;
+        dev->bios_mask            = 0xffff8000;
+    } else if (dev->has_bios == 2) {
         ncr53c8xx_pci_bar[3].addr = 0xffff0000;
         dev->bios_mask            = 0xffff0000;
     } else if (dev->has_bios == 1) {
@@ -2674,6 +2682,62 @@ static const device_config_t ncr53c8xx_pci_config[] = {
             { .description = "Disable BIOS",  .value = 0 },
             { .description = ""                          }
         },
+        .bios           = { { 0 } }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+  // clang-format on
+};
+
+static const device_config_t ncr53c8xx_dc390f_pci_config[] = {
+  // clang-format off
+    {
+        .name           = "bios_rev",
+        .description    = "BIOS Revision",
+        .type           = CONFIG_BIOS,
+        .default_string = "v3_21",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .bios           = {
+            {
+                .name          = "Version 3.21",
+                .internal_name = "v3_21",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 32768,
+                .files         = { "roms/scsi/ncr53c8xx/int13f.BIN", "" }
+            },
+            {
+                .name          = "Version 3.21 (modded, no delay)",
+                .internal_name = "v3_21_0sec",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 32768,
+                .files         = { "roms/scsi/ncr53c8xx/int13f-0sec.BIN", "" }
+            },
+            {
+                .name          = "Version 3.20",
+                .internal_name = "v3_20",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 32768,
+                .files         = { "roms/scsi/ncr53c8xx/390320.bin", "" }
+            },
+            { .files_no = 0 }
+        },
+    },
+    {
+        .name           = "bios",
+        .description    = "Enable BIOS",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
         .bios           = { { 0 } }
     },
     { .name = "", .description = "", .type = CONFIG_END }
@@ -2790,4 +2854,18 @@ const device_t ncr53c875_onboard_pci_device = {
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = NULL
+};
+
+const device_t tekram_dc390f_pci_device = {
+    .name          = "Tekram DC-390F (NCR 53c875)",
+    .internal_name = "ncr53c875_tekram",
+    .flags         = DEVICE_PCI,
+    .local         = CHIP_875 | 0x10000,
+    .init          = ncr53c8xx_init,
+    .close         = ncr53c8xx_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = ncr53c8xx_dc390f_pci_config
 };

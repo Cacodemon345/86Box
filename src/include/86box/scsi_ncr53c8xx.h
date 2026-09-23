@@ -31,4 +31,6 @@ extern const device_t ncr53c860_pci_device;
 extern const device_t ncr53c875_pci_device;
 extern const device_t ncr53c875_onboard_pci_device;
 
+extern const device_t tekram_dc390f_pci_device;
+
 #endif /*SCSI_NCR53C8XX_H*/
