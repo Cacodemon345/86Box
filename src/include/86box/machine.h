@@ -120,6 +120,7 @@
 #define MACHINE_SCSI              0x0000000040000000ULL /* sys has int SCSI */
 #define MACHINE_USB               0x0000000080000000ULL /* sys has int USB */
 #define MACHINE_ZENITH            0x0000000100000000ULL /* sys is Zenith */
+#define MACHINE_IDE_INTERNAL      0x0000000800000000ULL /* sys int IDE only with the Internal controller */
 /* Combined flags. */
 #define MACHINE_LPT               (MACHINE_LPT_PRI | MACHINE_LPT_SEC | \
                                    MACHINE_LPT_TER | MACHINE_LPT_QUA)
@@ -277,6 +278,7 @@ enum {
     MACHINE_CHIPSET_SARC_RC2016A,
     MACHINE_CHIPSET_SIS_310,
     MACHINE_CHIPSET_SIS_401,
+    MACHINE_CHIPSET_SIS_411,
     MACHINE_CHIPSET_SIS_460,
     MACHINE_CHIPSET_SIS_461,
     MACHINE_CHIPSET_SIS_471,
@@ -395,6 +397,8 @@ typedef struct _machine_ {
     const device_t        *tablet_device;
     const device_t        *snd_device;
     const device_t        *net_device;
+    const device_t        *ide_device;  /* on-board IDE chip, not the chipset's */
+    const device_t        *scsi_device; /* on-board SCSI chip */
 #else
     void                  *device;
     void                  *kbd_device;
@@ -403,6 +407,8 @@ typedef struct _machine_ {
     void                  *tablet_device;
     void                  *snd_device;
     void                  *net_device;
+    void                  *ide_device;
+    void                  *scsi_device;
 #endif
     const char            *aliases[16];
 } machine_t;
@@ -433,6 +439,8 @@ extern const device_t *machine_get_vid_device(int m);
 extern const device_t *machine_get_tablet_device(int m);
 extern const device_t *machine_get_snd_device(int m);
 extern const device_t *machine_get_net_device(int m);
+extern const device_t *machine_get_ide_device(int m);
+extern const device_t *machine_get_scsi_device(int m);
 #endif
 extern const char *    machine_get_internal_name_ex(int m);
 extern const char *    machine_get_nvr_name_ex(int m);
@@ -773,6 +781,7 @@ extern int             machine_at_sensation1_init(const machine_t *);
 extern int             machine_at_tuliptc38_init(const machine_t *);
 
 /* ZyMOS Poach */
+extern int             machine_at_asus48625_init(const machine_t *); // Not yet ready
 extern int             machine_at_isa486c_init(const machine_t *);
 extern int             machine_at_genoa486_init(const machine_t *);
 
@@ -796,6 +805,9 @@ extern int             machine_at_g486ip_init(const machine_t *);
 
 /* OPTi 499 */
 extern int             machine_at_cougar_init(const machine_t *);
+
+/* SiS 411 */
+extern int             machine_at_s1437_init(const machine_t *);
 
 /* SiS 460 */
 extern int             machine_at_spc7500p_init(const machine_t *);
@@ -1105,6 +1117,8 @@ extern const device_t vectra52_device;
 extern int             machine_at_vectra52_init(const machine_t *);
 extern int             machine_at_vectra500mt_init(const machine_t *);
 extern int             machine_at_vectra54_init(const machine_t *);
+extern uint32_t        machine_at_ibm_pc700_gpio_handler(uint8_t write, uint32_t val);
+extern int             machine_at_ibm_pc700_init(const machine_t *);
 extern int             machine_at_atlantis_init(const machine_t *);
 #ifdef EMU_DEVICE_H
 extern const device_t  thor_device;
@@ -1168,6 +1182,15 @@ extern int             machine_at_ms5124_init(const machine_t *);
 /* VLSI Wildcat */
 extern int             machine_at_zeoswildcat_init(const machine_t *);
 
+/* m_at_eisa_pci.c */
+/* i430HX */
+extern int             machine_at_54tdp_init(const machine_t *);
+extern int             machine_at_d823_init(const machine_t *);
+#ifdef EMU_DEVICE_H
+extern const device_t  td3_device;
+#endif
+extern int             machine_at_td3_init(const machine_t *);
+
 /* m_at_socket7.c */
 /* i430HX */
 extern int             machine_at_acerm3a_init(const machine_t *);
@@ -1192,10 +1215,6 @@ extern int             machine_at_m7shi_init(const machine_t *);
 extern int             machine_at_epc2102_init(const machine_t *);
 extern int             machine_at_pcv90_init(const machine_t *);
 extern int             machine_at_p55t2s_init(const machine_t *);
-
-/* IBM PC 730/750 (types 6877/6887) */
-extern uint32_t         machine_at_ibm_pc700_gpio_handler(uint8_t write, uint32_t val);
-extern int             machine_at_ibm_pc700_init(const machine_t *);
 
 /* i430VX */
 extern int             machine_at_ap5vm_init(const machine_t *);
@@ -1313,11 +1332,15 @@ extern const device_t  ms5169_device;
 extern int             machine_at_ms5169_init(const machine_t *);
 
 /* SiS 530/5595 */
-extern int             machine_at_in530_init(const machine_t *);
-extern int             machine_in530_boot_logo(void);
 #ifdef EMU_DEVICE_H
 extern const device_t  in530_device;
 #endif
+extern int             machine_at_in530_init(const machine_t *);
+extern int             machine_in530_boot_logo(void);
+#ifdef EMU_DEVICE_H
+extern const device_t  ga5smm_device;
+#endif
+extern int             machine_at_ga5smm_init(const machine_t *);
 extern int             machine_at_aptiva2187_init(const machine_t *);
 
 /* VIA MVP3 */
@@ -1373,6 +1396,9 @@ extern int             machine_at_6dxp_init(const machine_t *);
 extern int             machine_at_m729_init(const machine_t *);
 
 /* i440FX */
+#ifdef EMU_DEVICE_H
+extern const device_t  acerv62x_device;
+#endif
 extern int             machine_at_acerv62x_init(const machine_t *);
 #ifdef EMU_DEVICE_H
 extern const device_t  p6kdi_device;
@@ -1441,7 +1467,14 @@ extern int             machine_at_ergox365_init(const machine_t *);
 extern const device_t  ga686_device;
 #endif
 extern int             machine_at_ga686_init(const machine_t *);
-extern int             machine_at_se440bx2_init(const machine_t *); // Not yet ready
+#ifdef EMU_DEVICE_H
+extern const device_t  rc440bx_device;
+#endif
+extern int             machine_at_rc440bx_init(const machine_t *);
+#ifdef EMU_DEVICE_H
+extern const device_t  se440bx2_device;
+#endif
+extern int             machine_at_se440bx2_init(const machine_t *);
 #ifdef EMU_DEVICE_H
 extern const device_t  ms6117_device;
 #endif
@@ -1601,6 +1634,7 @@ extern int             machine_is_pcjx(int m);
 /* m_ps1.c */
 #ifdef EMU_DEVICE_H
 extern const device_t  ps1_2011_device;
+extern const device_t  ps1_2121_device;
 #endif
 extern int             machine_ps1_m2011_init(const machine_t *);
 extern int             machine_ps1_m2121_init(const machine_t *);
@@ -1628,16 +1662,22 @@ extern const device_t  ps2_model_50_device;
 #endif
 extern int             machine_ps2_model_50_init(const machine_t *);
 extern int             machine_ps2_model_60_init(const machine_t *);
+extern int             machine_ps2_model_55ls_init(const machine_t *);
 extern int             machine_ps2_model_55sx_init(const machine_t *);
 extern int             machine_ps2_model_65sx_init(const machine_t *);
 extern int             machine_ps2_model_70_type1_init(const machine_t *);
 extern int             machine_ps2_model_70_type2_init(const machine_t *);
 extern int             machine_ps2_model_70_type3_init(const machine_t *);
-extern int             machine_ps2_model_80_init(const machine_t *);
-extern int             machine_ps2_model_80_axx_init(const machine_t *);
 extern int             machine_ps2_model_70_type4_init(const machine_t *);
-extern int             machine_ps55_model_50t_init(const machine_t*);
-extern int             machine_ps55_model_50v_init(const machine_t*);
+extern int             machine_ps2_model_80_type1_init(const machine_t *);
+extern int             machine_ps2_model_80_type2_init(const machine_t *);
+extern int             machine_ps2_model_80_type3_init(const machine_t *);
+extern int             machine_ps2_model_p70_type1_init(const machine_t *);
+extern int             machine_ps2_model_p70_type2_init(const machine_t *);
+extern int             machine_ps55_model_5535s_init(const machine_t *);
+extern int             machine_ps55_model_5540t_init(const machine_t *);
+extern int             machine_ps55_model_5550t_init(const machine_t *);
+extern int             machine_ps55_model_5550v_init(const machine_t *);
 
 /* m_tandy.c */
 extern int tandy1k_eeprom_read(void);
@@ -1664,6 +1704,8 @@ extern int             machine_v86p_init(const machine_t *);
 /* 8088 */
 #ifdef EMU_DEVICE_H
 extern const device_t  ibmpc_device;
+extern const device_t  at_54tdp_device;
+extern const device_t  d823_device;
 #endif
 extern int             machine_ibmpc_init(const machine_t *);
 #ifdef EMU_DEVICE_H
