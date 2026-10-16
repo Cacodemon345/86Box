@@ -11,9 +11,11 @@
  * Authors: Miran Grca, <mgrca8@gmail.com>
  *          Fred N. van Kempen, <decwiz@yahoo.com>
  *          TheCollector1995, <mariogplayer@gmail.com>
+ *          Marcos Alves
  *
  *          Copyright 2016-2018 Miran Grca.
  *          Copyright 2017-2018 Fred N. van Kempen.
+ *          Copyright 2026      Marcos Alves.
  */
 #include <stdarg.h>
 #include <stdint.h>
@@ -44,6 +46,7 @@
 #include <86box/scsi_pcscsi.h>
 #include <86box/scsi_qlogic.h>
 #include <86box/scsi_spock.h>
+#include <86box/pcmcia.h>
 
 int scsi_card_current[SCSI_CARD_MAX] = { 0, 0, 0, 0 };
 double scsi_bus_speed[SCSI_BUS_MAX] = { 0.0, 0.0, 0.0, 0.0 };
@@ -235,7 +238,7 @@ scsi_plan_take(bus_owner_t owners[SCSI_BUS_MAX], int *next, int buses, const dev
 }
 
 int
-scsi_plan(bus_owner_t owners[SCSI_BUS_MAX], int mach, const int snd[], const int scsi[])
+scsi_plan(bus_owner_t owners[SCSI_BUS_MAX], int mach, const int snd[], const int scsi[], const int pccard[])
 {
     const machine_t *m    = &machines[mach];
     int              next = 0;
@@ -243,7 +246,8 @@ scsi_plan(bus_owner_t owners[SCSI_BUS_MAX], int mach, const int snd[], const int
     memset(owners, 0, SCSI_BUS_MAX * sizeof(bus_owner_t));
 
     /* In the order they start, each taking the next bus: the machine's own
-       SCSI, its sound, the sound cards, then the SCSI cards. */
+       SCSI, its sound, the sound cards, the SCSI cards, then a SCSI PC Card's
+       socket (pcmcia.c). */
     scsi_plan_take(owners, &next, scsi_plan_buses(m->scsi_device, 1, 1), m->scsi_device, 1, 1);
     if ((snd[0] == SOUND_INTERNAL) && (m->snd_device != NULL))
         scsi_plan_take(owners, &next, scsi_plan_buses(m->snd_device, 1, 0), m->snd_device, 1, 1);
@@ -261,6 +265,13 @@ scsi_plan(bus_owner_t owners[SCSI_BUS_MAX], int mach, const int snd[], const int
             scsi_plan_take(owners, &next, scsi_plan_buses(dev, i + 1, 1), dev, i + 1, 0);
         }
     }
+    for (int s = 0; s < PCMCIA_SOCKETS; s++) {
+        if (pcmcia_card_is_scsi(pccard[s])) {
+            const device_t *dev = pcmcia_card_get_device(pccard[s]);
+
+            scsi_plan_take(owners, &next, 1, dev, s + 1, 0);
+        }
+    }
 
     return next;
 }
@@ -272,7 +283,12 @@ void
 scsi_plan_check(void)
 {
     bus_owner_t owners[SCSI_BUS_MAX];
-    const int   planned = scsi_plan(owners, machine, sound_card_current, scsi_card_current);
+    int         pccard[PCMCIA_SOCKETS];
+
+    for (int s = 0; s < PCMCIA_SOCKETS; s++)
+        pccard[s] = pcmcia_enabled ? pcmcia_card_type[s] : 0;
+
+    const int planned = scsi_plan(owners, machine, sound_card_current, scsi_card_current, pccard);
 
     if (planned != next_scsi_bus)
         warning("SCSI: the machine has %i buses, but the settings show %i\n", next_scsi_bus, planned);

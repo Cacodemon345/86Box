@@ -9,8 +9,10 @@
  *          Common storage devices module.
  *
  * Authors: Joakim L. Gilje <jgilje@jgilje.net>
+ *          Marcos Alves
  *
  *          Copyright 2021 Joakim L. Gilje
+ *          Copyright 2026 Marcos Alves
  */
 #include <algorithm>
 #include <cstdint>
@@ -24,6 +26,7 @@ extern "C" {
 #include <86box/hdd.h>
 #include <86box/device.h>
 #include <86box/scsi.h>
+#include <86box/pcmcia.h>
 #include <86box/cdrom.h>
 #include <86box/scsi_device.h>
 #include <86box/scsi_tape.h>
@@ -378,11 +381,14 @@ Harddrives::scsiPlan(bus_owner_t *owners)
     int mach = machine;
     int snd[SOUND_CARD_MAX];
     int scsi[SCSI_CARD_MAX];
+    int pccard[PCMCIA_SOCKETS];
 
     for (int i = 0; i < SOUND_CARD_MAX; i++)
         snd[i] = sound_card_current[i];
     for (int i = 0; i < SCSI_CARD_MAX; i++)
         scsi[i] = scsi_card_current[i];
+    for (int s = 0; s < PCMCIA_SOCKETS; s++)
+        pccard[s] = pcmcia_enabled ? pcmcia_card_type[s] : 0;
 
     if (Settings::settings != nullptr) {
         mach = Settings::settings->currentMachine();
@@ -390,9 +396,11 @@ Harddrives::scsiPlan(bus_owner_t *owners)
             snd[i] = Settings::settings->currentSoundCard(i);
         for (int i = 0; i < SCSI_CARD_MAX; i++)
             scsi[i] = Settings::settings->currentScsiCard(i);
+        for (int s = 0; s < PCMCIA_SOCKETS; s++)
+            pccard[s] = Settings::settings->currentPcmciaCard(s);
     }
 
-    return scsi_plan(owners, mach, snd, scsi);
+    return scsi_plan(owners, mach, snd, scsi, pccard);
 }
 
 /* A device's label: its short name, with "(Onboard)" for a chip on the

@@ -10,9 +10,11 @@
  *
  * Authors: Joakim L. Gilje <jgilje@jgilje.net>
  *          Jasmine Iwanek <jriwanek@gmail.com>
+ *          Marcos Alves
  *
  *          Copyright 2021 Joakim L. Gilje
  *          Copyright 2025 Jasmine Iwanek
+ *          Copyright 2026 Marcos Alves
  */
 #include <cstdint>
 #include <cstdio>
@@ -48,6 +50,7 @@ extern "C" {
 #include "qt_settings_completer.hpp"
 
 #include "qt_settingsotherperipherals.hpp"
+#include "qt_settingspcmcia.hpp"
 #include "ui_qt_settingsotherperipherals.h"
 
 #include "qt_deviceconfig.hpp"
@@ -218,6 +221,10 @@ SettingsOtherPeripherals::SettingsOtherPeripherals(QWidget *parent)
 {
     ui->setupUi(this);
 
+    /* The PC Card controller and its sockets, a tab of its own. */
+    pcmcia = new SettingsPcmcia(this);
+    ui->tabWidgetSound->addTab(pcmcia, QIcon(":/settings/qt/icons/pcmcia.ico"), tr("PCMCIA"));
+
     /* Memory expansion cards: one shared set of four slots, fed from the
        ISA board list (isamem) on ISA machines and from the MCA board list
        (mcamem) on MCA machines. */
@@ -311,6 +318,7 @@ void
 SettingsOtherPeripherals::onCurrentMachineChanged(int machineId)
 {
     this->machineId = machineId;
+    pcmcia->onCurrentMachineChanged(machineId);
 
     bool machineHasIsa          = (machine_has_bus(machineId, MACHINE_BUS_ISA) > 0);
     bool machineHasIsaOrSidecar = hasIsaOrSidecarBus(machineId);
@@ -491,7 +499,13 @@ SettingsOtherPeripherals::changed()
     has_changed |= vfioChanged();
 #endif
 
-    return has_changed ? (SETTINGS_CHANGED | SETTINGS_REQUIRE_HARD_RESET) : 0;
+    return (has_changed ? (SETTINGS_CHANGED | SETTINGS_REQUIRE_HARD_RESET) : 0) | pcmcia->changed();
+}
+
+int
+SettingsOtherPeripherals::pcmciaCard(int s) const
+{
+    return pcmcia->socketCard(s);
 }
 
 void
@@ -502,6 +516,7 @@ SettingsOtherPeripherals::restore()
 void
 SettingsOtherPeripherals::save(int soft)
 {
+    pcmcia->save(soft);
     if (soft)
         return;
 

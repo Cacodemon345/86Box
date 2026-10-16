@@ -9,6 +9,7 @@ add_subdirectory(mem)
 add_subdirectory(machine)
 add_subdirectory(utils)
 add_subdirectory(network)
+add_subdirectory(pcmcia)
 
 if(BUILD_TESTING)
     add_library(pcjx_floppy_engine OBJECT

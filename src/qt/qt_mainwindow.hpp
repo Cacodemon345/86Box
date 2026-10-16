@@ -182,6 +182,7 @@ private:
     std::unique_ptr<MachineStatus> status;
     std::shared_ptr<MediaMenu>     mm;
     QMenu                         *dynarecMenu = nullptr;
+    class PcCardMenu              *pcCardMenu  = nullptr;
 
     void updateShortcuts();
     void refreshDisplayRatioActions();
