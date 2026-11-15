@@ -428,6 +428,13 @@ extern const device_t ati28800_wonderxl24_device;
 extern const device_t bochs_svga_device;
 
 /* Chips & Technologies */
+extern const device_t chips_65545_vlb_device;
+extern const device_t chips_65545_vlb_onboard_device;
+extern const device_t chips_65548_pci_device;
+extern const device_t chips_65548_pci_onboard_device;
+extern const device_t chips_65550_pci_device;
+extern const device_t chips_65550_vlb_device;
+extern const device_t chips_65554_device;
 extern const device_t chips_69000_device;
 extern const device_t chips_69000_onboard_device;
 extern const device_t chips_82c450_device;

@@ -160,6 +160,11 @@ typedef struct chips_69000_t {
 
     uint8_t st01;
 
+    uint8_t  chip;      /* CHIPS_69000, CHIPS_65554 or CHIPS_65550 */
+    uint16_t device_id; /* PCI device ID: 00C0h (69000), 00E4h (65554), 00E0h (65550) */
+    uint8_t  vlb;       /* 65550 VL-Bus variant */
+    uint8_t  rev;       /* XR04 */
+
     /* Video playback (overlay) engine state, derived from the multimedia registers. */
     struct {
         int      video;
@@ -173,8 +178,22 @@ typedef struct chips_69000_t {
 
 static chips_69000_t *reset_state = NULL;
 
+/* device_t local: bit 0 = on-board, bits 15-8 = the chip. */
+enum {
+    CHIPS_69000 = 0,
+    CHIPS_65554 = 1, /* HiQV with 1-4 MB external DRAM */
+    CHIPS_65550 = 2  /* HiQV with 1-2 MB external DRAM */
+};
+
+#define CHIPS_LOCAL_VLB 0x02
+
+#define ROM_CHIPS_65550         "roms/video/chips/ct65550_nec_versa6200_v2.5.5.bin"
+#define ROM_CHIPS_69000         "roms/video/chips/69000.ROM"
+#define ROM_STB_MONOCLE_65554   "roms/video/chips/stb_monocle_65554_110.bin"
+
 /* TODO: Probe timings on real hardware. */
 static video_timings_t timing_chips = { .type = VIDEO_PCI, .write_b = 2, .write_w = 2, .write_l = 1, .read_b = 10, .read_w = 10, .read_l = 10 };
+static video_timings_t timing_chips_vlb = { .type = VIDEO_BUS, .write_b = 2, .write_w = 2, .write_l = 1, .read_b = 10, .read_w = 10, .read_l = 10 };
 
 uint8_t chips_69000_readb_linear(uint32_t addr, void *priv);
 uint16_t chips_69000_readw_linear(uint32_t addr, void *priv);
@@ -182,6 +201,8 @@ uint32_t chips_69000_readl_linear(uint32_t addr, void *priv);
 void chips_69000_writeb_linear(uint32_t addr, uint8_t val, void *priv);
 void chips_69000_writew_linear(uint32_t addr, uint16_t val, void *priv);
 void chips_69000_writel_linear(uint32_t addr, uint32_t val, void *priv);
+void chips_69000_out(uint16_t addr, uint8_t val, void *priv);
+uint8_t chips_69000_in(uint16_t addr, void *priv);
 
 /* Playback memory pointer currently selected by MR20. */
 static uint32_t
@@ -394,7 +415,8 @@ chips_69000_write_flat_panel(chips_69000_t* chips, uint8_t val)
 void
 chips_69000_interrupt(chips_69000_t* chips)
 {
-    pci_irq(chips->slot, PCI_INTA, 0, !!(chips->mem_regs[0] & chips->mem_regs[1] & 0x80004040), &chips->irq_state);
+    if (!chips->vlb)
+        pci_irq(chips->slot, PCI_INTA, 0, !!(chips->mem_regs[0] & chips->mem_regs[1] & 0x80004040), &chips->irq_state);
 }
 
 void
@@ -1256,8 +1278,13 @@ chips_69000_recalctimings(svga_t *svga)
         svga->rowoffset |= (svga->crtc[0x41] & 0xF) << 8;
 
         svga->interlace = !!(svga->crtc[0x70] & 0x80);
-        if (svga->interlace)
+        if (svga->interlace) {
+            /* The vertical registers count frame lines; each field is half that. */
             svga->dispend >>= 1;
+            svga->vtotal >>= 1;
+            svga->vsyncstart >>= 1;
+            svga->vblankstart >>= 1;
+        }
 
         switch (chips->ext_regs[0x81] & 0xF) {
             default:
@@ -1286,7 +1313,12 @@ chips_69000_recalctimings(svga_t *svga)
                 break;
         }
 #if 1
-        if (chips->flat_panel_regs[0x01] & 0x2) {
+        /* The Monocle's BIOS and Windows' 65554 driver run the flat panel path
+           (FR01 = 2, with the DAC on: simultaneous display) although no panel is
+           attached; what is emulated is its CRT connector, so it shows the CRTC
+           timing rather than the picture cut to the panel size. */
+        if ((chips->flat_panel_regs[0x01] & 0x2) && (chips->chip != CHIPS_65554) &&
+            (chips->chip != CHIPS_65550)) {
             /* TODO: Fix horizontal parameter calculations. */
             if (svga->hdisp > (((chips->flat_panel_regs[0x20] | ((chips->flat_panel_regs[0x25] & 0xF) << 8)) + 1) << 3)) {
                 svga->hdisp = ((chips->flat_panel_regs[0x20] | ((chips->flat_panel_regs[0x25] & 0xF) << 8)) + 1) << 3;
@@ -1321,6 +1353,12 @@ chips_69000_recalctimings(svga_t *svga)
     if (chips->mm_regs[0x3c] & 0x20)
         svga->render = svga_render_blank;
 
+    /* The 65554 BIOS's packed 16-colour modes (20h-2Ah): the 256-colour shifter
+       (GR05 bit 6) without 8-bit attribute pixels (AR10 bit 6), so as on a VGA each
+       nibble is a pixel through the attribute palette, not half of a 256-colour one. */
+    if ((chips->chip == CHIPS_65554) && !(chips->ext_regs[0x81] & 0x0f) && (svga->gdcreg[6] & 1) &&
+        (svga->gdcreg[5] & 0x40) && !(svga->attrregs[0x10] & 0x40) && (svga->render == svga_render_8bpp_highres))
+        svga->render = svga_render_4bpp_highres;
     chips_69000_update_overlay(chips);
 }
 
@@ -1352,6 +1390,31 @@ chips_69000_recalc_banking(chips_69000_t *chips)
     } else {
         svga->decode_mask = (1 << 21) - 1;
     }*/
+}
+
+/* The 65550 on the VL-Bus: an 8 MB space (frame buffer, BitBLT registers at 4 MB,
+   the BitBLT data port at 4 MB + 64 KB; no big-endian half) whose A31-A23 are
+   XR06[7:0], XR05[7], decoded while XR0A bit 1 enables linear mapping. */
+static void
+chips_65550_vlb_recalc_linear(chips_69000_t *chips)
+{
+    uint32_t base = ((uint32_t) chips->ext_regs[0x06] << 24) | ((chips->ext_regs[0x05] & 0x80) << 16);
+
+    if ((chips->ext_regs[0x0a] & 0x02) && (base != 0))
+        mem_mapping_set_addr(&chips->linear_mapping, base, 0x800000);
+    else
+        mem_mapping_disable(&chips->linear_mapping);
+}
+
+/* On the VL-Bus nothing gates the 65550: its VGA ports, the VGA window and its
+   40 KB BIOS at C0000h are decoded from reset, the linear space once XR0A says so. */
+static void
+chips_65550_vlb_enable(chips_69000_t *chips)
+{
+    io_sethandler(0x03a0, 0x0040, chips_69000_in, NULL, NULL, chips_69000_out, NULL, NULL, chips);
+    mem_mapping_enable(&chips->svga.mapping);
+    mem_mapping_set_addr(&chips->bios_rom.mapping, 0xc0000, 0xa000);
+    chips_65550_vlb_recalc_linear(chips);
 }
 
 void
@@ -1591,7 +1654,9 @@ chips_69000_setup_bitblt(chips_69000_t* chips)
     chips->bitblt_running.mono_bits_skip_left = 0;
     int orig_cycles = cycles;
 
-    if (chips->bitblt.bitblt_control & (1 << 23)) {
+    /* BR04 bits 23-25 (a per-BitBLT colour depth) are the 69000's; on the 65550 they
+       are reserved and XR20 alone sets the depth. */
+    if ((chips->bitblt.bitblt_control & (1 << 23)) && (chips->chip != CHIPS_65550)) {
         chips->bitblt_running.bytes_per_pixel = 1 + ((chips->bitblt.bitblt_control >> 24) & 3);
     } else {
         chips->bitblt_running.bytes_per_pixel = 1 + ((chips->ext_regs[0x20] >> 4) & 3);
@@ -1945,22 +2010,27 @@ chips_69000_read_ext_reg(chips_69000_t* chips)
             val = 0x10;
             break;
         case 0x02:
-            val = 0xC0;
+            val = chips->device_id & 0xff;
             break;
         case 0x03:
-            val = 0x00;
+            val = chips->device_id >> 8;
             break;
         case 0x04:
-            val = 0x62;
+            val = chips->rev;
             break;
         case 0x05:
-            val = 0x00;
+            /* 65550 on VL: XR06[7:0] and XR05[7] are A31-A23 of the linear space. */
+            val = chips->vlb ? (chips->ext_regs[index] & 0x80) : 0x00;
             break;
         case 0x06:
-            val = chips->linear_mapping.base >> 24;
+            val = chips->vlb ? chips->ext_regs[index] : (chips->linear_mapping.base >> 24);
             break;
         case 0x08:
-            val = 0x02;
+            /* 65550: bit 1 PCI VGA decode (the AA1 strap), bit 0 the bus (1 = PCI). */
+            if (chips->chip == CHIPS_65550)
+                val = chips->vlb ? 0x02 : 0x03;
+            else
+                val = 0x02;
             break;
         case 0x0A:
             val = chips->ext_regs[index] & 0x37;
@@ -1982,7 +2052,11 @@ chips_69000_read_ext_reg(chips_69000_t* chips)
                 break;
             }
         case 0x70:
-            val = 0x3;
+            /* 65550 straps AA7-AA0, pulled high but AA0 on PCI (0 = PCI, 1 = VL). */
+            if (chips->chip == CHIPS_65550)
+                val = chips->vlb ? 0xff : 0xfe;
+            else
+                val = 0x3;
             break;
         case 0x71:
             val = 0b01101000;
@@ -2001,6 +2075,14 @@ chips_69000_write_ext_reg(chips_69000_t* chips, uint8_t val)
         case 0xA:
             chips->ext_regs[chips->ext_index] = val & 0x37;
             chips_69000_recalc_banking(chips);
+            if (chips->vlb)
+                chips_65550_vlb_recalc_linear(chips);
+            break;
+        case 0x5:
+        case 0x6:
+            chips->ext_regs[chips->ext_index] = (chips->ext_index == 0x5) ? (val & 0x80) : val;
+            if (chips->vlb)
+                chips_65550_vlb_recalc_linear(chips);
             break;
         case 0xB:
             chips->ext_regs[chips->ext_index] = val & 0xD;
@@ -2329,10 +2411,10 @@ chips_69000_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
             ret = 0x10;
             break;
         case 0x02:
-            ret = 0xc0;
+            ret = chips->device_id & 0xff;
             break;
         case 0x03:
-            ret = 0x00;
+            ret = chips->device_id >> 8;
             break;
 
         case 0x04:
@@ -2348,6 +2430,10 @@ chips_69000_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
             ret = chips->pci_regs[addr] | 0x02;
             break;
 
+        case 0x08:
+            if (chips->chip == CHIPS_65550)
+                ret = chips->rev;
+            break;
         case 0x0b:
             ret = 0x03;
             break;
@@ -2719,7 +2805,7 @@ chips_69000_readb_linear(uint32_t addr, void *priv)
     if (addr & 0x400000)
         return chips_69000_readb_mmio(addr, chips);
 
-    return svga_readb_linear(addr & 0x1FFFFF, priv);
+    return svga_readb_linear(addr & svga->vram_mask, priv);
 }
 
 uint16_t
@@ -2732,13 +2818,13 @@ chips_69000_readw_linear(uint32_t addr, void *priv)
         if (addr & 0x400000)
             return bswap16(chips_69000_readw_mmio(addr, chips));
 
-        return bswap16(svga_readw_linear(addr & 0x1FFFFF, priv));
+        return bswap16(svga_readw_linear(addr & svga->vram_mask, priv));
     }
 
     if (addr & 0x400000)
         return chips_69000_readw_mmio(addr, chips);
 
-    return svga_readw_linear(addr & 0x1FFFFF, priv);
+    return svga_readw_linear(addr & svga->vram_mask, priv);
 }
 
 uint32_t
@@ -2751,13 +2837,13 @@ chips_69000_readl_linear(uint32_t addr, void *priv)
         if (addr & 0x400000)
             return bswap32(chips_69000_readl_mmio(addr, chips));
 
-        return bswap32(svga_readl_linear(addr & 0x1FFFFF, priv));
+        return bswap32(svga_readl_linear(addr & svga->vram_mask, priv));
     }
 
     if (addr & 0x400000)
         return chips_69000_readl_mmio(addr, chips);
 
-    return svga_readl_linear(addr & 0x1FFFFF, priv);
+    return svga_readl_linear(addr & svga->vram_mask, priv);
 }
 
 void
@@ -2769,7 +2855,7 @@ chips_69000_writeb_linear(uint32_t addr, uint8_t val, void *priv)
     if (addr & 0x400000)
         return chips_69000_writeb_mmio(addr, val, chips);
 
-    svga_writeb_linear(addr & 0x1FFFFF, val, priv);
+    svga_writeb_linear(addr & svga->vram_mask, val, priv);
 }
 
 void
@@ -2784,7 +2870,7 @@ chips_69000_writew_linear(uint32_t addr, uint16_t val, void *priv)
     if (addr & 0x400000)
         return chips_69000_writew_mmio(addr, val, chips);
 
-    svga_writew_linear(addr & 0x1FFFFF, val, priv);
+    svga_writew_linear(addr & svga->vram_mask, val, priv);
 }
 
 void
@@ -2799,7 +2885,58 @@ chips_69000_writel_linear(uint32_t addr, uint32_t val, void *priv)
     if (addr & 0x400000)
         return chips_69000_writel_mmio(addr, val, chips);
 
-    svga_writel_linear(addr & 0x1FFFFF, val, priv);
+    svga_writel_linear(addr & svga->vram_mask, val, priv);
+}
+
+/* The VL-Bus aperture can start on an 8 MB boundary. Keep blitter addresses
+   relative to VRAM and translate only CPU accesses through the mapping. */
+
+static uint8_t
+chips_65550_vlb_readb_linear(uint32_t addr, void *priv)
+{
+    chips_69000_t *chips = priv;
+
+    return chips_69000_readb_linear(addr - chips->linear_mapping.base, &chips->svga);
+}
+
+static uint16_t
+chips_65550_vlb_readw_linear(uint32_t addr, void *priv)
+{
+    chips_69000_t *chips = priv;
+
+    return chips_69000_readw_linear(addr - chips->linear_mapping.base, &chips->svga);
+}
+
+static uint32_t
+chips_65550_vlb_readl_linear(uint32_t addr, void *priv)
+{
+    chips_69000_t *chips = priv;
+
+    return chips_69000_readl_linear(addr - chips->linear_mapping.base, &chips->svga);
+}
+
+static void
+chips_65550_vlb_writeb_linear(uint32_t addr, uint8_t val, void *priv)
+{
+    chips_69000_t *chips = priv;
+
+    chips_69000_writeb_linear(addr - chips->linear_mapping.base, val, &chips->svga);
+}
+
+static void
+chips_65550_vlb_writew_linear(uint32_t addr, uint16_t val, void *priv)
+{
+    chips_69000_t *chips = priv;
+
+    chips_69000_writew_linear(addr - chips->linear_mapping.base, val, &chips->svga);
+}
+
+static void
+chips_65550_vlb_writel_linear(uint32_t addr, uint32_t val, void *priv)
+{
+    chips_69000_t *chips = priv;
+
+    chips_69000_writel_linear(addr - chips->linear_mapping.base, val, &chips->svga);
 }
 
 void
@@ -3199,6 +3336,9 @@ chips_69000_reset(void *priv)
         reset_state->slot = chips->slot;
 
         *chips = *reset_state;
+
+        if (chips->vlb)
+            chips_65550_vlb_enable(chips);
     }
 }
 
@@ -3208,23 +3348,54 @@ chips_69000_init(const device_t *info)
     chips_69000_t *chips = calloc(1, sizeof(chips_69000_t));
     reset_state = calloc(1, sizeof(chips_69000_t));
 
-    /* Appears to have an odd VBIOS size. */
-    if (!info->local) {
-        rom_init(&chips->bios_rom, "roms/video/chips/69000.ROM", 0xc0000, 0x10000, 0xffff, 0x0000, MEM_MAPPING_EXTERNAL);
+    uint32_t vram_size;
+
+    chips->chip    = (info->local >> 8) & 0xff;
+    chips->on_board = !!(info->local & 1);
+    if (chips->chip == CHIPS_65554) {
+        /* External DRAM; the BIOS sizes it by where the banked window wraps (XR0E). */
+        vram_size        = device_get_config_int("memory") << 20;
+        chips->device_id = 0x00e4;
+        chips->rev       = 0x00;
+    } else if (chips->chip == CHIPS_65550) {
+        /* External DRAM on a 32-bit bus, 1 or 2 MB, sized by the BIOS the same way.
+           The data sheet leaves the revision open ("??h"). */
+        vram_size        = device_get_config_int("memory") << 20;
+        chips->device_id = 0x00e0;
+        chips->rev       = 0x00;
+        chips->vlb       = !!(info->local & CHIPS_LOCAL_VLB);
+    } else {
+        vram_size        = 1 << 21; /*2048kb*/
+        chips->device_id = 0x00c0;
+        chips->rev       = 0x62;
+    }
+
+    if (!chips->on_board) {
+        /* The 69000 appears to have an odd VBIOS size; the 65554's is 32 KB. */
+        if (chips->chip == CHIPS_65554)
+            rom_init(&chips->bios_rom, ROM_STB_MONOCLE_65554, 0xc0000, 0x8000, 0x7fff, 0x0000, MEM_MAPPING_EXTERNAL);
+        else if (chips->chip == CHIPS_65550)
+            rom_init(&chips->bios_rom, ROM_CHIPS_65550, 0xc0000, 0x10000, 0xffff, 0x0000, MEM_MAPPING_EXTERNAL);
+        else
+            rom_init(&chips->bios_rom, ROM_CHIPS_69000, 0xc0000, 0x10000, 0xffff, 0x0000, MEM_MAPPING_EXTERNAL);
         mem_mapping_disable(&chips->bios_rom.mapping);
     }
 
-    video_inform(VIDEO_FLAG_TYPE_SPECIAL, &timing_chips);
+    video_inform(VIDEO_FLAG_TYPE_SPECIAL, chips->vlb ? &timing_chips_vlb : &timing_chips);
 
-    svga_init(info, &chips->svga, chips, 1 << 21, /*2048kb*/
+    svga_init(info, &chips->svga, chips, vram_size,
               chips_69000_recalctimings,
               chips_69000_in, chips_69000_out,
               chips_69000_hwcursor_draw,
               chips_69000_overlay_draw);
 
-    io_sethandler(0x03a0, 0x0040, chips_69000_in, NULL, NULL, chips_69000_out, NULL, NULL, chips);
+    if ((chips->chip == CHIPS_65554) || (chips->chip == CHIPS_65550))
+        chips->svga.decode_mask = vram_size - 1;
 
-    pci_add_card(info->local ? PCI_ADD_VIDEO : PCI_ADD_NORMAL, chips_69000_pci_read, chips_69000_pci_write, chips, &chips->slot);
+    if (!chips->vlb) {
+        io_sethandler(0x03a0, 0x0040, chips_69000_in, NULL, NULL, chips_69000_out, NULL, NULL, chips);
+        pci_add_card(chips->on_board ? PCI_ADD_VIDEO : PCI_ADD_NORMAL, chips_69000_pci_read, chips_69000_pci_write, chips, &chips->slot);
+    }
 
     chips->svga.bpp              = 8;
     chips->svga.miscout          = 1;
@@ -3233,11 +3404,17 @@ chips_69000_init(const device_t *info)
     chips->svga.conv_16to32      = chips_69000_conv_16to32;
     chips->svga.line_compare     = chips_69000_line_compare;
 
-    mem_mapping_add(&chips->linear_mapping, 0, 0, chips_69000_readb_linear, chips_69000_readw_linear, chips_69000_readl_linear, chips_69000_writeb_linear, chips_69000_writew_linear, chips_69000_writel_linear, NULL, MEM_MAPPING_EXTERNAL, chips);
+    if (chips->vlb)
+        mem_mapping_add(&chips->linear_mapping, 0, 0, chips_65550_vlb_readb_linear, chips_65550_vlb_readw_linear,
+                        chips_65550_vlb_readl_linear, chips_65550_vlb_writeb_linear, chips_65550_vlb_writew_linear,
+                        chips_65550_vlb_writel_linear, NULL, MEM_MAPPING_EXTERNAL, chips);
+    else
+        mem_mapping_add(&chips->linear_mapping, 0, 0, chips_69000_readb_linear, chips_69000_readw_linear,
+                        chips_69000_readl_linear, chips_69000_writeb_linear, chips_69000_writew_linear,
+                        chips_69000_writel_linear, NULL, MEM_MAPPING_EXTERNAL, &chips->svga);
 
     chips->quit            = 0;
     chips->engine_active   = 0;
-    chips->on_board        = !!(info->local);
 
     chips->svga.packed_chain4 = 1;
 
@@ -3253,7 +3430,7 @@ chips_69000_init(const device_t *info)
     chips->pci_rom_enable  = 0x00;
     chips->rom_addr        = 0x0000;
     chips->subsys_vid      = 0x102c;
-    chips->subsys_pid      = 0x00c0;
+    chips->subsys_pid      = chips->device_id;
 
     io_removehandler(0x03a0, 0x0040, chips_69000_in, NULL, NULL, chips_69000_out, NULL, NULL, chips);
     mem_mapping_disable(&chips->linear_mapping);
@@ -3263,13 +3440,22 @@ chips_69000_init(const device_t *info)
 
     *reset_state = *chips;
 
+    if (chips->vlb)
+        chips_65550_vlb_enable(chips);
+
     return chips;
 }
 
 static int
 chips_69000_available(void)
 {
-    return rom_present("roms/video/chips/69000.ROM");
+    return rom_present(ROM_CHIPS_69000);
+}
+
+static int
+chips_65554_available(void)
+{
+    return rom_present(ROM_STB_MONOCLE_65554);
 }
 
 void
@@ -3278,6 +3464,7 @@ chips_69000_close(void *priv)
     chips_69000_t *chips = (chips_69000_t *) priv;
 
     chips->quit = 1;
+
 //    thread_set_event(chips->fifo_event);
  //   thread_wait(chips->accel_thread);
     ddc_close(chips->ddc);
@@ -3332,4 +3519,97 @@ const device_t chips_69000_onboard_device = {
     .speed_changed = chips_69000_speed_changed,
     .force_redraw  = chips_69000_force_redraw,
     .config        = NULL
+};
+
+static const device_config_t chips_65554_config[] = {
+    // clang-format off
+    {
+        .name           = "memory",
+        .description    = "Memory size",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 2,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "1 MB", .value = 1 },
+            { .description = "2 MB", .value = 2 },
+            { .description = "4 MB", .value = 4 },
+            { .description = ""                 }
+        },
+        .bios           = { { 0 } }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+    // clang-format on
+};
+
+static const device_config_t chips_65550_config[] = {
+    // clang-format off
+    {
+        .name           = "memory",
+        .description    = "Memory size",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 2,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "1 MB", .value = 1 },
+            { .description = "2 MB", .value = 2 },
+            { .description = ""                 }
+        },
+        .bios           = { { 0 } }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+    // clang-format on
+};
+
+static int
+chips_65550_available(void)
+{
+    return rom_present(ROM_CHIPS_65550);
+}
+
+/* The 65550's PCI and VL-Bus cards both run CHIPS' 65550 BIOS 2.5.5 (a notebook BIOS:
+   it runs the panel path and 86Box shows the CRT timing, as on the 65554). */
+const device_t chips_65550_pci_device = {
+    .name          = "Chips & Technologies 65550 (PCI)",
+    .internal_name = "chips_65550_pci",
+    .flags         = DEVICE_PCI,
+    .local         = CHIPS_65550 << 8,
+    .init          = chips_69000_init,
+    .close         = chips_69000_close,
+    .reset         = chips_69000_reset,
+    .available     = chips_65550_available,
+    .speed_changed = chips_69000_speed_changed,
+    .force_redraw  = chips_69000_force_redraw,
+    .config        = chips_65550_config
+};
+
+const device_t chips_65550_vlb_device = {
+    .name          = "Chips & Technologies 65550 (VLB)",
+    .internal_name = "chips_65550_vlb",
+    .flags         = DEVICE_VLB,
+    .local         = (CHIPS_65550 << 8) | CHIPS_LOCAL_VLB,
+    .init          = chips_69000_init,
+    .close         = chips_69000_close,
+    .reset         = chips_69000_reset,
+    .available     = chips_65550_available,
+    .speed_changed = chips_69000_speed_changed,
+    .force_redraw  = chips_69000_force_redraw,
+    .config        = chips_65550_config
+};
+
+const device_t chips_65554_device = {
+    .name          = "Chips & Technologies 65554 (STB Monocle)",
+    .internal_name = "chips_65554_stb_monocle",
+    .flags         = DEVICE_PCI,
+    .local         = CHIPS_65554 << 8,
+    .init          = chips_69000_init,
+    .close         = chips_69000_close,
+    .reset         = chips_69000_reset,
+    .available     = chips_65554_available,
+    .speed_changed = chips_69000_speed_changed,
+    .force_redraw  = chips_69000_force_redraw,
+    .config        = chips_65554_config
 };

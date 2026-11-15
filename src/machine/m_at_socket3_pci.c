@@ -199,6 +199,9 @@ machine_at_arb1476_init(const machine_t *model)
 
     device_add(&sst_flash_29ee010_device);
 
+    if (gfxcard[0] == VID_INTERNAL)
+        device_add(machine_get_vid_device(machine));
+
     return ret;
 }
 

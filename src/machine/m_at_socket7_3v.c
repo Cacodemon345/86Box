@@ -1543,12 +1543,16 @@ machine_at_op47_init(const machine_t *model)
     pci_register_slot(0x13, PCI_CARD_NORMAL,      3, 4, 1, 2);
     pci_register_slot(0x12, PCI_CARD_NORMAL,      4, 1, 2, 3);
     pci_register_slot(0x07, PCI_CARD_SOUTHBRIDGE, 0, 0, 0, 0);
+    pci_register_slot(0x08, PCI_CARD_VIDEO,       0, 0, 0, 0); /* C&T F65548 */
 
     device_add(&i430hx_device);
     device_add(&piix3_device);
     device_add_inst_params(&fdc37c93x_device, 1, (void *) (FDC37XXX2 | FDC37C93X_NORMAL | FDC37XXXX_370));
     device_add_inst_params(&i82091aa_device, 2, (void *) I82091AA_26E);
     device_add(&intel_flash_bxt_device);
+
+    if (gfxcard[0] == VID_INTERNAL)
+        device_add(machine_get_vid_device(machine));
 
     /* TODO: Implement the VADEM VG-469 PCMCIA controller. */
 

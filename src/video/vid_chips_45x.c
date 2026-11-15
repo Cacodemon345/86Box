@@ -28,6 +28,7 @@
 #include <86box/video.h>
 #include <86box/vid_svga.h>
 #include <86box/vid_svga_render.h>
+#include <86box/vid_chips.h>
 #include <86box/plat_unused.h>
 #include "cpu.h"
 
@@ -640,12 +641,13 @@ chips_45x_xr_port(const chips_45x_t *chips, uint16_t addr)
     return (addr & 0xfffe) == 0x3d6;
 }
 
-/* Bits of a CRTC register that XR15 (and CR11 bit 7) leave writable. */
-static uint8_t
-chips_45x_crtc_wmask(const chips_45x_t *chips, uint8_t idx)
+/* Bits of a CRTC register that XR15 (and CR11 bit 7) leave writable; shared with
+   the 6554x (vid_chips_6554x.c), whose XR15 is the same. */
+uint8_t
+chips_crtc_wmask(uint8_t xr15, uint8_t cr11, uint8_t idx)
 {
-    const uint8_t wp = chips->xr[0x15];
-    const int     g0 = (chips->svga.crtc[0x11] & 0x80) || (wp & 0x40);
+    const uint8_t wp = xr15;
+    const int     g0 = (cr11 & 0x80) || (wp & 0x40);
     const int     g2 = !!(wp & 0x02);
     const int     g3 = !!(wp & 0x04);
     const int     g4 = !!(wp & 0x08);
@@ -809,7 +811,7 @@ chips_45x_out(uint16_t addr, uint8_t val, void *priv)
             if (svga->crtcreg & 0x20)
                 return;
             old                       = svga->crtc[svga->crtcreg];
-            wmask                     = chips_45x_crtc_wmask(chips, svga->crtcreg);
+            wmask                     = chips_crtc_wmask(chips->xr[0x15], svga->crtc[0x11], svga->crtcreg);
             svga->crtc[svga->crtcreg] = (old & ~wmask) | (val & wmask);
             val                       = svga->crtc[svga->crtcreg];
             if (old != val) {

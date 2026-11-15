@@ -151,6 +151,7 @@ add_library(vid OBJECT
     # Chips & Technologies
     vid_chips_45x.c
     vid_chips_69000.c
+    vid_chips_6554x.c
 
     # Cirrus Logic
     vid_cl54xx.c
