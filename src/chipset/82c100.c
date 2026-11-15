@@ -174,9 +174,9 @@ ct_82c100_out(uint16_t port, uint8_t val, void *priv)
                 /* INTERNAL CONFIGURATION/CONTROL REGISTERS */
                 case 0x40:
                     dev->regs[0x40] = val & 0xc7;
-                    /* TODO: Clock stuff - needs CPU speed change functionality that's
-                             going to be implemented in 86box v4.0.
-                             Bit 0 is 0 for 8088/V20 and 1 for 8086/V30. */
+                    /* CLKSEL selects the fast clock when 2C indicates a second clock.
+                       Bit 0 selects 8088/V20 (0) or 8086/V30 (1). */
+                    cpu_dynamic_switch(((val & 0x84) == 0x84) ? cpu : 0);
                     break;
                 case 0x41:
                     dev->regs[0x41] = val & 0xed;
