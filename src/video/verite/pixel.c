@@ -777,9 +777,15 @@ pixel_spr(pixel_engine *pe, uint32_t index, uint32_t value, verite_memory mem)
             field_set(&pe->stride, 0x7fU << (8 * (index - 58)), value);
             break;
         case 61:
+            field_set(&pe->src_mode, SRC_CHROMA_BLACK_YUV, value);
+            break;
         case 62:
+            /* The single clamp bit covers both texture axes. */
+            field_set(&pe->src_mode, SRC_U_CLAMP | SRC_V_CLAMP,
+                      (value & SRC_U_CLAMP) ? SRC_U_CLAMP | SRC_V_CLAMP : 0);
+            break;
         case 63:
-            field_set(&pe->src_mode, 1U << (index - 61 + 14), value);
+            field_set(&pe->src_mode, 1U << 17, value);
             break;
         case 64:
             field_set(&pe->dst_mode, 0xf, value);
