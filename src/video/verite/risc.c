@@ -526,7 +526,9 @@ step_op(verite_core *c, uint8_t op, uint8_t d, uint8_t s2, uint8_t s1)
     if (op < 0xd8) {
         uint32_t a = risc_src(c, s2);
         uint32_t b = risc_src(c, s1);
-        step_param(c, scalar[op & 7][s2 & 1], a, b);
+        /* Either source may name the zero register, so the other one
+           supplies the parameter's parity. */
+        step_param(c, scalar[op & 7][(s2 | s1) & 1], a, b);
         risc_dst(c, d, a + b);
     } else {
         reg_pair a = src_pair(c, s2);
