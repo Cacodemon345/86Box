@@ -23,6 +23,7 @@ enum {
     SPAN_CACHE      = 64,
     SPAN_ARENA      = 1024 * 1024,
     SPAN_MAX_CODE   = 12 * 1024,
+    PREFETCH_SHIFT  = 2, /* look 1 << PREFETCH_SHIFT pixels ahead */
     DST_RAW_ZWRITE  = 1 << 16,
     DST_RAW_YUV     = 1 << 18,
     DST_RAW_BLEND   = 1 << 19,
@@ -45,6 +46,7 @@ typedef struct {
     uint32_t          z_addr, z;
     uint32_t          row0, row1, x0, x1;
     uint32_t          lo, hi;
+    uint32_t          prev_u, prev_v; /* the last pixel's texel coordinates */
 } span_ctx;
 
 /* unsigned fn(verite_core *core, verite_draw_site *site): draws with the
@@ -446,12 +448,39 @@ emit_texel(as *a, unsigned fmt, uint32_t src_mode, int32_t row, int32_t x, int32
         land(done, a->p);
 }
 
+/* Prefetch the texel 1 << PREFETCH_SHIFT pixels on, extrapolated from how far u
+   and v moved since the last pixel. Perspective keeps that step close to
+   constant over a few pixels, and a wrong guess only costs the hint.
+   R10D = u, R11D = v. Clobbers EAX, ECX. */
+static void
+emit_prefetch(as *a)
+{
+    for (unsigned axis = 0; axis < 2; axis++) {
+        unsigned reg  = axis ? RCX : RAX, coord = axis ? R11 : R10;
+        int32_t  prev = axis ? CTXF(prev_v) : CTXF(prev_u);
+        MOV(reg, coord);
+        rm(a, 0x2b, reg, CTX, NO_INDEX, prev, false, false); /* sub reg, [prev] */
+        shift_ri(a, 4, reg, PREFETCH_SHIFT, false);
+        rr(a, 0x01, coord, reg, false);
+        ST(coord, CTX, prev);
+        shift_ri(a, 7, reg, 16, false);
+        rm(a, 0x23, reg, PE, NO_INDEX, axis ? PEF(v_mask) : PEF(u_mask), false, false);
+    }
+    rm(a, 0x0faf, RCX, CTX, NO_INDEX, CTXF(tex_stride), false, false);
+    rm(a, 0x03, RCX, PE, NO_INDEX, PEF(src_base), false, false);
+    rr(a, 0x01, RAX, RCX, false);
+    rr(a, 0x01, RAX, RCX, false);
+    rr(a, 0x21, MASK, RCX, false);
+    rm(a, 0x0f18, 1, VRAM, RCX, 0, false, false); /* prefetcht0 [vram + rcx] */
+}
+
 /* sample() into ctx.t. R10D = u, R11D = v after any perspective division. */
 static void
 emit_sample(as *a, unsigned fmt, uint32_t src_mode)
 {
     bool uc = !!(src_mode & SRC_U_CLAMP), vc = !!(src_mode & SRC_V_CLAMP);
     bool filter = !!(src_mode & SRC_FILTER);
+    emit_prefetch(a);
 
     /* x0, row0 */
     MOV(RAX, R10);
@@ -562,13 +591,18 @@ emit_sample(as *a, unsigned fmt, uint32_t src_mode)
     }
 }
 
-/* R10D, R11D = u, v * 2^24 / q unless Q is 0 (exact truncating division). */
+/* R10D, R11D = u, v * 2^24 / q unless Q is 0 (exact truncating division).
+   As perspective_uv() does, Q >= 64 multiplies by a double-precision 2^24 / q
+   and corrects the truncated estimate by its remainder; two 64-bit idivs a
+   pixel cost several times as much. Clobbers RAX, RCX, RDX, R8, XMM0-XMM1. */
 static void
 emit_divide_uv(as *a)
 {
     LD(R8, PE, PEF(q));
     rr(a, 0x85, R8, R8, false);
     uint8_t *flat = jcc(a, CC_E);
+    alu_ri(a, 7, R8, 64);
+    uint8_t *fast = jcc(a, CC_AE);
     for (unsigned axis = 0; axis < 2; axis++) {
         rr(a, 0x63, RAX, axis ? R11 : R10, true); /* movsxd rax, r */
         shift_ri(a, 4, RAX, 24, true);
@@ -577,6 +611,62 @@ emit_divide_uv(as *a)
         rr(a, 0xf7, 7, R8, true); /* idiv r8 */
         MOV(axis ? R11 : R10, RAX);
     }
+    uint8_t *done = jmp(a);
+
+    land(fast, a->p);
+    /* XMM0 = 2^24 / q */
+    b8(a, 0x66);
+    rr(a, 0x0fef, 1, 1, false);   /* pxor xmm1, xmm1 */
+    b8(a, 0xf2);
+    rr(a, 0x0f2a, 1, R8, true);   /* cvtsi2sd xmm1, r8 */
+    mov_ri64(a, RAX, UINT64_C(0x4170000000000000)); /* 2^24 */
+    b8(a, 0x66);
+    rr(a, 0x0f6e, 0, RAX, true);  /* movq xmm0, rax */
+    b8(a, 0xf2);
+    rr(a, 0x0f5e, 0, 1, false);   /* divsd xmm0, xmm1 */
+    for (unsigned axis = 0; axis < 2; axis++) {
+        unsigned coord = axis ? R11 : R10;
+        /* RCX = estimate = (int64_t) (coord * scale) */
+        b8(a, 0x66);
+        rr(a, 0x0fef, 1, 1, false);
+        b8(a, 0xf2);
+        rr(a, 0x0f2a, 1, coord, false); /* cvtsi2sd xmm1, coord */
+        b8(a, 0xf2);
+        rr(a, 0x0f59, 1, 0, false);     /* mulsd xmm1, xmm0 */
+        b8(a, 0xf2);
+        rr(a, 0x0f2c, RCX, 1, true);    /* cvttsd2si rcx, xmm1 */
+        /* RAX = remainder = coord * 2^24 - estimate * q */
+        rr(a, 0x63, RAX, coord, true);
+        shift_ri(a, 4, RAX, 24, true);
+        rr(a, 0x89, RCX, RDX, true);
+        rr(a, 0x0faf, RDX, R8, true);   /* imul rdx, r8 */
+        rr(a, 0x29, RDX, RAX, true);    /* sub rax, rdx */
+        rr(a, 0x85, coord, coord, false);
+        uint8_t *negative = jcc(a, CC_S);
+        /* estimate += (remainder >= q) - (remainder < 0) */
+        rr(a, 0x39, R8, RAX, true);     /* cmp rax, r8 */
+        uint8_t *below = jcc(a, CC_L);
+        rr(a, 0xff, 0, RCX, true);      /* inc rcx */
+        land(below, a->p);
+        rr(a, 0x85, RAX, RAX, true);
+        uint8_t *nonneg = jcc(a, CC_NS);
+        rr(a, 0xff, 1, RCX, true);      /* dec rcx */
+        land(nonneg, a->p);
+        uint8_t *next = jmp(a);
+        /* estimate += (remainder > 0) - (remainder <= -q) */
+        land(negative, a->p);
+        rr(a, 0x85, RAX, RAX, true);
+        uint8_t *not_above = jcc(a, CC_LE);
+        rr(a, 0xff, 0, RCX, true);
+        land(not_above, a->p);
+        rr(a, 0x01, R8, RAX, true);     /* add rax, r8: remainder + q <= 0 */
+        uint8_t *above = jcc(a, CC_G);
+        rr(a, 0xff, 1, RCX, true);
+        land(above, a->p);
+        land(next, a->p);
+        MOV(coord, RCX);
+    }
+    land(done, a->p);
     land(flat, a->p);
 }
 
@@ -920,8 +1010,14 @@ compile(as *a, const span_key *k)
     emit_stride(a, 8, CTXF(dst_stride));
     if (depth_mode || zwrite)
         emit_stride(a, 16, CTXF(z_stride));
-    if (func)
+    if (func) {
         emit_stride(a, 0, CTXF(tex_stride));
+        /* The first pixel has no step to extrapolate; its prefetch is a guess. */
+        rm(a, 0xc7, 0, CTX, NO_INDEX, CTXF(prev_u), false, false);
+        d32(a, 0);
+        rm(a, 0xc7, 0, CTX, NO_INDEX, CTXF(prev_v), false, false);
+        d32(a, 0);
+    }
 
     uint8_t *loop = a->p;
     for (unsigned i = 0; i < count; i++) {

@@ -1065,6 +1065,61 @@ jit_differential(void)
     puts("Vérité x86-64 JIT differential cases passed");
 }
 
+/* The native perspective division gives the exact truncating quotient,
+   including where the double-precision estimate needs its correction. */
+static void
+jit_perspective_division(void)
+{
+    uint8_t *code = alloc_code();
+    assert(code);
+    as a = { code };
+    /* void fn(pixel_engine *pe, int32_t uv[2]) */
+#    ifdef _WIN32
+    unsigned arg_pe = RCX, arg_uv = RDX;
+#    else
+    unsigned arg_pe = RDI, arg_uv = RSI;
+#    endif
+    b8(&a, 0x41), b8(&a, 0x54); /* push r12 */
+    rr(&a, 0x89, arg_pe, PE, true);
+    rr(&a, 0x89, arg_uv, R9, true);
+    rm(&a, 0x8b, R10, R9, NO_INDEX, 0, false, false);
+    rm(&a, 0x8b, R11, R9, NO_INDEX, 4, false, false);
+    emit_divide_uv(&a);
+    rm(&a, 0x89, R10, R9, NO_INDEX, 0, false, false);
+    rm(&a, 0x89, R11, R9, NO_INDEX, 4, false, false);
+    b8(&a, 0x41), b8(&a, 0x5c); /* pop r12 */
+    b8(&a, 0xc3);
+    void (*divide)(pixel_engine *, int32_t *) = (void (*)(pixel_engine *, int32_t *)) (void *) code;
+
+    static const int32_t edge[] = { INT32_MIN, INT32_MIN + 1, -(1 << 24), -1, 0, 1, 1 << 24, INT32_MAX - 1, INT32_MAX };
+    pixel_engine pe;
+    pixel_reset(&pe);
+    uint32_t bits = 0x2468ace1;
+    for (unsigned i = 0; i < 400000; i++) {
+        bits = bits * 1664525U + 1013904223U;
+        uint32_t q = i < 4096 ? i : (bits >> (i % 24)) | (i & 1);
+        int32_t  u = edge[i % COUNT(edge)];
+        bits = bits * 1664525U + 1013904223U;
+        int32_t v = (int32_t) bits;
+        if (q && i % 3 == 0) {
+            /* A multiple of q, or one either side, where rounding matters. */
+            int64_t k = (int64_t) (int32_t) bits % (INT64_C(1) << 20);
+            int64_t n = (k * q) >> 24;
+            v = (int32_t) (n + (int64_t) (i % 5) - 2);
+        }
+        int32_t uv[2] = { u, v };
+        pe.q = q;
+        divide(&pe, uv);
+        int32_t ref_u = q ? (int32_t) (((int64_t) u * (INT64_C(1) << 24)) / q) : u;
+        int32_t ref_v = q ? (int32_t) (((int64_t) v * (INT64_C(1) << 24)) / q) : v;
+        if (uv[0] != ref_u || uv[1] != ref_v) {
+            fprintf(stderr, "q %u: %d, %d -> %d, %d; expected %d, %d\n", q, u, v, uv[0], uv[1], ref_u, ref_v);
+            abort();
+        }
+    }
+    puts("Vérité x86-64 JIT perspective division cases passed");
+}
+
 static void
 jit_pixel_ops(void)
 {
@@ -1342,6 +1397,7 @@ main(void)
 #ifdef VERITE_JIT_X64
     jit_option();
     jit_differential();
+    jit_perspective_division();
     jit_pixel_ops();
     jit_draw_sites();
 #endif
