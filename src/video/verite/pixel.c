@@ -91,18 +91,6 @@ enum {
     DST_TRANSP_REJECT = 1 << 25,
 };
 
-enum {
-    SRC_FILTER           = 1 << 7,
-    SRC_NO_PAD           = 1 << 9,
-    SRC_SWAP_UV          = 1 << 10,
-    SRC_CHROMA           = 1 << 11,
-    SRC_Z_SCISSOR        = 1 << 12,
-    SRC_BGR              = 1 << 13,
-    SRC_CHROMA_BLACK_YUV = 1 << 14,
-    SRC_U_CLAMP          = 1 << 15,
-    SRC_V_CLAMP          = 1 << 16,
-};
-
 void
 pixel_reset(pixel_engine *pe)
 {

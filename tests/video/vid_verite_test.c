@@ -683,7 +683,33 @@ jit_compare(fixture *native, fixture *reference, unsigned budget)
     assert(a->clip == b->clip && a->drew == b->drew && a->stalled == b->stalled);
     assert(!memcmp(a->reg, b->reg, sizeof(a->reg)));
     assert(!memcmp(native->mem.data, reference->mem.data, native->mem.mask + 1));
+    assert(a->seed == b->seed && a->scale == b->scale && a->seed_index == b->seed_index);
+    const pixel_engine *p = &a->pe, *q = &b->pe;
+    assert(p->x_shadow == q->x_shadow && p->x_dir == q->x_dir && p->x == q->x && p->y == q->y);
+    assert(p->z == q->z && p->z_ovf == q->z_ovf && p->q == q->q && p->cnt == q->cnt);
+    assert(p->u == q->u && p->v == q->v && p->u_dir == q->u_dir && p->v_dir == q->v_dir);
+    assert(p->u_mask == q->u_mask && p->v_mask == q->v_mask && p->fg == q->fg);
+    assert(p->r == q->r && p->g == q->g && p->b == q->b && p->a == q->a && p->f == q->f);
+    assert(p->pick_hit == q->pick_hit);
     return cycles;
+}
+
+/* Run both cores to end_pc, using native blocks where the JIT takes them. */
+static unsigned
+jit_follow(fixture *native, fixture *reference, uint32_t end_pc)
+{
+    unsigned native_cycles = 0;
+    while (native->core->pc != end_pc) {
+        unsigned cycles = jit_compare(native, reference, 64);
+        if (cycles) {
+            native_cycles += cycles;
+            continue;
+        }
+        assert(risc_step(native->core, false, 0, native->mem, (verite_bus) { &board, native }));
+        assert(risc_step(reference->core, false, 0, reference->mem, (verite_bus) { &board, reference }));
+    }
+    jit_compare(native, reference, 0);
+    return native_cycles;
 }
 
 static void
@@ -783,6 +809,95 @@ jit_differential(void)
     done(&b);
     puts("Vérité x86-64 JIT differential cases passed");
 }
+
+static void
+jit_pixel_ops(void)
+{
+    fixture a = machine(NULL, 0, 0);
+    fixture b = machine(NULL, 0, 0);
+
+    /* Every parameter step form, with both U/V orders, Z scissoring, zero and
+       non-zero Q seeds, segmented operands, and constant registers. */
+    static const uint8_t fields[] = { 0, 1, 3, 16, 17, 64, 65, 87, 112, 128, 129, 164, 231, 255 };
+    static const uint32_t modes[] = { 0, SRC_SWAP_UV, SRC_Z_SCISSOR, SRC_SWAP_UV | SRC_Z_SCISSOR };
+    uint32_t value = 0xdeadbeef;
+    unsigned native = 0;
+    for (unsigned round = 0; round < 64; round++) {
+        uint32_t code[33];
+        for (unsigned r = 128; r < 256; r++) {
+            value = value * 1664525U + 1013904223U;
+            /* Keep some values zero, negative, and beyond the 8-bit channels. */
+            uint32_t v = (r & 7) == 0 ? 0 : (r & 7) == 1 ? value | 0x80000000U : value;
+            a.core->reg[r] = b.core->reg[r] = v;
+        }
+        a.core->seg = b.core->seg = round * 0x463U;
+        a.core->pe.src_mode = b.core->pe.src_mode = modes[round & 3];
+        a.core->pe.src_mask = b.core->pe.src_mask = value;
+        for (unsigned i = 0; i < 32; i++) {
+            value = value * 1664525U + 1013904223U;
+            unsigned n = COUNT(fields);
+            code[i]    = INS(0xd0 + ((i + round) & 15), fields[((value >> 8) + i) % n],
+                             fields[(value >> 16) % n], fields[(value >> 24) % n]);
+        }
+        code[32] = HALT;
+        jit_program(&a, &b, code, 33);
+        native += jit_follow(&a, &b, 32 * 4);
+    }
+    if (a.core->jit_unavailable) {
+        done(&a);
+        done(&b);
+        return;
+    }
+    assert(native >= 64 * 16);
+
+    /* A step-built parallel fill, as in parallel_fill(), runs as one block. */
+    static const uint32_t fill[] = {
+        IMM(0x77, 128, 3), IMM(0x77, 129, 2), INS(0xd8, 140, 128, 0),
+        IMM(0x77, 130, 5), INS(0xd7, 142, 130, 0), INS(0xe1, 144, 146, 148), HALT
+    };
+    pixel_reset(&a.core->pe);
+    pixel_reset(&b.core->pe);
+    sixteen_bit(a.core);
+    sixteen_bit(b.core);
+    a.core->pe.fg = b.core->pe.fg = 0xf800f800;
+    a.core->drew = b.core->drew = false;
+    jit_program(&a, &b, fill, COUNT(fill));
+    assert(jit_compare(&a, &b, 64) == 6);
+    assert(a.core->pc == 24 && a.core->drew && mem_read16(a.mem, 0x10806) == 0xf800);
+
+    /* Parameter draws, one in a branch delay slot. */
+    static const uint32_t param[] = {
+        IMM(0x76, 200, 1), INS(0xf3, 192, 160, 176),
+        IMM(0x76, 201, 1), 0x68000002, INS(0xf0, 192, 160, 176), HALT, HALT
+    };
+    for (fixture *f = &a; f; f = f == &a ? &b : NULL) {
+        pixel_reset(&f->core->pe);
+        sixteen_bit(f->core);
+        f->core->pe.dst_fmt = 0xc;
+        f->core->pe.stride  = 0x0400;
+        f->core->pe.drawctl = 6;
+    }
+    a.core->pe.cnt = b.core->pe.cnt = 3;
+    for (unsigned r = 160; r < 192; r++)
+        a.core->reg[r] = b.core->reg[r] = 0;
+    a.core->reg[161] = b.core->reg[161] = 10 << 16;
+    a.core->reg[176] = b.core->reg[176] = 1 << 16;
+    a.core->reg[177] = b.core->reg[177] = 20 << 16;
+    jit_program(&a, &b, param, COUNT(param));
+    assert(jit_compare(&a, &b, 64) == 2);
+    assert(mem_read32(a.mem, 0x10008) == 0xff320000 && !a.core->pe.cnt);
+    a.core->pe.cnt = b.core->pe.cnt = 1;
+    assert(jit_compare(&a, &b, 64) == 3);
+    assert(a.core->pc == 24 && a.core->reg[193] == 30U << 16);
+
+    /* Draws from the input FIFO stay in the interpreter. */
+    static const uint32_t fifo[] = { IMM(0x76, 200, 1), INS(0xf0, 192, 32, 32), HALT };
+    jit_program(&a, &b, fifo, COUNT(fifo));
+    assert(jit_compare(&a, &b, 64) == 0);
+    done(&a);
+    done(&b);
+    puts("Vérité x86-64 JIT pixel-engine cases passed");
+}
 #endif
 
 int
@@ -820,6 +935,7 @@ main(void)
 #ifdef VERITE_JIT_X64
     jit_option();
     jit_differential();
+    jit_pixel_ops();
 #endif
     return 0;
 }

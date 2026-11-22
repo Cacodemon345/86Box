@@ -223,6 +223,14 @@ seed_op(verite_core *c, uint32_t x)
     c->seed       = (UINT64_C(1) << 62) / x;
 }
 
+/* A Q step seeds the reciprocal unit before latching Q. Native blocks call this. */
+void
+risc_seed_q(verite_core *c, uint32_t value)
+{
+    seed_op(c, value);
+    pixel_set(&c->pe, P_Q, value);
+}
+
 static uint32_t
 rom_word(const verite_core *c, uint32_t addr)
 {

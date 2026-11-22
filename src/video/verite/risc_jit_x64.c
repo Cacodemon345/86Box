@@ -16,6 +16,10 @@ enum {
     BLOCK_WORDS = 32,
     /* Includes two segmented lanes or a memory access with its exit stub. */
     MAX_BLOCK_CODE = BLOCK_WORDS * 200 + 64,
+    /* Room kept free for the largest single instruction (a paired step with
+       two U/V lanes and a Q call) and for each epilogue. */
+    MAX_INSN_CODE = 640,
+    FINISH_CODE   = 64,
     CACHE_SIZE     = 4096,
     ARENA_SIZE     = 4 * 1024 * 1024,
 };
@@ -50,6 +54,7 @@ typedef struct {
 enum { AX    = 0,
        CX    = 1,
        DX    = 2,
+       SP    = 4,
        SI    = 6,
        DI    = 7,
        R8    = 8,
@@ -69,6 +74,7 @@ enum { ARG_CORE   = DI,
 
 #    define CORE_FIELD(field) ((uint32_t) offsetof(verite_core, field))
 #    define GPR(field)        (CORE_FIELD(reg) + (field) * 4U)
+#    define PE(field)         CORE_FIELD(pe.field)
 
 static void
 emit_byte(emitter *e, uint8_t value)
@@ -303,6 +309,266 @@ emit_packed_alu(emitter *e, unsigned sub, unsigned d, unsigned s2, unsigned s1, 
         rr(e, 0x0fef, 0, 1, false);
     }
     packed_reg(e, result, d, true);
+}
+
+/* Call fn(core, arg1, memory). EAX supplies arg1 when from_ax is set. The block
+   entry leaves RSP at 8 mod 16, so three pushes and 32 bytes of shadow space
+   align the call for both ABIs. RDX keeps the next PC in a delay slot. */
+static void
+emit_call(emitter *e, const void *fn, bool from_ax, uint32_t arg1)
+{
+    emit_byte(e, 0x41); /* push r10 */
+    emit_byte(e, 0x50 | (CORE & 7));
+    emit_byte(e, 0x41); /* push r9 */
+    emit_byte(e, 0x50 | (MEM & 7));
+    emit_byte(e, 0x50 | DX); /* push rdx */
+    rr(e, 0x83, 5, SP, true); /* sub rsp, 32 */
+    emit_byte(e, 32);
+    rr(e, 0x89, MEM, ARG_BUDGET, true);
+    if (from_ax)
+        rr(e, 0x89, AX, ARG_MEMORY, false);
+    else
+        imm(e, ARG_MEMORY, arg1);
+    rr(e, 0x89, CORE, ARG_CORE, true);
+    emit_byte(e, 0x48); /* mov rax, fn */
+    emit_byte(e, 0xb8);
+    uint64_t address = (uint64_t) (uintptr_t) fn;
+    memcpy(e->pos, &address, sizeof(address));
+    e->pos += sizeof(address);
+    rr(e, 0xff, 2, AX, false); /* call rax */
+    rr(e, 0x83, 0, SP, true);  /* add rsp, 32 */
+    emit_byte(e, 32);
+    emit_byte(e, 0x58 | DX); /* pop rdx */
+    emit_byte(e, 0x41);      /* pop r9 */
+    emit_byte(e, 0x58 | (MEM & 7));
+    emit_byte(e, 0x41); /* pop r10 */
+    emit_byte(e, 0x58 | (CORE & 7));
+}
+
+/* EAX = clamp(EAX >> 16, 0, 255). Clobbers ECX. */
+static void
+emit_sat(emitter *e)
+{
+    shift(e, 7, AX, 16, false); /* sar eax, 16 */
+    imm(e, CX, 255);
+    rr(e, 0x39, CX, AX, false);      /* cmp eax, ecx */
+    rr(e, 0x0f4f, AX, CX, false);    /* cmovg eax, ecx */
+    rr(e, 0x31, CX, CX, false);      /* xor ecx, ecx */
+    rr(e, 0x85, AX, AX, false);      /* test eax, eax */
+    rr(e, 0x0f4c, AX, CX, false);    /* cmovl eax, ecx */
+}
+
+/* fg = (fg & ~mask) | (EAX & mask). Clobbers ECX. */
+static void
+emit_fg_merge(emitter *e, uint32_t mask)
+{
+    alu_imm(e, 4, AX, mask);
+    core_mem(e, 0x8b, CX, PE(fg), false);
+    alu_imm(e, 4, CX, ~mask);
+    rr(e, 0x09, CX, AX, false);
+    core_mem(e, 0x89, AX, PE(fg), false);
+}
+
+static void
+emit_uv_store(emitter *e, bool u)
+{
+    core_mem(e, 0x89, AX, u ? PE(u) : PE(v), false);
+    core_mem(e, 0x8b, CX, PE(src_mask), false);
+    if (!u)
+        shift(e, 5, CX, 16, false);
+    alu_imm(e, 4, CX, 0x7ff);
+    core_mem(e, 0x89, CX, u ? PE(u_mask) : PE(v_mask), false);
+}
+
+/* Mirrors step_param() and pixel_set() with the value in EAX and the delta in
+   ECX. Clobbers EAX and ECX, and every caller-saved register for Q. */
+static void
+emit_param(emitter *e, pixel_param param)
+{
+    static const uint32_t channel[][2] = {
+        [P_R] = { 16, 0x00ff0000 },
+        [P_G] = { 8, 0x0000ff00 },
+        [P_B] = { 0, 0x000000ff },
+        [P_A] = { 24, 0xff000000 },
+    };
+    switch (param) {
+        case P_NONE:
+            break;
+        case P_XSHADOW:
+            rr(e, 0x85, CX, CX, false);
+            core_mem(e, 0x0f98, 0, PE(x_dir), false); /* sets */
+            core_mem(e, 0x89, AX, PE(x_shadow), false);
+            break;
+        case P_X:
+            core_mem(e, 0x89, AX, PE(x), false);
+            break;
+        case P_Y:
+            core_mem(e, 0x89, AX, PE(y), false);
+            break;
+        case P_F:
+            core_mem(e, 0x89, AX, PE(f), false);
+            break;
+        case P_CNT:
+            shift(e, 5, AX, 16, false);
+            core_mem(e, 0x89, AX, PE(cnt), false);
+            break;
+        case P_Z:
+            core_mem(e, 0x89, AX, PE(z), false);
+            emit_byte(e, 0xa9); /* test eax, imm32 */
+            dword(e, 0xf8000000);
+            rr(e, 0x0f95, 0, CX, false); /* setnz cl */
+            core_mem(e, 0xf7, 0, PE(src_mode), false);
+            dword(e, SRC_Z_SCISSOR);
+            rr(e, 0x0f95, 0, AX, false); /* setnz al */
+            rr(e, 0x20, AX, CX, false);  /* and cl, al */
+            core_mem(e, 0x88, CX, PE(z_ovf), false);
+            break;
+        case P_U:
+        case P_V:
+            {
+                rr(e, 0x85, CX, CX, false);
+                core_mem(e, 0x0f98, 0, param == P_U ? PE(u_dir) : PE(v_dir), false);
+                core_mem(e, 0xf7, 0, PE(src_mode), false);
+                dword(e, SRC_SWAP_UV);
+                opcode(e, 0x0f85); /* jnz swapped */
+                uint8_t *swapped = e->pos;
+                dword(e, 0);
+                emit_uv_store(e, param == P_U);
+                emit_byte(e, 0xe9); /* jmp done */
+                uint8_t *done = e->pos;
+                dword(e, 0);
+                rel32(swapped, e->pos);
+                emit_uv_store(e, param != P_U);
+                rel32(done, e->pos);
+                break;
+            }
+        case P_Q:
+            emit_call(e, (const void *) risc_seed_q, true, 0);
+            break;
+        case P_R:
+        case P_G:
+        case P_B:
+        case P_A:
+            core_mem(e, 0x89, AX, param == P_R ? PE(r) : param == P_G ? PE(g)
+                                                    : param == P_B   ? PE(b)
+                                                                     : PE(a),
+                     false);
+            emit_sat(e);
+            shift(e, 4, AX, channel[param][0], false);
+            emit_fg_merge(e, channel[param][1]);
+            break;
+        case P_I:
+            core_mem(e, 0x89, AX, PE(r), false);
+            core_mem(e, 0x89, AX, PE(g), false);
+            core_mem(e, 0x89, AX, PE(b), false);
+            emit_sat(e);
+            rr(e, 0x69, AX, AX, false); /* imul eax, eax, 0x010101 */
+            dword(e, 0x010101);
+            emit_fg_merge(e, 0xffffff);
+            break;
+        default:
+            break;
+    }
+}
+
+static bool
+step_operands(unsigned d, unsigned s2, unsigned s1)
+{
+    return plain_reg(d) && plain_reg(s2) && plain_reg(s1);
+}
+
+/* Parameter steps (0xd0-0xdf). The interpreter reads every source before it
+   writes the destination, and the parameter side effects never touch the
+   register file, so emit all side effects first and the sums last. */
+static bool
+emit_step(emitter *e, uint32_t ir, bool *calls)
+{
+    static const pixel_param scalar[8][2] = {
+        { P_XSHADOW, P_Y   },
+        { P_Q,       P_Q   },
+        { P_R,       P_V   },
+        { P_I,       P_U   },
+        { P_F,       P_F   },
+        { P_G,       P_B   },
+        { P_Z,       P_A   },
+        { P_CNT,     P_CNT }
+    };
+    static const pixel_param pair[8][2] = {
+        { P_XSHADOW, P_Y    },
+        { P_Q,       P_U    },
+        { P_R,       P_V    },
+        { P_I,       P_V    },
+        { P_Z,       P_V    },
+        { P_G,       P_B    },
+        { P_Z,       P_A    },
+        { P_CNT,     P_NONE }
+    };
+    unsigned op = ir >> 24;
+    unsigned d  = (uint8_t) (ir >> 16);
+    unsigned s2 = (uint8_t) (ir >> 8);
+    unsigned s1 = (uint8_t) ir;
+    if (op < 0xd0 || op > 0xdf)
+        return false;
+    if (op < 0xd8) {
+        if (!step_operands(d, s2, s1))
+            return false;
+        pixel_param param = scalar[op & 7][(s2 | s1) & 1];
+        read_reg(e, AX, s2);
+        read_reg(e, CX, s1);
+        emit_param(e, param);
+        *calls |= param == P_Q;
+        emit_alu(e, 0, s2, s1, false);
+        write_reg(e, d, AX);
+        return true;
+    }
+    /* Pairs from SWFIFO/NPSWFIFO (32-35) are excluded by plain_reg(). */
+    if (!step_operands(d & ~1U, s2 & ~1U, s1 & ~1U))
+        return false;
+    for (unsigned lane = 0; lane < 2; lane++) {
+        pixel_param param = pair[op & 7][lane];
+        read_reg(e, AX, lane ? s2 | 1 : s2 & ~1U);
+        read_reg(e, CX, lane ? s1 | 1 : s1 & ~1U);
+        emit_param(e, param);
+        *calls |= param == P_Q;
+    }
+    emit_alu(e, 0, s2 & ~1U, s1 & ~1U, false);
+    rr(e, 0x89, AX, R8, false);
+    emit_alu(e, 0, s2 | 1, s1 | 1, false);
+    write_reg(e, d & ~1U, R8);
+    write_reg(e, d | 1, AX);
+    return true;
+}
+
+static void
+jit_draw(verite_core *c, uint32_t ir, const jit_memory *memory)
+{
+    verite_memory mem = { memory->vram, memory->mask };
+    uint8_t       op  = ir >> 24;
+    if (op >= 0xf0)
+        pixel_draw_param(c, op, ir >> 16, ir >> 8, ir, mem);
+    else
+        pixel_draw_parallel(c, op, ir >> 16, ir >> 8, ir, mem);
+}
+
+static bool
+draw_operand(unsigned field)
+{
+    /* Groups of up to ten registers stay inside one aligned bank of 16. */
+    return plain_reg(field) && plain_reg(field | 15);
+}
+
+/* Draws run the interpreter's pixel engine through a call. They write VRAM,
+   which may hold the following instructions, so the block ends after one. */
+static bool
+emit_draw(emitter *e, uint32_t ir)
+{
+    unsigned op = ir >> 24;
+    bool     parallel = op == 0xe0 || op == 0xe1 || op == 0xe4 || op == 0xe5;
+    bool     param    = (op >= 0xf0 && op <= 0xf3) || (op >= 0xf8 && op <= 0xfd);
+    if ((!parallel && !param) || !draw_operand((uint8_t) (ir >> 16)) || !draw_operand((uint8_t) (ir >> 8)) || !draw_operand((uint8_t) ir))
+        return false;
+    emit_call(e, (const void *) jit_draw, false, ir);
+    return true;
 }
 
 static bool
@@ -653,7 +919,8 @@ compile_block(verite_core *c, verite_memory mem, unsigned limit, bool fast_memor
     uint32_t           pc                 = start;
     unsigned           count              = 0;
     bool               branch = false, delay_in_block = false;
-    bool               uses_memory = false;
+    bool               uses_memory = false, calls = false;
+    unsigned           exit_count  = 0;
     bool               backedge = false, conditional = false;
 
     emit_byte(&e, 0xf3); /* endbr64 (NOP on older hosts) */
@@ -667,15 +934,23 @@ compile_block(verite_core *c, verite_memory mem, unsigned limit, bool fast_memor
     e.pos += 8;
     uint8_t *body = e.pos;
     while (count < limit) {
+        if ((size_t) (e.pos - code) + MAX_INSN_CODE + (exit_count + 2) * FINISH_CODE > MAX_BLOCK_CODE)
+            break;
         uint32_t ir  = risc_fetch(c, pc, mem);
         words[count] = ir;
-        if (emit_integer(&e, ir, pc)) {
+        if (emit_integer(&e, ir, pc) || emit_step(&e, ir, &calls)) {
             pc = risc_next(pc);
             count++;
             if (branch) {
                 delay_in_block = true;
                 break;
             }
+        } else if (emit_draw(&e, ir)) {
+            uses_memory = calls = true;
+            pc                  = risc_next(pc);
+            count++;
+            delay_in_block = branch;
+            break;
         } else if (!branch && emit_branch(&e, ir, pc)) {
             pc = risc_next(pc);
             count++;
@@ -693,6 +968,7 @@ compile_block(verite_core *c, verite_memory mem, unsigned limit, bool fast_memor
             if (branch || !fast_memory || !(exits[count] = emit_memory(&e, ir, &store)))
                 break;
             uses_memory = true;
+            exit_count++;
             pc          = risc_next(pc);
             count++;
             if (store)
@@ -709,7 +985,8 @@ compile_block(verite_core *c, verite_memory mem, unsigned limit, bool fast_memor
     if (count < 2)
         return block;
 
-    bool    loop  = backedge && delay_in_block && !uses_memory;
+    /* A call clobbers XMM2, which holds the loop budget. */
+    bool    loop  = backedge && delay_in_block && !uses_memory && !calls;
     emitter setup = { prologue };
     if (uses_memory) {
         rr(&setup, 0x89, ARG_MEMORY, MEM, true);

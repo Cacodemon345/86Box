@@ -59,6 +59,18 @@ enum { IN_FIFO  = 32,
 #define LOCAL_END   UINT32_C(0x01000000)
 #define RISC_RA     254
 
+enum {
+    SRC_FILTER           = 1 << 7,
+    SRC_NO_PAD           = 1 << 9,
+    SRC_SWAP_UV          = 1 << 10,
+    SRC_CHROMA           = 1 << 11,
+    SRC_Z_SCISSOR        = 1 << 12,
+    SRC_BGR              = 1 << 13,
+    SRC_CHROMA_BLACK_YUV = 1 << 14,
+    SRC_U_CLAMP          = 1 << 15,
+    SRC_V_CLAMP          = 1 << 16,
+};
+
 typedef enum {
     P_NONE,
     P_XSHADOW,
@@ -306,6 +318,7 @@ risc_dst(verite_core *c, uint8_t field, uint32_t value)
         risc_special_dst(c, field, value);
 }
 
+void     risc_seed_q(verite_core *core, uint32_t value);
 void     pixel_reset(pixel_engine *pe);
 void     pixel_set(pixel_engine *pe, pixel_param param, uint32_t value);
 uint32_t pixel_state(const pixel_engine *pe, uint8_t index);
