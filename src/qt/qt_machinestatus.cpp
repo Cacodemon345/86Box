@@ -35,6 +35,7 @@ extern "C" {
 #include <86box/rdisk.h>
 #include <86box/mo.h>
 #include <86box/scsi_tape.h>
+#include <86box/md.h>
 #include <86box/plat.h>
 #include <86box/machine.h>
 #include <86box/thread.h>
@@ -130,11 +131,13 @@ struct Pixmaps {
     PixmapSetEmptyActive syquest;
     PixmapSetEmptyActive mo;
     PixmapSetEmptyActive tape;
+    PixmapSetEmptyActive md;
     PixmapSetActive      hd;
     PixmapSetEmptyActive net;
     PixmapSetEmpty       usb[USB_SLOTS];
     PixmapSetEmpty       usb_flash;
     PixmapSetEmpty       usb_port;
+    PixmapSetActive      usb_active;
     PixmapSetDisabled    sound;
     PixmapSetDisabled    dynarec;
     PixmapSetDisabled    pccard;
@@ -395,6 +398,7 @@ struct MachineStatus::States {
         pixmaps.syquest.load(QIcon(":/settings/qt/icons/syquest.ico"));
         pixmaps.mo.load(QIcon(":/settings/qt/icons/mo.ico"));
         pixmaps.tape.load(QIcon(":/settings/qt/icons/tape.ico"));
+        pixmaps.md.load(QIcon(":/settings/qt/icons/mo.ico"));
         pixmaps.hd.load(QIcon(":/settings/qt/icons/hard_disk.ico"));
         pixmaps.net.load(QIcon(":/settings/qt/icons/network.ico"));
         /* One icon per USB device kind, named after the device; a flash
@@ -404,6 +408,7 @@ struct MachineStatus::States {
             pixmaps.usb[i].load(QIcon(QString(":/settings/qt/icons/%1.ico").arg(usb_slot_internal_name(i))));
         pixmaps.usb_flash.load(QIcon(":/settings/qt/icons/usb_flash.ico"));
         pixmaps.usb_port.load(QIcon(":/settings/qt/icons/usb_port.ico"));
+        pixmaps.usb_active.load(QIcon(":/settings/qt/icons/usb_port.ico"));
         pixmaps.sound.load(QIcon(":/settings/qt/icons/sound.ico"));
         pixmaps.dynarec.normal                          = QIcon(":/menuicons/qt/icons/recompiler.ico").pixmap(pixmap_size);
         pixmaps.dynarec.disabled                        = QIcon(":/menuicons/qt/icons/interpreter.ico").pixmap(pixmap_size);
@@ -426,6 +431,9 @@ struct MachineStatus::States {
         }
         for (auto &t : tape) {
             t.pixmaps = &pixmaps.tape;
+        }
+        for (auto &m : md) {
+            m.pixmaps = &pixmaps.md;
         }
         for (auto &h : hdds) {
             h.pixmaps = &pixmaps.hd;
@@ -512,6 +520,24 @@ struct MachineStatus::States {
         }
     }
 
+    /* The USB icon lights like a disk icon: green for data from a device,
+       red for data to one, both when both happened since the last tick. */
+    void setUsbActivity(int bits)
+    {
+        const PixmapSetActive &set = pixmaps.usb_active;
+
+        if (!usb)
+            return;
+        if ((bits & USB_ACTIVITY_IN) && (bits & USB_ACTIVITY_OUT))
+            usb->setPixmapIfChanged(set.read_write_active);
+        else if (bits & USB_ACTIVITY_OUT)
+            usb->setPixmapIfChanged(set.write_active);
+        else if (bits & USB_ACTIVITY_IN)
+            usb->setPixmapIfChanged(set.active);
+        else
+            usb->setPixmapIfChanged(set.normal);
+    }
+
     std::array<StateEmpty, 2>                  cartridge;
     StateEmptyActive                           cassette;
     std::array<StateEmptyActive, FDD_NUM>      fdd;
@@ -519,6 +545,7 @@ struct MachineStatus::States {
     std::array<StateEmptyActive, RDISK_NUM>    rdisk;
     std::array<StateEmptyActive, MO_NUM>       mo;
     std::array<StateEmptyActive, TAPE_NUM>     tape;
+    std::array<StateEmptyActive, MD_NUM>       md;
     std::array<StateActive, HDD_BUS_USB>       hdds;
     std::array<StateEmptyActive, NET_CONF_MAX> net; /* then a PC Card NIC per socket */
     std::unique_ptr<ClickableLabel>            usb;
@@ -732,6 +759,15 @@ MachineStatus::iterateTape(const std::function<void(int)> &cb)
 }
 
 void
+MachineStatus::iterateMD(const std::function<void(int)> &cb)
+{
+    for (size_t i = 0; i < MD_NUM; i++) {
+        if ((md_drives[i].bus_type == MD_BUS_SCSI) && hasAnySCSI())
+            cb(i);
+    }
+}
+
+void
 MachineStatus::iterateNIC(const std::function<void(int)> &cb)
 {
     for (int i = 0; i < NET_CARD_MAX; i++) {
@@ -784,6 +820,10 @@ MachineStatus::refreshEmptyIcons()
     for (size_t i = 0; i < TAPE_NUM; i++) {
         d->tape[i].setEmpty(machine_status.tape[i].empty);
         d->tape[i].setWriteProtected(machine_status.tape[i].write_prot);
+    }
+    for (size_t i = 0; i < MD_NUM; i++) {
+        d->md[i].setEmpty(machine_status.md[i].empty);
+        d->md[i].setWriteProtected(machine_status.md[i].write_prot);
     }
 
     d->cassette.setEmpty(machine_status.cassette.empty);
@@ -853,6 +893,13 @@ MachineStatus::refreshIcons()
                                                      tr("Dynamic recompiler is inactive"));
     }
 
+    /* The USB activity bits are taken on every tick, also while the light is
+       off, so switching it back on does not show stale activity. */
+    if (d->usb) {
+        const int bits = usb_activity_take();
+        d->setUsbActivity((update_icons && usb_activity) ? bits : 0);
+    }
+
     /* Check if icons should show activity. */
     if (!update_icons)
         return;
@@ -902,6 +949,14 @@ MachineStatus::refreshIcons()
         if (machine_status.tape[i].write_active)
             ui_sb_update_icon_write(SB_TAPE | i, 0);
     }
+    for (size_t i = 0; i < MD_NUM; i++) {
+        d->md[i].setActive(machine_status.md[i].active);
+        d->md[i].setWriteActive(machine_status.md[i].write_active);
+        if (machine_status.md[i].active)
+            ui_sb_update_icon(SB_MD | i, 0);
+        if (machine_status.md[i].write_active)
+            ui_sb_update_icon_write(SB_MD | i, 0);
+    }
 
     for (size_t i = 0; i < HDD_BUS_USB; i++) {
         d->hdds[i].setActive(machine_status.hdd[i].active);
@@ -941,6 +996,10 @@ MachineStatus::clearActivity()
         tape.setActive(false);
         tape.setWriteActive(false);
     }
+    for (auto &md : d->md) {
+        md.setActive(false);
+        md.setWriteActive(false);
+    }
     for (auto &hdd : d->hdds) {
         hdd.setActive(false);
         hdd.setWriteActive(false);
@@ -949,6 +1008,7 @@ MachineStatus::clearActivity()
         net.setActive(false);
         net.setWriteActive(false);
     }
+    d->setUsbActivity(0);
 }
 
 void
@@ -983,6 +1043,9 @@ MachineStatus::refresh(QStatusBar *sbar)
     }
     for (size_t i = 0; i < TAPE_NUM; i++) {
         sbar->removeWidget(d->tape[i].label.get());
+    }
+    for (size_t i = 0; i < MD_NUM; i++) {
+        sbar->removeWidget(d->md[i].label.get());
     }
     for (size_t i = 0; i < HDD_BUS_USB; i++) {
         sbar->removeWidget(d->hdds[i].label.get());
@@ -1180,6 +1243,29 @@ MachineStatus::refresh(QStatusBar *sbar)
         sbar->addWidget(d->tape[i].label.get());
     });
 
+    iterateMD([this, sbar](int i) {
+        d->md[i].label = std::make_unique<ClickableLabel>();
+        d->md[i].setEmpty(QString(md_drives[i].image_path).isEmpty());
+        if (QString(md_drives[i].image_path).isEmpty())
+            d->md[i].setWriteProtected(false);
+        else if (QString(md_drives[i].image_path).left(5) == "wp://")
+            d->md[i].setWriteProtected(true);
+        else
+            d->md[i].setWriteProtected(md_drives[i].read_only);
+        d->md[i].setActive(false);
+        d->md[i].setWriteActive(false);
+        d->md[i].refresh();
+        connect((ClickableLabel *) d->md[i].label.get(), &ClickableLabel::clicked, [i](QPoint pos) {
+            MediaMenu::ptr->mdMenus[i]->popup(pos - QPoint(0, MediaMenu::ptr->mdMenus[i]->sizeHint().height()));
+        });
+        connect((ClickableLabel *) d->md[i].label.get(), &ClickableLabel::dropped, [i](QString str) {
+            MediaMenu::ptr->mdMount(i, str, false);
+        });
+        d->md[i].label->setToolTip(MediaMenu::ptr->mdMenus[i]->toolTip());
+        d->md[i].label->setAcceptDrops(true);
+        sbar->addWidget(d->md[i].label.get());
+    });
+
     iterateNIC([this, sbar](int i) {
         d->net[i].label = std::make_unique<ClickableLabel>();
         d->net[i].setEmpty(!network_is_connected(i));
@@ -1208,7 +1294,7 @@ MachineStatus::refresh(QStatusBar *sbar)
             QTimer::singleShot(0, d->usbMenu.get(), [this] { d->releaseUsbMenu(); });
         });
         d->usb = std::make_unique<ClickableLabel>();
-        d->usb->setPixmap(d->pixmaps.usb_port.normal);
+        d->usb->setPixmapIfChanged(d->pixmaps.usb_active.normal);
         d->usb->setToolTip(tr("USB"));
         connect(d->usb.get(), &ClickableLabel::clicked, this, [this](QPoint pos) {
             d->popupUsbMenu(pos);
@@ -1428,6 +1514,10 @@ MachineStatus::updateTip(int tag)
         case SB_TAPE:
             if (d->tape[item].label && MediaMenu::ptr->tapeMenus[item])
                 d->tape[item].label->setToolTip(MediaMenu::ptr->tapeMenus[item]->toolTip());
+            break;
+        case SB_MD:
+            if (d->md[item].label && MediaMenu::ptr->mdMenus[item])
+                d->md[item].label->setToolTip(MediaMenu::ptr->mdMenus[item]->toolTip());
             break;
         case SB_HDD:
             break;

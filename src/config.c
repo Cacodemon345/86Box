@@ -72,6 +72,7 @@
 #include <86box/gameport.h>
 #include <86box/keyboard.h>
 #include <86box/machine.h>
+#include <86box/weitek.h>
 #include <86box/mouse.h>
 #include <86box/mem.h>
 #include <86box/usb.h>
@@ -86,6 +87,7 @@
 #include <86box/rdisk.h>
 #include <86box/mo.h>
 #include <86box/scsi_tape.h>
+#include <86box/md.h>
 #include <86box/sound.h>
 #include <86box/midi.h>
 #include <86box/snd_mpu401.h>
@@ -387,6 +389,7 @@ load_general(void)
 
     rctrl_is_lalt = ini_section_get_int(cat, "rctrl_is_lalt", 0);
     update_icons  = ini_section_get_int(cat, "update_icons", 1);
+    usb_activity  = !!ini_section_get_int(cat, "usb_activity", 1);
 
     start_in_fullscreen |= ini_section_get_int(cat, "start_in_fullscreen", 0);
 
@@ -634,6 +637,8 @@ load_machine(void)
     cpu_override             = ini_section_get_int(cat, "cpu_override", 0);
     cpu_override_interpreter = ini_section_get_int(cat, "cpu_override_interpreter", 0);
     cpu_debug_regs_486       = !!ini_section_get_int(cat, "cpu_debug_regs_486", 0);
+    weitek_3167              = !!ini_section_get_int(cat, "weitek_3167", 0);
+    weitek_4167              = !!ini_section_get_int(cat, "weitek_4167", 0);
     cpu_f                    = NULL;
     p                        = ini_section_get_string(cat, "cpu_family", NULL);
     if (p) {
@@ -2840,6 +2845,70 @@ go_to_mo:
             }
         }
     }
+    /* MD DATA drives. */
+    memset(temp, 0x00, sizeof(temp));
+    for (c = 0; c < MD_NUM; c++) {
+        sprintf(temp, "md_%02i_parameters", c + 1);
+        p = ini_section_get_string(cat, temp, NULL);
+        if (p != NULL)
+            sscanf(p, "%u, %s", &md_drives[c].type, s);
+        else
+            sscanf("01, none", "%u, %s", &md_drives[c].type, s);
+        md_drives[c].bus_type = (hdd_string_to_bus(s, 1) == HDD_BUS_SCSI) ? MD_BUS_SCSI : MD_BUS_DISABLED;
+
+        if (md_drives[c].type >= KNOWN_MD_DRIVE_TYPES)
+            md_drives[c].type = MD_TYPE_SONY_MDH10;
+
+        /* Default values, needed for proper operation of the Settings dialog. */
+        md_drives[c].scsi_device_id = c + 2;
+
+        sprintf(temp, "md_%02i_scsi_location", c + 1);
+        if (md_drives[c].bus_type == MD_BUS_SCSI) {
+            sprintf(tmp2, "%01u:%02u", 0, c + 2);
+            p = ini_section_get_string(cat, temp, tmp2);
+            sscanf(p, "%01u:%02u", &board, &dev);
+            board %= SCSI_BUS_MAX;
+            dev &= 15;
+            md_drives[c].scsi_device_id = (board << 4) + dev;
+        } else
+            ini_section_delete_var(cat, temp);
+
+        sprintf(temp, "md_%02i_image_path", c + 1);
+        p = ini_section_get_string(cat, temp, "");
+
+        if (!strcmp(p, usr_path))
+            p[0] = 0x00;
+
+        if (p[0] != 0x00) {
+            if (load_image_file(md_drives[c].image_path, p, &(md_drives[c].read_only)))
+                fatal("Configuration: Length of md_%02i_image_path is more than 511\n", c + 1);
+        }
+
+        for (int i = 0; i < MAX_PREV_IMAGES; i++) {
+            md_drives[c].image_history[i] = (char *) calloc((MAX_IMAGE_PATH_LEN + 1) << 1, sizeof(char));
+            sprintf(temp, "md_%02i_image_history_%02i", c + 1, i + 1);
+            p = ini_section_get_string(cat, temp, NULL);
+            if (p) {
+                if (load_image_file(md_drives[c].image_history[i], p, NULL))
+                    fatal("Configuration: Length of md_%02i_image_history_%02i is more than %i\n",
+                          c + 1, i + 1, MAX_IMAGE_PATH_LEN - 1);
+            }
+        }
+
+        /* If the MD drive is disabled, delete all its variables. */
+        if (md_drives[c].bus_type == MD_BUS_DISABLED) {
+            sprintf(temp, "md_%02i_parameters", c + 1);
+            ini_section_delete_var(cat, temp);
+
+            sprintf(temp, "md_%02i_image_path", c + 1);
+            ini_section_delete_var(cat, temp);
+
+            for (int i = 0; i < MAX_PREV_IMAGES; i++) {
+                sprintf(temp, "md_%02i_image_history_%02i", c + 1, i + 1);
+                ini_section_delete_var(cat, temp);
+            }
+        }
+    }
 }
 
 /* Load "Other Peripherals" section. */
@@ -3166,6 +3235,8 @@ config_load(void)
 
         cpu_override_interpreter = 0;
         cpu_debug_regs_486       = 0;
+        weitek_3167              = 0;
+        weitek_4167              = 0;
 
         fpu_type               = fpu_get_type(cpu_f, cpu, "none");
         gfxcard[0]             = video_get_video_from_internal_name("cga");
@@ -3580,6 +3651,11 @@ save_general(void)
     else
         ini_section_set_int(cat, "update_icons", update_icons);
 
+    if (usb_activity == 1)
+        ini_section_delete_var(cat, "usb_activity");
+    else
+        ini_section_set_int(cat, "usb_activity", usb_activity);
+
     if (window_remember)
         ini_section_set_int(cat, "window_remember", window_remember);
     else
@@ -3735,6 +3811,16 @@ save_machine(void)
         ini_section_set_int(cat, "cpu_debug_regs_486", cpu_debug_regs_486);
     else
         ini_section_delete_var(cat, "cpu_debug_regs_486");
+
+    if (weitek_3167)
+        ini_section_set_int(cat, "weitek_3167", weitek_3167);
+    else
+        ini_section_delete_var(cat, "weitek_3167");
+
+    if (weitek_4167)
+        ini_section_set_int(cat, "weitek_4167", weitek_4167);
+    else
+        ini_section_delete_var(cat, "weitek_4167");
 
     /* Downgrade compatibility with the previous CPU model system. */
     ini_section_delete_var(cat, "cpu_manufacturer");
@@ -5301,6 +5387,38 @@ save_other_removable_devices(void)
                 ini_section_delete_var(cat, temp);
             else
                 save_image_file(cat, temp, tape_drives[c].image_history[i]);
+        }
+    }
+
+    for (c = 0; c < MD_NUM; c++) {
+        sprintf(temp, "md_%02i_parameters", c + 1);
+        if (md_drives[c].bus_type == MD_BUS_DISABLED)
+            ini_section_delete_var(cat, temp);
+        else {
+            sprintf(tmp2, "%u, %s", md_drives[c].type, hdd_bus_to_string(HDD_BUS_SCSI, 1));
+            ini_section_set_string(cat, temp, tmp2);
+        }
+
+        sprintf(temp, "md_%02i_scsi_location", c + 1);
+        if (md_drives[c].bus_type != MD_BUS_SCSI)
+            ini_section_delete_var(cat, temp);
+        else {
+            sprintf(tmp2, "%01u:%02u", md_drives[c].scsi_device_id >> 4, md_drives[c].scsi_device_id & 15);
+            ini_section_set_string(cat, temp, tmp2);
+        }
+
+        sprintf(temp, "md_%02i_image_path", c + 1);
+        if ((md_drives[c].bus_type == MD_BUS_DISABLED) || (strlen(md_drives[c].image_path) == 0))
+            ini_section_delete_var(cat, temp);
+        else
+            save_image_file(cat, temp, md_drives[c].image_path);
+
+        for (int i = 0; i < MAX_PREV_IMAGES; i++) {
+            sprintf(temp, "md_%02i_image_history_%02i", c + 1, i + 1);
+            if ((md_drives[c].image_history[i] == 0) || strlen(md_drives[c].image_history[i]) == 0)
+                ini_section_delete_var(cat, temp);
+            else
+                save_image_file(cat, temp, md_drives[c].image_history[i]);
         }
     }
 

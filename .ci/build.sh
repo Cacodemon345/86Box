@@ -395,6 +395,9 @@ then
 	fi
 	echo [-] Using MSYSTEM [$MSYSTEM]
 
+	# Enable Qt 6.
+	cmake_flags_extra="$cmake_flags_extra -D USE_QT6=ON"
+
 	# Install dependencies only if we're in a new build and/or architecture.
 	if check_buildtag "$MSYSTEM"
 	then
@@ -1143,7 +1146,8 @@ else
 		rm -rf "$cache_dir/SDL"[23]-* # remove old versions
 		download_source https://www.libsdl.org/release/SDL3-3.4.18.tar.gz "$prefix" || exit 99
 	fi
-	prefix_build="$prefix-build-$arch_deb-$cmake_build_type"
+	# Keep generated SDL headers under the source root for source_group(TREE).
+	prefix_build="$prefix/build-$arch_deb-$cmake_build_type"
 	sdl_ui=OFF
 	cmake -G Ninja -D SDL_SHARED=ON -D SDL_STATIC=OFF \
 		\

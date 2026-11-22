@@ -175,6 +175,7 @@ extern int      infocus;
 extern char     emu_version[200]; /* version ID string */
 extern int      rctrl_is_lalt;
 extern int      update_icons;
+extern int      usb_activity;
 
 extern int kbd_req_capture;
 extern int hide_status_bar;
@@ -254,6 +255,9 @@ extern void mo_reload(uint8_t id);
 extern void tape_eject(uint8_t id);
 extern void tape_mount(uint8_t id, char *fn, uint8_t wp);
 extern void tape_reload(uint8_t id);
+extern void md_eject(uint8_t id);
+extern void md_mount(uint8_t id, char *fn, uint8_t wp);
+extern void md_reload(uint8_t id);
 extern int     plat_is_block_device(const char *path);
 extern int64_t plat_get_block_device_size(const char *path);
 

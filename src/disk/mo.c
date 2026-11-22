@@ -97,25 +97,9 @@ static const mode_sense_pages_t mo_mode_sense_pages_default_scsi = { 0 };
 static const mode_sense_pages_t mo_mode_sense_pages_changeable   = { 0 };
 
 /*
-   Sony MD Data and Hi-MD pages, rebuilt from the decoded values in Aaru device reports 324 (MDM110), 273
-   (MDH-10) and 173 (Hi-MD WALKMAN).  Pages 20h, 21h and 1Bh are in the reports without values, so their lengths
-   are ESTIMATED and they are all zero.
+   Sony Hi-MD pages, rebuilt from the decoded values in Aaru device report 173.  Page 1Bh is in the report without
+   values, so its length is ESTIMATED and it is all zero.
  */
-static const mode_sense_pages_t mdm110_mode_sense_pages_default = {
-    { [0x01] = { GPMODE_R_W_ERROR_PAGE,  0x0a, 0x80, 0x03, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00 },
-      [0x07] = { 0x07,                   0x0a, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
-      [0x08] = { GPMODE_CACHING_PAGE,    0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
-      [0x20] = { 0x20,                   0x0a } }
-};
-
-static const mode_sense_pages_t mdh10_mode_sense_pages_default = {
-    { [0x01] = { GPMODE_R_W_ERROR_PAGE,  0x0a, 0x80, 0x05, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00 },
-      [0x07] = { 0x07,                   0x0a, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
-      [0x08] = { GPMODE_CACHING_PAGE,    0x0a, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
-      [0x20] = { 0x20,                   0x0a },
-      [0x21] = { 0x21,                   0x0a } }
-};
-
 static const mode_sense_pages_t himd_mode_sense_pages_default = {
     { [0x01] = { GPMODE_R_W_ERROR_PAGE,  0x0a, 0xa5, 0x06, 0x00, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00 },
       [0x08] = { GPMODE_CACHING_PAGE,    0x0a, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
@@ -123,26 +107,16 @@ static const mode_sense_pages_t himd_mode_sense_pages_default = {
 };
 
 /* What can be changed: nothing, only the lengths are needed. */
-static const mode_sense_pages_t md_mode_sense_pages_changeable = {
+static const mode_sense_pages_t himd_mode_sense_pages_changeable = {
     { [0x01] = { GPMODE_R_W_ERROR_PAGE,  0x0a },
-      [0x07] = { 0x07,                   0x0a },
       [0x08] = { GPMODE_CACHING_PAGE,    0x0a },
-      [0x1b] = { 0x1b,                   0x0a },
-      [0x20] = { 0x20,                   0x0a },
-      [0x21] = { 0x21,                   0x0a } }
+      [0x1b] = { 0x1b,                   0x0a } }
 };
-
-#define IS_SONY_MD(t) (((t) == MO_TYPE_SONY_MDM110) || ((t) == MO_TYPE_SONY_MDH10) || ((t) == MO_TYPE_SONY_HIMD))
 
 static uint64_t
 mo_page_flags(const mo_t *dev)
 {
     switch (dev->drv->type) {
-        case MO_TYPE_SONY_MDM110:
-            return GPMODEP_R_W_ERROR_PAGE | (1ULL << 0x07) | GPMODEP_CACHING_PAGE | (1ULL << 0x20) | GPMODEP_ALL_PAGES;
-        case MO_TYPE_SONY_MDH10:
-            return GPMODEP_R_W_ERROR_PAGE | (1ULL << 0x07) | GPMODEP_CACHING_PAGE | (1ULL << 0x20) | (1ULL << 0x21) |
-                   GPMODEP_ALL_PAGES;
         case MO_TYPE_SONY_HIMD:
             return GPMODEP_R_W_ERROR_PAGE | GPMODEP_CACHING_PAGE | (1ULL << 0x1b) | GPMODEP_ALL_PAGES;
         default:
@@ -154,10 +128,6 @@ static const mode_sense_pages_t *
 mo_pages_default(const mo_t *dev)
 {
     switch (dev->drv->type) {
-        case MO_TYPE_SONY_MDM110:
-            return &mdm110_mode_sense_pages_default;
-        case MO_TYPE_SONY_MDH10:
-            return &mdh10_mode_sense_pages_default;
         case MO_TYPE_SONY_HIMD:
             return &himd_mode_sense_pages_default;
         default:
@@ -168,14 +138,14 @@ mo_pages_default(const mo_t *dev)
 static const mode_sense_pages_t *
 mo_pages_changeable(const mo_t *dev)
 {
-    return IS_SONY_MD(dev->drv->type) ? &md_mode_sense_pages_changeable : &mo_mode_sense_pages_changeable;
+    return (dev->drv->type == MO_TYPE_SONY_HIMD) ? &himd_mode_sense_pages_changeable : &mo_mode_sense_pages_changeable;
 }
 
-/* Can this disc not be written?  The 2336-byte MiniDisc media are audio discs to a computer. */
+/* Can this disc not be written? */
 static int
 mo_write_blocked(const mo_t *dev)
 {
-    return dev->drv->read_only || (dev->drv->sector_size == 2336);
+    return dev->drv->read_only;
 }
 
 /* The medium type of the mode parameter header. */
@@ -244,7 +214,7 @@ mo_is_empty(const uint8_t id)
 }
 
 /* The volume layout for a folder mounted as a medium. M.O. disks are formatted without a partition
-   table, as Windows does; MiniDiscs can't take a folder. Returns 0 if the medium can't take one. */
+   table, as Windows does; Hi-MD discs can't take a folder. Returns 0 if the medium can't take one. */
 static int
 mo_folder_params(int medium, fat_image_params_t *p)
 {
@@ -596,10 +566,13 @@ mo_mode_sense(const mo_t *dev, uint8_t *buf, uint32_t pos,
         buf[pos++] = (dev->drv->sector_size & 0xff);
     }
 
-    for (uint8_t i = 0; i < GPMODE_ALL_PAGES; i++) {
+    for (uint8_t pg = 1; pg < 0x41; pg++) {
+        /* Make sure page 0 is always transferred last. */
+        const uint8_t i = (pg == 0x40) ? 0 : pg;
         if ((page == GPMODE_ALL_PAGES) || (page == i)) {
-            if (pf & (1ULL << ((uint64_t) i))) {
-                const uint8_t msplen = mo_mode_sense_read(dev, pgctl, i, 1);
+            const uint8_t msplen = mo_mode_sense_read(dev, pgctl, i, 1);
+
+            if ((pf & (1LL << ((uint64_t) i))) && msplen) {
                 buf[pos++]           = mo_mode_sense_read(dev, pgctl, i, 0);
                 buf[pos++]           = msplen;
                 mo_log(dev->log, "MODE SENSE: Page [%02X] length %i\n", i, msplen);
@@ -1745,41 +1718,45 @@ mo_command(scsi_common_t *sc, const uint8_t *cdb)
                 mo_buf_alloc(dev, 65536);
             }
 
-            if (!(mo_page_flags(dev) & (1ULL << (uint64_t) (cdb[2] & 0x3f)))) {
+            /*
+               If PC == 0 and page code == 0, return only the header and,
+               if applicable, the block descriptor.
+             */
+            if (!cdb[2] || (mo_page_flags(dev) &
+                            (1LL << (uint64_t) (cdb[2] & 0x3f)))) {
+                memset(dev->buffer, 0, len);
+                alloc_length = len;
+
+                if (cdb[0] == GPCMD_MODE_SENSE_6) {
+                    len            = mo_mode_sense(dev, dev->buffer, 4,
+                                                   cdb[2], block_desc);
+                    dev->buffer[0] = len - 1;
+                    len            = MIN(len, alloc_length);
+                    dev->buffer[1] = mo_medium_type(dev);
+                    if (block_desc)
+                        dev->buffer[3] = 8;
+                } else {
+                    len            = mo_mode_sense(dev, dev->buffer, 8,
+                                                   cdb[2], block_desc);
+                    dev->buffer[0] = (len - 2) >> 8;
+                    dev->buffer[1] = (len - 2) & 255;
+                    len            = MIN(len, alloc_length);
+                    dev->buffer[2] = mo_medium_type(dev);
+                    if (block_desc) {
+                        dev->buffer[6] = 0;
+                        dev->buffer[7] = 8;
+                    }
+                }
+
+                mo_set_buf_len(dev, BufLen, &len);
+
+                mo_log(dev->log, "Reading mode page: %02X...\n", cdb[2]);
+
+                mo_data_command_finish(dev, len, len, len, 0);
+            } else {
                 mo_invalid_field(dev, cdb[2]);
                 mo_buf_free(dev);
-                return;
             }
-
-            memset(dev->buffer, 0, len);
-            alloc_length = len;
-
-            if (cdb[0] == GPCMD_MODE_SENSE_6) {
-                len            = mo_mode_sense(dev, dev->buffer, 4,
-                                               cdb[2], block_desc);
-                len            = MIN(len, alloc_length);
-                dev->buffer[0] = len - 1;
-                dev->buffer[1] = mo_medium_type(dev);
-                if (block_desc)
-                    dev->buffer[3] = 8;
-            } else {
-                len            = mo_mode_sense(dev, dev->buffer, 8,
-                                               cdb[2], block_desc);
-                len            = MIN(len, alloc_length);
-                dev->buffer[0] = (len - 2) >> 8;
-                dev->buffer[1] = (len - 2) & 255;
-                dev->buffer[2] = mo_medium_type(dev);
-                if (block_desc) {
-                    dev->buffer[6] = 0;
-                    dev->buffer[7] = 8;
-                }
-            }
-
-            mo_set_buf_len(dev, BufLen, &len);
-
-            mo_log(dev->log, "Reading mode page: %02X...\n", cdb[2]);
-
-            mo_data_command_finish(dev, len, len, alloc_length, 0);
             return;
 
         case GPCMD_MODE_SELECT_6:
@@ -1880,12 +1857,11 @@ mo_command(scsi_common_t *sc, const uint8_t *cdb)
                     dev->buffer[7] = 0x20;    /* Wide bus supported */
                 }
                 dev->buffer[7] |= 0x02;
-                if (IS_SONY_MD(dev->drv->type)) {
-                    /* Reports 324 and 273 have no wide transfers.  Report 173 claims no standard. */
+                if (dev->drv->type == MO_TYPE_SONY_HIMD) {
+                    /* Report 173 has no wide transfers and claims no standard. */
                     dev->buffer[6] = 0x00;
                     dev->buffer[7] = 0x00;
-                    if (dev->drv->type == MO_TYPE_SONY_HIMD)
-                        dev->buffer[2] = 0x00;
+                    dev->buffer[2] = 0x00;
                 }
 
                 if (dev->drv->type > 0) {
