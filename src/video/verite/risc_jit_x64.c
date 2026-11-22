@@ -22,12 +22,10 @@ enum {
     FINISH_CODE   = 64,
     CACHE_SIZE     = 4096,
     ARENA_SIZE     = 4 * 1024 * 1024,
+    SITE_COUNT     = 8192,
 };
 
-typedef struct {
-    uint8_t *vram;
-    uint32_t mask;
-} jit_memory;
+typedef verite_jit_memory jit_memory;
 
 typedef unsigned (*block_fn)(verite_core *, const jit_memory *, unsigned);
 
@@ -40,9 +38,11 @@ typedef struct {
 } jit_block;
 
 struct verite_jit {
-    uint8_t  *arena;
-    size_t    used;
-    jit_block blocks[CACHE_SIZE];
+    uint8_t         *arena;
+    size_t           used;
+    unsigned         sites_used;
+    jit_block        blocks[CACHE_SIZE];
+    verite_draw_site sites[SITE_COUNT];
 };
 
 typedef struct {
@@ -540,9 +540,9 @@ emit_step(emitter *e, uint32_t ir, bool *calls)
 }
 
 static void
-jit_draw(verite_core *c, uint32_t ir, const jit_memory *memory)
+jit_draw(verite_core *c, uint32_t ir)
 {
-    verite_memory mem = { memory->vram, memory->mask };
+    verite_memory mem = { c->jit_mem->vram, c->jit_mem->mask };
     uint8_t       op  = ir >> 24;
     if (op >= 0xf0)
         pixel_draw_param(c, op, ir >> 16, ir >> 8, ir, mem);
@@ -557,8 +557,137 @@ draw_operand(unsigned field)
     return plain_reg(field) && plain_reg(field | 15);
 }
 
-/* Draws run the interpreter's pixel engine through a call. They write VRAM,
-   which may hold the following instructions, so the block ends after one. */
+/* Parameter draws whose registers sit outside the constant and segmented
+   banks get a site: an inline check of the render state against the span the
+   site used last, and a direct call to it. A draw can overwrite the following
+   microcode, so with check set the block leaves through the returned exit when
+   the draw wrote inside [code_start, code_last] or ran in C. */
+static bool
+param_draw(uint32_t ir)
+{
+    unsigned op = ir >> 24;
+    return (op >= 0xf0 && op <= 0xf3) || (op >= 0xf8 && op <= 0xfd);
+}
+
+static verite_draw_site *
+draw_site(verite_core *c, uint32_t ir)
+{
+    static const uint8_t align[] = { 2, 2, 4, 4, 0, 0, 0, 0, 8, 8, 8, 8, 16, 16 };
+    unsigned op = ir >> 24, d = (uint8_t) (ir >> 16), s2 = (uint8_t) (ir >> 8), s1 = (uint8_t) ir;
+    struct verite_jit *jit = c->jit;
+    if (!param_draw(ir) || jit->sites_used >= SITE_COUNT)
+        return NULL;
+    unsigned n = align[op - 0xf0];
+    d &= ~(n - 1);
+    s2 &= ~(n - 1);
+    s1 &= ~(n - 1);
+    /* Only single draws write back; a destination in the constant bank discards. */
+    bool single = !(op & 1);
+    if (s2 < 128 || s1 < 128 || (single && d >= 32 && d < 128))
+        return NULL;
+    verite_draw_site *s = &jit->sites[jit->sites_used++];
+    *s = (verite_draw_site) {
+        .ir     = ir,
+        .fn     = (void *) pixel_jit_site_miss,
+        .values = &c->reg[s2],
+        .deltas = &c->reg[s1],
+        .dest   = single && d >= 128 ? &c->reg[d] : NULL,
+    };
+    return s;
+}
+
+static uint8_t *
+emit_site(emitter *e, verite_draw_site *site, bool check, uint32_t code_start, uint32_t code_last)
+{
+    static const uint32_t keys[][2] = {
+        { PE(drawctl), offsetof(verite_draw_site, drawctl) },
+        { PE(src_mode), offsetof(verite_draw_site, src_mode) },
+        { PE(dst_mode), offsetof(verite_draw_site, dst_mode) },
+        { PE(dst_fmt), offsetof(verite_draw_site, dst_fmt) },
+        { PE(pmask), offsetof(verite_draw_site, pmask) },
+        { PE(pat_mode), offsetof(verite_draw_site, pat_mode) },
+    };
+    uint64_t address = (uint64_t) (uintptr_t) site;
+    uint8_t *miss[6];
+    emit_byte(e, 0x49); /* mov r11, site */
+    emit_byte(e, 0xbb);
+    memcpy(e->pos, &address, 8);
+    e->pos += 8;
+    for (unsigned i = 0; i < 6; i++) {
+        core_mem(e, 0x8b, AX, keys[i][0], false);
+        emit_byte(e, 0x41); /* cmp eax, [r11 + key] */
+        emit_byte(e, 0x3b);
+        emit_byte(e, 0x43);
+        emit_byte(e, keys[i][1]);
+        opcode(e, 0x0f85);
+        miss[i] = e->pos;
+        dword(e, 0);
+    }
+    emit_byte(e, 0x49); /* mov rax, [r11 + fn] */
+    emit_byte(e, 0x8b);
+    emit_byte(e, 0x43);
+    emit_byte(e, offsetof(verite_draw_site, fn));
+    emit_byte(e, 0xeb); /* jmp call */
+    uint8_t *hit = e->pos++;
+    for (unsigned i = 0; i < 6; i++)
+        rel32(miss[i], e->pos);
+    emit_byte(e, 0x48); /* mov rax, pixel_jit_site_miss */
+    emit_byte(e, 0xb8);
+    uint64_t handler = (uint64_t) (uintptr_t) pixel_jit_site_miss;
+    memcpy(e->pos, &handler, 8);
+    e->pos += 8;
+    *hit = (uint8_t) (e->pos - (hit + 1));
+
+    emit_byte(e, 0x41); /* push r10 */
+    emit_byte(e, 0x50 | (CORE & 7));
+    emit_byte(e, 0x41); /* push r9 */
+    emit_byte(e, 0x50 | (MEM & 7));
+    emit_byte(e, 0x50 | DX); /* push rdx */
+    rr(e, 0x83, 5, SP, true); /* sub rsp, 32 */
+    emit_byte(e, 32);
+    rr(e, 0x89, CORE, ARG_CORE, true);
+    rr(e, 0x89, INDEX, ARG_MEMORY, true); /* second argument: the site */
+    rr(e, 0xff, 2, AX, false);            /* call rax */
+    rr(e, 0x83, 0, SP, true);             /* add rsp, 32 */
+    emit_byte(e, 32);
+    emit_byte(e, 0x58 | DX);
+    emit_byte(e, 0x41);
+    emit_byte(e, 0x58 | (MEM & 7));
+    emit_byte(e, 0x41);
+    emit_byte(e, 0x58 | (CORE & 7));
+    if (!check)
+        return NULL;
+
+    emit_byte(e, 0x49); /* mov r11, site */
+    emit_byte(e, 0xbb);
+    memcpy(e->pos, &address, 8);
+    e->pos += 8;
+    emit_byte(e, 0x41); /* mov eax, [r11 + lo] */
+    emit_byte(e, 0x8b);
+    emit_byte(e, 0x43);
+    emit_byte(e, offsetof(verite_draw_site, lo));
+    alu_imm(e, 7, AX, code_last);
+    opcode(e, 0x0f87); /* ja ok */
+    uint8_t *after = e->pos;
+    dword(e, 0);
+    emit_byte(e, 0x41); /* mov eax, [r11 + hi] */
+    emit_byte(e, 0x8b);
+    emit_byte(e, 0x43);
+    emit_byte(e, offsetof(verite_draw_site, hi));
+    alu_imm(e, 7, AX, code_start);
+    opcode(e, 0x0f82); /* jb ok */
+    uint8_t *below = e->pos;
+    dword(e, 0);
+    emit_byte(e, 0xe9); /* jmp exit */
+    uint8_t *exit = e->pos;
+    dword(e, 0);
+    rel32(after, e->pos);
+    rel32(below, e->pos);
+    return exit;
+}
+
+/* Other draws run the interpreter's pixel engine through a call, and the
+   block ends after one. */
 static bool
 emit_draw(emitter *e, uint32_t ir)
 {
@@ -569,6 +698,14 @@ emit_draw(emitter *e, uint32_t ir)
         return false;
     emit_call(e, (const void *) jit_draw, false, ir);
     return true;
+}
+
+void
+risc_jit_reset_sites(verite_core *c)
+{
+    if (c->jit)
+        for (unsigned i = 0; i < c->jit->sites_used; i++)
+            c->jit->sites[i].fn = (void *) pixel_jit_site_miss;
 }
 
 static bool
@@ -843,8 +980,7 @@ emit_finish(emitter *e, uint32_t pc, unsigned count, bool branch, bool delay_in_
         core_imm(e, CORE_FIELD(npc), risc_next(pc));
 
     if (loop) {
-        emit_byte(e, 0x66); /* movd eax, xmm2 */
-        rr(e, 0x0f7e, 2, AX, false);
+        core_mem(e, 0x8b, AX, CORE_FIELD(jit_budget), false);
         rr(e, 0x29, MEM, AX, false);
         core_mem(e, 0x01, AX, CORE_FIELD(timer), false);
     } else {
@@ -852,6 +988,24 @@ emit_finish(emitter *e, uint32_t pc, unsigned count, bool branch, bool delay_in_
         emit_byte(e, count);
         imm(e, AX, count);
     }
+    emit_byte(e, 0xc3);
+}
+
+/* Leave after instruction count - 1 of a possibly looping block. A loop has
+   already run jit_budget - R9D cycles in earlier iterations. */
+static void
+emit_side_finish(emitter *e, uint32_t pc, unsigned count, bool loop)
+{
+    if (!loop) {
+        emit_finish(e, pc, count, false, false, false);
+        return;
+    }
+    core_imm(e, CORE_FIELD(pc), pc);
+    core_imm(e, CORE_FIELD(npc), risc_next(pc));
+    core_mem(e, 0x8b, AX, CORE_FIELD(jit_budget), false);
+    rr(e, 0x29, MEM, AX, false);
+    alu_imm(e, 0, AX, count);
+    core_mem(e, 0x01, AX, CORE_FIELD(timer), false);
     emit_byte(e, 0xc3);
 }
 
@@ -916,7 +1070,11 @@ compile_block(verite_core *c, verite_memory mem, unsigned limit, bool fast_memor
     emitter            e = { code };
     uint32_t           words[BLOCK_WORDS];
     uint8_t           *exits[BLOCK_WORDS] = { 0 };
+    uint8_t           *after[BLOCK_WORDS] = { 0 };
     uint32_t           start              = c->pc;
+    bool               local              = start < LOCAL_END;
+    uint32_t           code_start         = (uint32_t) (start & mem.mask);
+    uint32_t           code_last          = code_start + limit * 4 - 1;
     uint32_t           pc                 = start;
     unsigned           count              = 0;
     bool               branch = false, delay_in_block = false;
@@ -932,7 +1090,7 @@ compile_block(verite_core *c, verite_memory mem, unsigned limit, bool fast_memor
     /* Reserve space for the memory argument or loop budget, filled in
        once we know the shape of the block. */
     uint8_t *prologue = e.pos;
-    e.pos += 8;
+    e.pos += 16;
     uint8_t *body = e.pos;
     while (count < limit) {
         if ((size_t) (e.pos - code) + MAX_INSN_CODE + (exit_count + 2) * FINISH_CODE > MAX_BLOCK_CODE)
@@ -946,9 +1104,22 @@ compile_block(verite_core *c, verite_memory mem, unsigned limit, bool fast_memor
                 delay_in_block = true;
                 break;
             }
+        } else if (draw_site(c, ir)) {
+            /* The site was taken from the pool above; a check is needed only
+               when instructions follow it in the block. */
+            verite_draw_site *site = &jit->sites[jit->sites_used - 1];
+            after[count]           = emit_site(&e, site, local && !branch, code_start, code_last);
+            exit_count += after[count] != NULL;
+            calls = true;
+            pc    = risc_next(pc);
+            count++;
+            if (branch) {
+                delay_in_block = true;
+                break;
+            }
         } else if (emit_draw(&e, ir)) {
-            uses_memory = calls = true;
-            pc                  = risc_next(pc);
+            calls = true;
+            pc    = risc_next(pc);
             count++;
             delay_in_block = branch;
             break;
@@ -986,18 +1157,16 @@ compile_block(verite_core *c, verite_memory mem, unsigned limit, bool fast_memor
     if (count < 2)
         return block;
 
-    /* A call clobbers XMM2, which holds the loop budget. */
-    bool    loop  = backedge && delay_in_block && !uses_memory && !calls;
+    bool    loop  = backedge && delay_in_block && !uses_memory;
     emitter setup = { prologue };
     if (uses_memory) {
         rr(&setup, 0x89, ARG_MEMORY, MEM, true);
     } else if (loop) {
         rr(&setup, 0x89, ARG_BUDGET, MEM, false);
-        emit_byte(&setup, 0x66); /* movd xmm2, r9d */
-        rr(&setup, 0x0f6e, 2, MEM, false);
+        core_mem(&setup, 0x89, MEM, CORE_FIELD(jit_budget), false);
 
-        /* R9D holds remaining cycles across iterations. The block is pure
-           register code, so its instruction snapshot stays valid. */
+        /* R9D holds remaining cycles across iterations. Draw sites leave the
+           loop when they write into this block, so its snapshot stays valid. */
         alu_imm(&e, 5, MEM, count);
         alu_imm(&e, 7, MEM, count);
         uint8_t *skip_loop = NULL;
@@ -1018,6 +1187,10 @@ compile_block(verite_core *c, verite_memory mem, unsigned limit, bool fast_memor
         if (exits[i]) {
             rel32(exits[i], e.pos);
             emit_finish(&e, risc_relative(start, i), i, false, false, false);
+        }
+        if (after[i]) {
+            rel32(after[i], e.pos);
+            emit_side_finish(&e, risc_relative(start, i + 1), i + 1, loop);
         }
     }
 
@@ -1076,9 +1249,10 @@ risc_jit_run(verite_core *c, verite_memory mem, unsigned budget)
             match = !memcmp(mem.data + addr, block->words, block->count * sizeof(uint32_t));
     }
     if (!match) {
-        if (jit->used > ARENA_SIZE - MAX_BLOCK_CODE - 15) {
+        if (jit->used > ARENA_SIZE - MAX_BLOCK_CODE - 15 || jit->sites_used > SITE_COUNT - BLOCK_WORDS) {
             memset(jit->blocks, 0, sizeof(jit->blocks));
-            jit->used = 0;
+            jit->used       = 0;
+            jit->sites_used = 0;
         }
         block = compile_block(c, mem, limit, fast_memory);
     }
@@ -1088,7 +1262,9 @@ risc_jit_run(verite_core *c, verite_memory mem, unsigned budget)
     if (!block->fn || cycles > budget)
         return 0;
     jit_memory memory   = { mem.data, (uint32_t) mem.mask };
-    unsigned   executed = block->fn(c, &memory, budget - wait);
+    c->jit_mem          = &memory;
+    unsigned executed   = block->fn(c, &memory, budget - wait);
+    c->jit_mem          = NULL;
     if (!executed)
         return 0;
     if (wait) {

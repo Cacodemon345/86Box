@@ -1187,6 +1187,13 @@ pixel_draw_param(verite_core *c, uint8_t op, uint8_t d, uint8_t s2, uint8_t s1, 
     int cnt = (int16_t) pe->cnt;
     if (cnt <= 0)
         return;
+    /* A native span for this render state does the whole draw. */
+    if (pixel_jit_span(c, op, values, deltas, mem)) {
+        if (!(op & 1))
+            for (unsigned k = 0; k < count; k++)
+                risc_dst(c, d + k, values[k] + deltas[k]);
+        return;
+    }
 
     bool     shadow = p1.shadow;
     int      q_index = -1;
@@ -1219,11 +1226,6 @@ pixel_draw_param(verite_core *c, uint8_t op, uint8_t d, uint8_t s2, uint8_t s1, 
     span.read_dst = !span.read_disabled && (span.blend || rop_reads(span.rop_code) || span.pmask != span.mask);
 
     uint32_t step     = pe->x_dir ? 0U - 0x10000 : 0x10000;
-    /* Repeated draws can run as a native span compiled for this render state. */
-    if ((op & 1) && pixel_jit_span(c, count, values, deltas, cnt, step, mem)) {
-        pe->cnt = 0;
-        return;
-    }
     if (op == 0xf3 && params[0] == P_Q && params[1] == P_U && params[2] == P_Z && params[3] == P_V) {
         pixel_draw_perspective_span(c, &span, values, deltas, cnt, step, mem);
         return;

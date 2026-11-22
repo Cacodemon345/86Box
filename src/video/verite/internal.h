@@ -144,6 +144,24 @@ typedef struct {
     size_t   mask;
 } verite_memory;
 
+/* VRAM as native code sees it. */
+typedef struct {
+    uint8_t *vram;
+    uint32_t mask;
+} verite_jit_memory;
+
+/* One parameter draw in a native RISC block. The block compares the engine
+   state with the key and calls fn(core, site): a compiled span on a match,
+   pixel_jit_site_miss() otherwise. A span records the lowest and highest
+   16-bit VRAM word it wrote in lo and hi; nothing written leaves lo > hi. */
+typedef struct verite_draw_site {
+    uint32_t        drawctl, src_mode, dst_mode, dst_fmt, pmask, pat_mode;
+    uint32_t        ir, lo, hi;
+    void           *fn;
+    const uint32_t *values, *deltas;
+    uint32_t       *dest; /* write-back for single draws, or NULL */
+} verite_draw_site;
+
 typedef struct {
     const verite_board *ops;
     void               *opaque;
@@ -179,6 +197,8 @@ struct verite_core {
 #ifdef VERITE_JIT_X64
     struct verite_jit       *jit;
     struct verite_pixel_jit *pixel_jit;
+    const verite_jit_memory *jit_mem;    /* while native code runs */
+    uint32_t                 jit_budget; /* a looping block's cycle budget */
     bool               jit_disabled;
     bool               jit_unavailable;
 #endif
@@ -276,20 +296,20 @@ verite_line_stride(uint32_t code)
 #ifdef VERITE_JIT_X64
 unsigned risc_jit_run(verite_core *core, verite_memory mem, unsigned budget);
 void     risc_jit_free(verite_core *core);
-bool     pixel_jit_span(verite_core *core, unsigned count, const uint32_t values[], const uint32_t deltas[],
-                        int cnt, uint32_t x_step, verite_memory mem);
+bool     pixel_jit_span(verite_core *core, uint8_t op, const uint32_t values[], const uint32_t deltas[],
+                        verite_memory mem);
+unsigned pixel_jit_site_miss(verite_core *core, verite_draw_site *site);
 void     pixel_jit_free(verite_core *core);
+void     risc_jit_reset_sites(verite_core *core);
 #else
 static inline bool
-pixel_jit_span(verite_core *core, unsigned count, const uint32_t values[], const uint32_t deltas[],
-               int cnt, uint32_t x_step, verite_memory mem)
+pixel_jit_span(verite_core *core, uint8_t op, const uint32_t values[], const uint32_t deltas[],
+               verite_memory mem)
 {
     (void) core;
-    (void) count;
+    (void) op;
     (void) values;
     (void) deltas;
-    (void) cnt;
-    (void) x_step;
     (void) mem;
     return false;
 }

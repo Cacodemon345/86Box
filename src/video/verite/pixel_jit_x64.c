@@ -29,22 +29,27 @@ enum {
     DST_RAW_DITHER  = 1 << 20,
     DST_RAW_FOG     = 1 << 21,
     DST_RAW_BGR     = 1 << 24,
+    DST_RAW_NO_PAD  = 1 << 22,
+    DST_RAW_READ_DISABLE = 1 << 23,
     DST_RAW_TREJECT = 1 << 25,
 };
 
-/* Shared with the generated code, which addresses it through R15. */
+/* The span's stack frame, addressed through R15. */
 typedef struct {
-    uint8_t *vram;
-    uint32_t mask;
-    uint32_t count;
-    uint32_t x_step, dst_stride, z_stride, tex_stride;
-    uint32_t values[10], deltas[10];
-    int32_t  c[4], t[4], tap[4], sum[4], w[4];
-    uint32_t z_addr, z;
-    uint32_t row0, row1, x0, x1;
+    verite_core      *core;
+    verite_draw_site *site;
+    int32_t           cnt;
+    uint32_t          x_step, dst_stride, z_stride, tex_stride;
+    uint32_t          values[10], deltas[10];
+    int32_t           c[4], t[4], tap[4], sum[4], w[4];
+    uint32_t          z_addr, z;
+    uint32_t          row0, row1, x0, x1;
+    uint32_t          lo, hi;
 } span_ctx;
 
-typedef unsigned (*span_fn)(span_ctx *ctx, pixel_engine *pe);
+/* unsigned fn(verite_core *core, verite_draw_site *site): draws with the
+   site's value and delta registers and returns whether a pixel was written. */
+typedef unsigned (*span_fn)(verite_core *core, verite_draw_site *site);
 
 typedef struct {
     uint32_t op, drawctl, src_mode, dst_mode, dst_fmt;
@@ -89,6 +94,8 @@ static const jit_pair jit_pair3[] = {
 };
 
 static uint8_t widen_table[3][64]; /* 4, 5 and 6 bits, padded */
+static const uint32_t stride_high[] = { 0, 16, 32, 64, 128, 1024, 2048, 4096 };
+static const uint32_t stride_low[]  = { 0, 256, 512, 1024, 4, 768, 576, 1152 };
 static const uint8_t dither_table[16] = { 0, 12, 3, 15, 7, 11, 4, 8, 13, 1, 14, 2, 10, 6, 9, 5 };
 
 static void
@@ -252,12 +259,21 @@ emit_load16(as *a, unsigned dst, unsigned addr)
     rm(a, 0x0fb7, dst, VRAM, (int) addr, 0, false, false);
 }
 
-/* Store the low 16 bits of val at the address in reg (clobbers reg). */
+/* Store the low 16 bits of val at the address in reg (clobbers reg), widening
+   the written range in ctx.lo/hi. */
 static void
 emit_store16(as *a, unsigned val, unsigned addr)
 {
     rr(a, 0x21, MASK, addr, false);
     alu_ri(a, 4, addr, ~1U);
+    rm(a, 0x3b, addr, CTX, NO_INDEX, (int32_t) offsetof(span_ctx, lo), false, false); /* cmp addr, lo */
+    uint8_t *above = jcc(a, CC_AE);
+    rm(a, 0x89, addr, CTX, NO_INDEX, (int32_t) offsetof(span_ctx, lo), false, false);
+    land(above, a->p);
+    rm(a, 0x3b, addr, CTX, NO_INDEX, (int32_t) offsetof(span_ctx, hi), false, false);
+    uint8_t *below = jcc(a, CC_BE);
+    rm(a, 0x89, addr, CTX, NO_INDEX, (int32_t) offsetof(span_ctx, hi), false, false);
+    land(below, a->p);
     alu_ri(a, 6, addr, 2);
     b8(a, 0x66);
     rm(a, 0x89, val, VRAM, (int) addr, 0, false, false);
@@ -546,6 +562,24 @@ emit_sample(as *a, unsigned fmt, uint32_t src_mode)
     }
 }
 
+/* R10D, R11D = u, v * 2^24 / q unless Q is 0 (exact truncating division). */
+static void
+emit_divide_uv(as *a)
+{
+    LD(R8, PE, PEF(q));
+    rr(a, 0x85, R8, R8, false);
+    uint8_t *flat = jcc(a, CC_E);
+    for (unsigned axis = 0; axis < 2; axis++) {
+        rr(a, 0x63, RAX, axis ? R11 : R10, true); /* movsxd rax, r */
+        shift_ri(a, 4, RAX, 24, true);
+        b8(a, 0x48);
+        b8(a, 0x99);              /* cqo */
+        rr(a, 0xf7, 7, R8, true); /* idiv r8 */
+        MOV(axis ? R11 : R10, RAX);
+    }
+    land(flat, a->p);
+}
+
 /* EAX = (EAX + 127) / 255 for EAX + 127 < 65536. */
 static void
 emit_div255(as *a)
@@ -554,6 +588,146 @@ emit_div255(as *a)
     rr(a, 0x69, RAX, RAX, false);
     d32(a, 0x8081);
     shift_ri(a, 5, RAX, 23, false);
+}
+
+/* ECX = 255 - [CTX + field] */
+static void
+emit_inverse(as *a, int32_t field)
+{
+    mov_ri(a, RCX, 255);
+    rm(a, 0x2b, RCX, CTX, NO_INDEX, field, false, false);
+}
+
+/* ECX = factor(func, source, k, s = ctx.c, d = ctx.tap), as in pixel.c. */
+static void
+emit_factor(as *a, unsigned func, bool source, unsigned k)
+{
+    int32_t s = CTXF(c[0]) + 4 * (int32_t) k, d = CTXF(tap[0]) + 4 * (int32_t) k;
+    switch (func) {
+        case 0:
+            LD(RCX, CTX, source ? d : s);
+            break;
+        case 1:
+            emit_inverse(a, source ? d : s);
+            break;
+        case 2:
+            LD(RCX, CTX, CTXF(c[3]));
+            break;
+        case 3:
+            emit_inverse(a, CTXF(c[3]));
+            break;
+        case 4:
+            LD(RCX, CTX, CTXF(tap[3]));
+            break;
+        case 5:
+            emit_inverse(a, CTXF(tap[3]));
+            break;
+        case 6:
+            rr(a, 0x31, RCX, RCX, false);
+            break;
+        case 8:
+        case 9:
+            if (k == 3)
+                mov_ri(a, RCX, 255);
+            else {
+                /* min(s.a, 255 - d.a); both are bytes. */
+                emit_inverse(a, CTXF(tap[3]));
+                LD(RDX, CTX, CTXF(c[3]));
+                rr(a, 0x39, RCX, RDX, false);   /* cmp edx, ecx */
+                rr(a, 0x0f4c, RCX, RDX, false); /* cmovl ecx, edx */
+            }
+            if (func == 9) {
+                rr(a, 0xf7, 3, RCX, false); /* neg ecx */
+                alu_ri(a, 0, RCX, 255);
+            }
+            break;
+        case 10:
+            LD(RCX, CTX, source ? s : d);
+            break;
+        case 11:
+            emit_inverse(a, source ? s : d);
+            break;
+        default:
+            mov_ri(a, RCX, 255);
+            break;
+    }
+}
+
+/* EAX = one side of blend(): the channel scaled by its factor, or less 128. */
+static void
+emit_blend_term(as *a, unsigned func, bool source, unsigned k)
+{
+    int32_t own = source ? CTXF(c[0]) + 4 * (int32_t) k : CTXF(tap[0]) + 4 * (int32_t) k;
+    if (func == 15) {
+        LD(RAX, CTX, own);
+        alu_ri(a, 5, RAX, 128);
+        return;
+    }
+    emit_factor(a, func, source, k);
+    LD(RAX, CTX, own);
+    rr(a, 0x0faf, RAX, RCX, false);
+    emit_div255(a);
+}
+
+/* c = blend(c, d), d from DstColor or the decoded destination pixel. ESI = x,
+   EDI = y. Clobbers EAX-EDX, R10D. */
+static void
+emit_blend(as *a, const span_key *k)
+{
+    if (k->dst_mode & DST_RAW_READ_DISABLE) {
+        LD(RAX, PE, PEF(dst_color));
+        for (unsigned ch = 0; ch < 4; ch++) {
+            static const unsigned sh[] = { 16, 8, 0, 24 };
+            MOV(RCX, RAX);
+            shift_ri(a, 5, RCX, sh[ch], false);
+            alu_ri(a, 4, RCX, 255);
+            ST(RCX, CTX, CTXF(tap[0]) + 4 * (int32_t) ch);
+        }
+    } else {
+        bool no_pad = !!(k->dst_mode & DST_RAW_NO_PAD);
+        MOV(RAX, RDI);
+        rm(a, 0x0faf, RAX, CTX, NO_INDEX, CTXF(dst_stride), false, false);
+        rm(a, 0x03, RAX, PE, NO_INDEX, PEF(dst_base), false, false);
+        rr(a, 0x01, RSI, RAX, false);
+        rr(a, 0x01, RSI, RAX, false);
+        emit_load16(a, RAX, RAX);
+        static const unsigned shift565[] = { 11, 5, 0 }, bits565[] = { 5, 6, 5 }, shift1555[] = { 10, 5, 0 };
+        for (unsigned ch = 0; ch < 3; ch++) {
+            if (k->dst_fmt == 4)
+                emit_widen(a, shift565[ch], bits565[ch], no_pad);
+            else
+                emit_widen(a, shift1555[ch], 5, no_pad);
+            ST(RCX, CTX, CTXF(tap[0]) + 4 * (int32_t) ch);
+        }
+        if (k->dst_fmt == 4)
+            mov_ri(a, RCX, 255);
+        else {
+            MOV(RCX, RAX);
+            shift_ri(a, 5, RCX, 15, false);
+            alu_ri(a, 4, RCX, 1);
+            rr(a, 0xf7, 3, RCX, false); /* neg ecx */
+            alu_ri(a, 4, RCX, 255);
+        }
+        ST(RCX, CTX, CTXF(tap[3]));
+    }
+    unsigned sf = (k->dst_mode >> 4) & 15, df = (k->dst_mode >> 8) & 15;
+    for (unsigned ch = 0; ch < 4; ch++) {
+        emit_blend_term(a, sf, true, ch);
+        MOV(R10, RAX);
+        emit_blend_term(a, df, false, ch);
+        rr(a, 0x01, R10, RAX, false);
+        rr(a, 0x31, RCX, RCX, false);
+        rr(a, 0x85, RAX, RAX, false);
+        rr(a, 0x0f4c, RAX, RCX, false); /* cmovl eax, 0 */
+        mov_ri(a, RCX, 255);
+        rr(a, 0x39, RCX, RAX, false);
+        rr(a, 0x0f4f, RAX, RCX, false); /* cmovg eax, 255 */
+        ST(RAX, CTX, CTXF(sum[0]) + 4 * (int32_t) ch);
+    }
+    for (unsigned ch = 0; ch < 4; ch++) {
+        LD(RAX, CTX, CTXF(sum[0]) + 4 * (int32_t) ch);
+        ST(RAX, CTX, CTXF(c[0]) + 4 * (int32_t) ch);
+    }
 }
 
 /* ECX = quantize(channel in EAX, n bits) with the dither term (d << 4) >> n in R9D. */
@@ -579,7 +753,7 @@ key_supported(const span_key *k)
     unsigned fmt  = k->src_mode & 15 ? k->src_mode & 15 : k->dst_fmt;
     if ((k->dst_fmt != 4 && k->dst_fmt != 6) || (k->dst_mode & 15) != 12)
         return false;
-    if (k->dst_mode & (DST_RAW_YUV | DST_RAW_BLEND | DST_RAW_FOG | DST_RAW_BGR))
+    if (k->dst_mode & (DST_RAW_YUV | DST_RAW_FOG | DST_RAW_BGR))
         return false;
     if (func > 3)
         return false;
@@ -588,12 +762,50 @@ key_supported(const span_key *k)
     return true;
 }
 
-/* Generates unsigned fn(span_ctx *ctx, pixel_engine *pe); returns whether a pixel was written. */
+/* ctx.field = line_stride(pe->stride >> shift). */
+static void
+emit_stride(as *a, unsigned shift, int32_t field)
+{
+    LD(RAX, PE, PEF(stride));
+    shift_ri(a, 5, RAX, shift, false);
+    MOV(RCX, RAX);
+    shift_ri(a, 5, RCX, 4, false);
+    alu_ri(a, 4, RCX, 7);
+    shift_ri(a, 4, RCX, 2, false);
+    alu_ri(a, 4, RAX, 7);
+    shift_ri(a, 4, RAX, 2, false);
+    mov_ri64(a, RDX, (uint64_t) (uintptr_t) stride_high);
+    rm(a, 0x8b, RCX, RDX, RCX, 0, false, false);
+    mov_ri64(a, RDX, (uint64_t) (uintptr_t) stride_low);
+    rm(a, 0x03, RCX, RDX, RAX, 0, false, false);
+    ST(RCX, CTX, field);
+}
+
+static unsigned
+draw_count(uint8_t op)
+{
+    switch (op & 0xfe) {
+        case 0xf0:
+            return 2;
+        case 0xf2:
+            return 4;
+        case 0xf8:
+            return 6;
+        case 0xfa:
+            return 8;
+        default:
+            return 10;
+    }
+}
+
+/* Generates a span_fn. op holds the register count, plus 0x100 for a single
+   draw that writes back its stepped values and decrements Cnt. */
 static uint8_t *
 compile(as *a, const span_key *k)
 {
     uint8_t     *start = a->p;
-    unsigned     count = k->op;
+    unsigned     count = k->op & 0xff;
+    bool         single = !!(k->op & 0x100);
     unsigned     ctl   = k->drawctl;
     unsigned     i2    = (ctl >> 4) & 31;
     jit_pair     p2    = i2 <= 7 ? jit_pair3[i2] : jit_pair2[i2 - 8];
@@ -613,21 +825,71 @@ compile(as *a, const span_key *k)
     unsigned depth_mode = (k->dst_mode >> 12) & 7;
     bool     zwrite     = !!(k->dst_mode & DST_RAW_ZWRITE);
     bool     dither     = !!(k->dst_mode & DST_RAW_DITHER);
+    /* An unpadded 565 texel survives replace, dither and encode unchanged:
+       expansion leaves multiples of each channel's quantization step, which
+       the dither term never reaches, and a keyed texel encodes as 0. Copy the
+       texel itself, as pixel_copy_565() does. */
+    bool raw_copy = func == 1 && fmt == 4 && k->dst_fmt == 4 && (k->src_mode & SRC_NO_PAD)
+        && !(k->src_mode & (SRC_FILTER | SRC_BGR)) && !(k->dst_mode & DST_RAW_BLEND);
 
+    /* Spans call nothing, so the frame needs no particular alignment. */
     static const unsigned saved[] = { RBX, RBP, RSI, RDI, R12, R13, R14, R15 };
+    uint32_t frame = (sizeof(span_ctx) + 15) & ~15U;
     for (unsigned i = 0; i < 8; i++)
         rex(a, false, 0, 0, saved[i], false), b8(a, 0x50 | (saved[i] & 7));
+    rr(a, 0x81, 5, RSP, true); /* sub rsp, frame */
+    d32(a, frame);
+    rr(a, 0x89, RSP, CTX, true);
 #    ifdef _WIN32
-    rr(a, 0x89, RCX, CTX, true);
-    rr(a, 0x89, RDX, PE, true);
+    unsigned arg_core = RCX, arg_site = RDX;
 #    else
-    rr(a, 0x89, RDI, CTX, true);
-    rr(a, 0x89, RSI, PE, true);
+    unsigned arg_core = RDI, arg_site = RSI;
 #    endif
-    rm(a, 0x8b, VRAM, CTX, NO_INDEX, CTXF(vram), true, false);
-    LD(MASK, CTX, CTXF(mask));
-    LD(COUNT, CTX, CTXF(count));
+    rm(a, 0x89, arg_core, CTX, NO_INDEX, CTXF(core), true, false);
+    rm(a, 0x89, arg_site, CTX, NO_INDEX, CTXF(site), true, false);
+    rm(a, 0x8d, PE, arg_core, NO_INDEX, (int32_t) offsetof(verite_core, pe), true, false); /* lea */
+    rm(a, 0x8b, RAX, arg_core, NO_INDEX, (int32_t) offsetof(verite_core, jit_mem), true, false);
+    rm(a, 0x8b, VRAM, RAX, NO_INDEX, (int32_t) offsetof(verite_jit_memory, vram), true, false);
+    LD(MASK, RAX, (int32_t) offsetof(verite_jit_memory, mask));
     rr(a, 0x31, DREW, DREW, false);
+    rm(a, 0xc7, 0, CTX, NO_INDEX, CTXF(lo), false, false);
+    d32(a, UINT32_MAX);
+    rm(a, 0xc7, 0, CTX, NO_INDEX, CTXF(hi), false, false);
+    d32(a, 0);
+
+    /* cnt = (int16_t) Cnt; nothing happens unless it is positive. */
+    rm(a, 0x0fbf, RAX, PE, NO_INDEX, PEF(cnt), false, false); /* movsx eax, word [cnt] */
+    ST(RAX, CTX, CTXF(cnt));
+    rr(a, 0x85, RAX, RAX, false);
+    uint8_t *empty = jcc(a, CC_LE);
+    if (single)
+        mov_ri(a, COUNT, 1);
+    else
+        MOV(COUNT, RAX);
+
+    rm(a, 0x8b, RCX, CTX, NO_INDEX, CTXF(site), true, false);
+    rm(a, 0x8b, RDX, RCX, NO_INDEX, (int32_t) offsetof(verite_draw_site, values), true, false);
+    rm(a, 0x8b, RCX, RCX, NO_INDEX, (int32_t) offsetof(verite_draw_site, deltas), true, false);
+    for (unsigned i = 0; i < count; i++) {
+        LD(RAX, RDX, 4 * (int32_t) i);
+        ST(RAX, CTX, CTXF(values[0]) + 4 * (int32_t) i);
+        LD(RAX, RCX, 4 * (int32_t) i);
+        ST(RAX, CTX, CTXF(deltas[0]) + 4 * (int32_t) i);
+    }
+
+    if (shadow) {
+        /* x_step = x_dir ? -1.0 : 1.0 in 16.16 */
+        rm(a, 0x0fb6, RAX, PE, NO_INDEX, PEF(x_dir), false, false);
+        rr(a, 0xf7, 3, RAX, false); /* neg eax */
+        alu_ri(a, 4, RAX, 0xfffe0000);
+        alu_ri(a, 0, RAX, 0x10000);
+        ST(RAX, CTX, CTXF(x_step));
+    }
+    emit_stride(a, 8, CTXF(dst_stride));
+    if (depth_mode || zwrite)
+        emit_stride(a, 16, CTXF(z_stride));
+    if (func)
+        emit_stride(a, 0, CTXF(tex_stride));
 
     uint8_t *loop = a->p;
     for (unsigned i = 0; i < count; i++) {
@@ -685,7 +947,55 @@ compile(as *a, const span_key *k)
         }
     }
 
+    if (raw_copy) {
+        LD(R10, PE, PEF(u));
+        LD(R11, PE, PEF(v));
+    }
+    if (raw_copy && q_index >= 0)
+        emit_divide_uv(a);
+    if (raw_copy) {
+        bool uc = !!(k->src_mode & SRC_U_CLAMP), vc = !!(k->src_mode & SRC_V_CLAMP);
+        MOV(RAX, R11);
+        shift_ri(a, 7, RAX, 16, false);
+        emit_coord(a, PEF(v_mask), vc);
+        rm(a, 0x0faf, RAX, CTX, NO_INDEX, CTXF(tex_stride), false, false);
+        rm(a, 0x03, RAX, PE, NO_INDEX, PEF(src_base), false, false);
+        MOV(R9, RAX);
+        MOV(RAX, R10);
+        shift_ri(a, 7, RAX, 16, false);
+        emit_coord(a, PEF(u_mask), uc);
+        rr(a, 0x01, RAX, RAX, false);
+        rr(a, 0x01, R9, RAX, false);
+        emit_load16(a, R8, RAX);
+        uint8_t *opaque = NULL;
+        if (k->src_mode & SRC_CHROMA) {
+            rr(a, 0x69, RCX, R8, false); /* imul ecx, r8d, 0x10001 */
+            d32(a, 0x10001);
+            rm(a, 0x33, RCX, PE, NO_INDEX, PEF(chroma_color), false, false);
+            rm(a, 0x23, RCX, PE, NO_INDEX, PEF(chroma_mask), false, false);
+            opaque = jcc(a, CC_NE);
+            /* Keyed: alpha 0 is always rejected; otherwise it encodes as 0. */
+            if (k->dst_mode & DST_RAW_TREJECT)
+                skips[nskip++] = jmp(a);
+            else
+                rr(a, 0x31, R8, R8, false);
+            uint8_t *keyed = jmp(a);
+            land(opaque, a->p);
+            opaque = keyed;
+        }
+        if (k->dst_mode & DST_RAW_TREJECT) {
+            /* Alpha 255 is rejected only by a threshold of 255. */
+            LD(RCX, PE, PEF(alpha_thres));
+            alu_ri(a, 4, RCX, 255);
+            alu_ri(a, 7, RCX, 255);
+            skips[nskip++] = jcc(a, CC_E);
+        }
+        if (opaque)
+            land(opaque, a->p);
+    }
+
     /* c = argb(fg) */
+    if (!raw_copy) {
     LD(RAX, PE, PEF(fg));
     for (unsigned ch = 0; ch < 4; ch++) {
         static const unsigned sh[] = { 16, 8, 0, 24 };
@@ -698,20 +1008,8 @@ compile(as *a, const span_key *k)
     if (func) {
         LD(R10, PE, PEF(u));
         LD(R11, PE, PEF(v));
-        if (q_index >= 0) {
-            LD(R8, PE, PEF(q));
-            rr(a, 0x85, R8, R8, false);
-            uint8_t *flat = jcc(a, CC_E);
-            for (unsigned axis = 0; axis < 2; axis++) {
-                rr(a, 0x63, RAX, axis ? R11 : R10, true); /* movsxd rax, r */
-                shift_ri(a, 4, RAX, 24, true);
-                b8(a, 0x48);
-                b8(a, 0x99);                  /* cqo */
-                rr(a, 0xf7, 7, R8, true);     /* idiv r8 */
-                MOV(axis ? R11 : R10, RAX);
-            }
-            land(flat, a->p);
-        }
+        if (q_index >= 0)
+            emit_divide_uv(a);
         emit_sample(a, fmt, k->src_mode);
         for (unsigned ch = 0; ch < 4; ch++) {
             int32_t c = CTXF(c[0]) + 4 * (int32_t) ch, t = CTXF(t[0]) + 4 * (int32_t) ch;
@@ -746,6 +1044,9 @@ compile(as *a, const span_key *k)
         skips[nskip++] = jcc(a, CC_LE);
     }
 
+    if (k->dst_mode & DST_RAW_BLEND)
+        emit_blend(a, k);
+
     /* Dither term d << 4 in R9D. */
     if (dither) {
         LD(RDX, PE, PEF(dither_offset));
@@ -764,7 +1065,10 @@ compile(as *a, const span_key *k)
         shift_ri(a, 4, R9, 4, false);
     }
 
+    }
+
     /* Encode into R8D. */
+    if (!raw_copy) {
     rr(a, 0x31, R8, R8, false);
     static const struct {
         unsigned ch, n, pos;
@@ -779,6 +1083,7 @@ compile(as *a, const span_key *k)
         emit_quantize(a, n, dither);
         shift_ri(a, 4, RCX, pos, false);
         rr(a, 0x09, RCX, R8, false);
+    }
     }
 
     /* addr = dst_base + dst_stride * y + 2x */
@@ -812,7 +1117,42 @@ compile(as *a, const span_key *k)
     rr(a, 0xff, 1, COUNT, false); /* dec ebx */
     land(jcc(a, CC_NE), loop);
 
+    if (single) {
+        /* dest[k] = value + delta (already stepped); Cnt decrements. */
+        rm(a, 0x8b, RCX, CTX, NO_INDEX, CTXF(site), true, false);
+        rm(a, 0x8b, RCX, RCX, NO_INDEX, (int32_t) offsetof(verite_draw_site, dest), true, false);
+        rr(a, 0x85, RCX, RCX, true);
+        uint8_t *no_dest = jcc(a, CC_E);
+        for (unsigned i = 0; i < count; i++) {
+            LD(RAX, CTX, CTXF(values[0]) + 4 * (int32_t) i);
+            ST(RAX, RCX, 4 * (int32_t) i);
+        }
+        land(no_dest, a->p);
+        LD(RAX, CTX, CTXF(cnt));
+        alu_ri(a, 5, RAX, 1);
+        ST(RAX, PE, PEF(cnt));
+    } else {
+        rm(a, 0xc7, 0, PE, NO_INDEX, PEF(cnt), false, false);
+        d32(a, 0);
+    }
+    rr(a, 0x85, DREW, DREW, false);
+    uint8_t *none = jcc(a, CC_E);
+    rm(a, 0xc6, 0, PE, NO_INDEX, PEF(pick_hit), false, false);
+    b8(a, 1);
+    rm(a, 0x8b, RAX, CTX, NO_INDEX, CTXF(core), true, false);
+    rm(a, 0xc6, 0, RAX, NO_INDEX, (int32_t) offsetof(verite_core, drew), false, false);
+    b8(a, 1);
+    land(none, a->p);
+
+    land(empty, a->p);
+    rm(a, 0x8b, RCX, CTX, NO_INDEX, CTXF(site), true, false);
+    LD(RAX, CTX, CTXF(lo));
+    ST(RAX, RCX, (int32_t) offsetof(verite_draw_site, lo));
+    LD(RAX, CTX, CTXF(hi));
+    ST(RAX, RCX, (int32_t) offsetof(verite_draw_site, hi));
     MOV(RAX, DREW);
+    rr(a, 0x81, 0, RSP, true); /* add rsp, frame */
+    d32(a, frame);
     for (int i = 7; i >= 0; i--)
         rex(a, false, 0, 0, saved[i], false), b8(a, 0x58 | (saved[i] & 7));
     b8(a, 0xc3);
@@ -872,8 +1212,10 @@ lookup(verite_core *c, const span_key *key)
             return e->fn;
     }
     if (jit->used + SPAN_MAX_CODE > SPAN_ARENA) {
+        /* Draw sites in RISC blocks point into the arena. */
         memset(jit->entries, 0, sizeof(jit->entries));
         jit->used = 0;
+        risc_jit_reset_sites(c);
     }
     as a = { jit->arena + jit->used };
     uint8_t *code = compile(&a, key);
@@ -890,39 +1232,65 @@ lookup(verite_core *c, const span_key *key)
     return e->fn;
 }
 
-bool
-pixel_jit_span(verite_core *c, unsigned count, const uint32_t values[], const uint32_t deltas[],
-               int cnt, uint32_t x_step, verite_memory mem)
+/* The compiled span for the current render state, or NULL to use C. */
+static span_fn
+state_span(verite_core *c, uint8_t op)
 {
     pixel_engine *pe = &c->pe;
-    if (c->jit_disabled || c->jit_unavailable || (pe->pat_mode & 0x10000))
-        return false;
+    if (c->jit_disabled || c->jit_unavailable || (pe->pat_mode & 0x10000) || (pe->pmask & 0xffff) != 0xffff)
+        return NULL;
     span_key key = {
-        .op       = count,
+        .op       = draw_count(op) | (op & 1 ? 0 : 0x100),
         .drawctl  = pe->drawctl & 0xffff,
         .src_mode = pe->src_mode & 0x1ffff,
         .dst_mode = pe->dst_mode & 0x03ff7fff,
         .dst_fmt  = pe->dst_fmt & 15,
     };
-    if ((pe->pmask & 0xffff) != 0xffff || !key_supported(&key) || mem.mask > UINT32_MAX)
+    return key_supported(&key) ? lookup(c, &key) : NULL;
+}
+
+/* From pixel_draw_param(): the caller writes back a single draw's registers. */
+bool
+pixel_jit_span(verite_core *c, uint8_t op, const uint32_t values[], const uint32_t deltas[], verite_memory mem)
+{
+    if (mem.mask > UINT32_MAX)
         return false;
-    span_fn fn = lookup(c, &key);
+    span_fn fn = state_span(c, op);
     if (!fn)
         return false;
-    span_ctx ctx = {
-        .vram       = mem.data,
-        .mask       = (uint32_t) mem.mask,
-        .count      = (uint32_t) cnt,
-        .x_step     = x_step,
-        .dst_stride = verite_line_stride(pe->stride >> 8),
-        .z_stride   = verite_line_stride(pe->stride >> 16),
-        .tex_stride = verite_line_stride(pe->stride),
-    };
-    memcpy(ctx.values, values, count * sizeof(*values));
-    memcpy(ctx.deltas, deltas, count * sizeof(*deltas));
-    if (fn(&ctx, pe))
-        pe->pick_hit = c->drew = true;
+    verite_jit_memory        memory = { mem.data, (uint32_t) mem.mask };
+    verite_draw_site         site   = { .values = values, .deltas = deltas };
+    const verite_jit_memory *outer  = c->jit_mem;
+    c->jit_mem                      = &memory;
+    fn(c, &site);
+    c->jit_mem = outer;
     return true;
+}
+
+/* A draw site's key did not match: compile or find the span for this state
+   and remember it, or run the C pixel engine. A C draw reports the whole of
+   VRAM as written, which ends the block. */
+unsigned
+pixel_jit_site_miss(verite_core *c, verite_draw_site *s)
+{
+    pixel_engine *pe = &c->pe;
+    uint8_t       op = s->ir >> 24;
+    span_fn       fn = state_span(c, op);
+    if (fn) {
+        s->drawctl  = pe->drawctl;
+        s->src_mode = pe->src_mode;
+        s->dst_mode = pe->dst_mode;
+        s->dst_fmt  = pe->dst_fmt;
+        s->pmask    = pe->pmask;
+        s->pat_mode = pe->pat_mode;
+        s->fn       = (void *) fn;
+        return fn(c, s);
+    }
+    verite_memory mem = { c->jit_mem->vram, c->jit_mem->mask };
+    pixel_draw_param(c, op, s->ir >> 16, s->ir >> 8, s->ir, mem);
+    s->lo = 0;
+    s->hi = UINT32_MAX;
+    return 0;
 }
 
 #endif

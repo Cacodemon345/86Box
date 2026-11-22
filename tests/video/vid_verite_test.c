@@ -640,100 +640,142 @@ span_param(pixel_param param, uint32_t *value, uint32_t *delta)
     }
 }
 
-/* Native parameter spans match the C path over random render states. */
-static void
-param_span_matches(void)
+static const uint8_t span_ops[] = { 0xf0, 0xf1, 0xf2, 0xf3, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd };
+
+/* A random render state and parameter registers 160-185 in both fixtures.
+   Returns false for a draw control the engine does not decode. */
+static bool
+span_state(fixture *a, fixture *b, uint8_t op, bool *native)
 {
-    static const uint8_t ops[]  = { 0xf1, 0xf3, 0xf9, 0xfb, 0xfd };
     static const uint8_t fmts[] = { 0, 4, 4, 6, 6, 12 };
+    pixel_engine pe;
+    pixel_reset(&pe);
+    uint32_t texel = mem_read16(a->mem, span_rand() & 0xffffe);
+    pe.drawctl  = span_rand() & 0xffff;
+    pe.src_mode = (span_rand() & 0x1ff80) | ((span_rand() % 5) << 4) | fmts[span_rand() % COUNT(fmts)];
+    pe.dst_mode = 12 | (span_rand() & 0x03fffff0);
+    /* A quarter blend, half use no output stage, and the rest are arbitrary. */
+    uint32_t stages = span_rand() % 4;
+    if (stages == 0)
+        pe.dst_mode = (pe.dst_mode & ~(1U << 18 | 1U << 21 | 1U << 24)) | 1U << 19;
+    else if (stages < 3)
+        pe.dst_mode &= ~(1U << 19 | 1U << 18 | 1U << 21 | 1U << 24);
+    pe.dst_fmt  = span_rand() % 8 ? (span_rand() & 1 ? 4 : 6) : 12;
+    pe.pmask    = span_rand() % 16 ? UINT32_MAX : 0x00ff00ff;
+    pe.pat_mode = span_rand() % 16 ? 0 : 0x10000;
+    if (op == 0xf0 && span_rand() % 4 == 0) {
+        /* The unpadded 565 copy that pixel_copy_565() special-cases. */
+        pe.drawctl  = (pe.drawctl & ~15U) | 4;
+        pe.src_mode = 0x210 | (span_rand() & SRC_CHROMA) | (span_rand() & 1 ? 4 : 0);
+        pe.dst_mode = 0x0050032c | (span_rand() & (1U << 23 | 1U << 25));
+        pe.dst_fmt  = 4;
+        pe.pmask    = UINT32_MAX;
+        pe.pat_mode = 0;
+    }
+    pe.src_base = span_rand() & 0xfffff;
+    pe.dst_base = span_rand() & 0xfffff;
+    pe.z_base   = span_rand() & 0xfffff;
+    pe.stride   = span_rand() & 0x777777;
+    pe.src_mask = span_rand() & 0x07ff07ff;
+    pe.scissor_x = (span_rand() % 64) << 16;
+    pe.scissor_x |= span_rand() % 400;
+    pe.scissor_y = (span_rand() % 64) << 16;
+    pe.scissor_y |= span_rand() % 400;
+    pe.dither_offset = span_rand();
+    pe.fg            = span_rand();
+    pe.dst_color     = span_rand();
+    pe.fog_color     = span_rand();
+    pe.chroma_color  = span_rand() & 1 ? texel * 0x10001 : span_rand();
+    /* Sparse masks make keyed texels common. */
+    static const uint32_t key_masks[] = { UINT32_MAX, 0, 0x00010001, 0x00200020, 0x80008000 };
+    pe.chroma_mask = span_rand() % 6 ? key_masks[span_rand() % COUNT(key_masks)] : span_rand();
+    static const uint32_t thresholds[] = { 0, 254, 255 };
+    pe.alpha_thres = span_rand() % 4 ? span_rand() : thresholds[span_rand() % 3];
+    pe.x_dir       = span_rand() & 1;
+    pe.x_shadow    = (int32_t) ((span_rand() % 320) << 16);
+    pe.x           = (int32_t) ((span_rand() % 320) << 16);
+    pe.y           = (int32_t) ((span_rand() % 320) << 16);
+    pe.z           = (int32_t) span_rand();
+    pe.z_ovf       = span_rand() & 1;
+    pe.q           = span_rand() % 4 ? span_rand() % (2U << 24) : 0;
+    pe.u           = (int32_t) span_rand();
+    pe.v           = (int32_t) span_rand();
+    pe.u_mask      = pe.src_mask & 0x7ff;
+    pe.v_mask      = (pe.src_mask >> 16) & 0x7ff;
+    /* Single draws also see an exhausted or negative count. */
+    pe.cnt = span_rand() % 8 ? 1 + span_rand() % 24 : (span_rand() & 1 ? 0 : 0xfff0);
+
+    unsigned i2 = (pe.drawctl >> 4) & 31;
+    if (i2 > 7 && i2 - 8 >= COUNT(pair2))
+        return false;
+    first_pair  p1 = pair1[pe.drawctl & 15];
+    param_pair  p2 = i2 <= 7 ? pair3[i2] : pair2[i2 - 8];
+    param_pair  p3 = pair3[(pe.drawctl >> 9) & 15], p4 = pair3[(pe.drawctl >> 13) & 7];
+    pixel_param params[] = { p1.pair.even, p1.pair.odd, p2.even, p2.odd, p3.even, p3.odd, p4.even, p4.odd, P_G, P_B };
+    for (unsigned k = 0; k < 10; k++)
+        span_param(params[k], &a->core->reg[160 + k], &a->core->reg[176 + k]);
+    memcpy(b->core->reg, a->core->reg, sizeof(a->core->reg));
+    a->core->pe   = b->core->pe = pe;
+    a->core->drew = b->core->drew = false;
+
+    span_key key = { .src_mode = pe.src_mode & 0x1ffff, .dst_mode = pe.dst_mode & 0x03ff7fff, .dst_fmt = pe.dst_fmt & 15 };
+    *native = !pe.pat_mode && (pe.pmask & 0xffff) == 0xffff && key_supported(&key);
+    return true;
+}
+
+static void
+span_compare(const fixture *a, const fixture *b, unsigned round, uint8_t op)
+{
+    const pixel_engine *x = &a->core->pe, *y = &b->core->pe;
+    if (memcmp(a->mem.data, b->mem.data, 1 << 20)) {
+        for (unsigned i = 0; i < (1u << 20); i++)
+            if (a->mem.data[i] != b->mem.data[i]) {
+                fprintf(stderr, "round %u op %02x ctl %04x src %05x dst %08x fmt %u: byte %05x %02x != %02x\n",
+                        round, op, y->drawctl, y->src_mode, y->dst_mode, y->dst_fmt, i, a->mem.data[i], b->mem.data[i]);
+                break;
+            }
+        abort();
+    }
+    if (!(x->x_shadow == y->x_shadow && x->x == y->x && x->y == y->y && x->z == y->z && x->z_ovf == y->z_ovf
+          && x->u == y->u && x->v == y->v && x->q == y->q && x->u_mask == y->u_mask && x->v_mask == y->v_mask
+          && x->r == y->r && x->g == y->g && x->b == y->b && x->a == y->a && x->f == y->f && x->fg == y->fg
+          && x->cnt == y->cnt && x->pat_offset == y->pat_offset && x->pick_hit == y->pick_hit
+          && a->core->drew == b->core->drew && !memcmp(a->core->reg, b->core->reg, sizeof(a->core->reg)))) {
+        fprintf(stderr, "round %u op %02x ctl %04x src %05x dst %08x fmt %u: engine state differs\n",
+                round, op, y->drawctl, y->src_mode, y->dst_mode, y->dst_fmt);
+        abort();
+    }
+}
+
+static uint8_t *
+span_image(void)
+{
     uint8_t *image = malloc(1 << 20);
     assert(image);
     for (unsigned i = 0; i < (1u << 20); i++)
         image[i] = (uint8_t) span_rand();
+    return image;
+}
+
+/* Native parameter spans match the C path over random render states. */
+static void
+param_span_matches(void)
+{
+    uint8_t *image  = span_image();
     unsigned native = 0, rounds = 6000;
     fixture  a = machine(NULL, 0, 0), b = machine(NULL, 0, 0);
     b.core->jit_disabled = true;
     for (unsigned round = 0; round < rounds; round++) {
         memcpy(a.mem.data, image, 1 << 20);
         memcpy(b.mem.data, image, 1 << 20);
-        pixel_engine pe;
-        pixel_reset(&pe);
-        uint8_t  op    = ops[span_rand() % COUNT(ops)];
-        uint32_t texel = mem_read16(a.mem, span_rand() & 0xffffe);
-        pe.drawctl  = span_rand() & 0xffff;
-        pe.src_mode = (span_rand() & 0x1ff80) | ((span_rand() % 5) << 4) | fmts[span_rand() % COUNT(fmts)];
-        pe.dst_mode = 12 | (span_rand() & 0x03f7f0f0);
-        if (span_rand() % 4)
-            pe.dst_mode &= ~(1U << 19 | 1U << 18 | 1U << 21 | 1U << 24);
-        pe.dst_fmt  = span_rand() % 8 ? (span_rand() & 1 ? 4 : 6) : 12;
-        pe.pmask    = span_rand() % 16 ? UINT32_MAX : 0x00ff00ff;
-        pe.pat_mode = span_rand() % 16 ? 0 : 0x10000;
-        pe.src_base = span_rand() & 0xfffff;
-        pe.dst_base = span_rand() & 0xfffff;
-        pe.z_base   = span_rand() & 0xfffff;
-        pe.stride   = span_rand() & 0x777777;
-        pe.src_mask = span_rand() & 0x07ff07ff;
-        pe.scissor_x = (span_rand() % 64) << 16;
-        pe.scissor_x |= span_rand() % 400;
-        pe.scissor_y = (span_rand() % 64) << 16;
-        pe.scissor_y |= span_rand() % 400;
-        pe.dither_offset = span_rand();
-        pe.fg            = span_rand();
-        pe.chroma_color  = span_rand() & 1 ? texel * 0x10001 : span_rand();
-        /* Sparse masks make keyed texels common. */
-        static const uint32_t key_masks[] = { UINT32_MAX, 0, 0x00010001, 0x00200020, 0x80008000 };
-        pe.chroma_mask = span_rand() % 6 ? key_masks[span_rand() % COUNT(key_masks)] : span_rand();
-        pe.alpha_thres   = span_rand();
-        pe.x_dir         = span_rand() & 1;
-        pe.x_shadow      = (int32_t) ((span_rand() % 320) << 16);
-        pe.x             = (int32_t) ((span_rand() % 320) << 16);
-        pe.y             = (int32_t) ((span_rand() % 320) << 16);
-        pe.z             = (int32_t) span_rand();
-        pe.z_ovf         = span_rand() & 1;
-        pe.q             = span_rand() % 4 ? span_rand() % (2U << 24) : 0;
-        pe.u             = (int32_t) span_rand();
-        pe.v             = (int32_t) span_rand();
-        pe.u_mask        = pe.src_mask & 0x7ff;
-        pe.v_mask        = (pe.src_mask >> 16) & 0x7ff;
-        pe.cnt           = 1 + span_rand() % 24;
-
-        unsigned i2 = (pe.drawctl >> 4) & 31;
-        if (i2 > 7 && i2 - 8 >= COUNT(pair2))
+        uint8_t op = span_ops[span_rand() % COUNT(span_ops)];
+        bool    supported;
+        if (!span_state(&a, &b, op, &supported))
             continue;
-        first_pair  p1 = pair1[pe.drawctl & 15];
-        param_pair  p2 = i2 <= 7 ? pair3[i2] : pair2[i2 - 8];
-        param_pair  p3 = pair3[(pe.drawctl >> 9) & 15], p4 = pair3[(pe.drawctl >> 13) & 7];
-        pixel_param params[] = { p1.pair.even, p1.pair.odd, p2.even, p2.odd, p3.even, p3.odd, p4.even, p4.odd, P_G, P_B };
-        for (unsigned k = 0; k < 10; k++)
-            span_param(params[k], &a.core->reg[160 + k], &a.core->reg[176 + k]);
-        memcpy(b.core->reg, a.core->reg, sizeof(a.core->reg));
-        a.core->pe   = b.core->pe = pe;
-        a.core->drew = b.core->drew = false;
-
-        span_key key = { .src_mode = pe.src_mode & 0x1ffff, .dst_mode = pe.dst_mode & 0x03ff7fff, .dst_fmt = pe.dst_fmt & 15 };
-        native += !pe.pat_mode && (pe.pmask & 0xffff) == 0xffff && key_supported(&key);
-
+        native += supported;
         pixel_draw_param(a.core, op, 192, 160, 176, a.mem);
         pixel_draw_param(b.core, op, 192, 160, 176, b.mem);
-        if (memcmp(a.mem.data, b.mem.data, 1 << 20)) {
-            for (unsigned i = 0; i < (1u << 20); i++)
-                if (a.mem.data[i] != b.mem.data[i]) {
-                    fprintf(stderr, "round %u op %02x ctl %04x src %05x dst %08x fmt %u: byte %05x %02x != %02x\n",
-                            round, op, pe.drawctl, pe.src_mode, pe.dst_mode, pe.dst_fmt, i, a.mem.data[i], b.mem.data[i]);
-                    break;
-                }
-            abort();
-        }
-        const pixel_engine *x = &a.core->pe, *y = &b.core->pe;
-        if (!(x->x_shadow == y->x_shadow && x->x == y->x && x->y == y->y && x->z == y->z && x->z_ovf == y->z_ovf
-              && x->u == y->u && x->v == y->v && x->q == y->q && x->u_mask == y->u_mask && x->v_mask == y->v_mask
-              && x->r == y->r && x->g == y->g && x->b == y->b && x->a == y->a && x->f == y->f && x->fg == y->fg
-              && x->cnt == y->cnt && x->pat_offset == y->pat_offset && x->pick_hit == y->pick_hit
-              && a.core->drew == b.core->drew && !memcmp(a.core->reg, b.core->reg, sizeof(a.core->reg)))) {
-            fprintf(stderr, "round %u op %02x ctl %04x src %05x dst %08x fmt %u: engine state differs\n",
-                    round, op, pe.drawctl, pe.src_mode, pe.dst_mode, pe.dst_fmt);
-            abort();
-        }
+        span_compare(&a, &b, round, op);
     }
     if (a.core->jit_unavailable)
         native = 0;
@@ -1107,6 +1149,156 @@ jit_pixel_ops(void)
     done(&b);
     puts("Vérité x86-64 JIT pixel-engine cases passed");
 }
+
+/* Run both cores for at most steps blocks or instructions, stopping at end_pc. */
+static void
+jit_follow_bounded(fixture *native, fixture *reference, uint32_t end_pc, unsigned steps)
+{
+    while (steps-- && native->core->pc != end_pc) {
+        if (jit_compare(native, reference, 64))
+            continue;
+        bool a = risc_step(native->core, false, 0, native->mem, (verite_bus) { &board, native });
+        bool b = risc_step(reference->core, false, 0, reference->mem, (verite_bus) { &board, reference });
+        assert(a == b);
+        if (!a)
+            break;
+        jit_compare(native, reference, 0);
+    }
+}
+
+/* Draw sites in RISC blocks: spans found through the site cache, the C
+   fallback, single-draw write-back, copies into the block's own code, and
+   loops that draw. */
+static void
+jit_draw_sites(void)
+{
+    uint8_t *image = span_image();
+    fixture  a = machine(NULL, 0, 0), b = machine(NULL, 0, 0);
+    b.core->jit_disabled = true;
+    unsigned native = 0;
+    for (unsigned round = 0; round < 3000; round++) {
+        memcpy(a.mem.data, image, 1 << 20);
+        memcpy(b.mem.data, image, 1 << 20);
+        uint8_t op = span_ops[span_rand() % COUNT(span_ops)];
+        bool    supported;
+        if (!span_state(&a, &b, op, &supported))
+            continue;
+        /* Mostly direct registers, sometimes a discarding or segmented destination. */
+        unsigned d = span_rand() % 4 ? 192 : span_rand() & 1 ? 0 : 96;
+        const uint32_t program[] = { IMM(0x76, 200, 1), INS(op, d, 160, 176), IMM(0x76, 201, 2), HALT };
+        jit_program(&a, &b, program, COUNT(program));
+        a.core->seg = b.core->seg = span_rand();
+        /* Run twice so the second pass finds the span through the site. */
+        for (unsigned pass = 0; pass < 2; pass++) {
+            if (pass) {
+                memcpy(a.mem.data, b.mem.data, 1 << 20);
+                jit_program(&a, &b, program, COUNT(program));
+            }
+            jit_follow_bounded(&a, &b, 12, 6);
+            span_compare(&a, &b, round, op);
+        }
+        native += supported;
+        if (a.core->jit_unavailable)
+            break;
+    }
+    if (a.core->jit_unavailable) {
+        done(&a);
+        done(&b);
+        free(image);
+        return;
+    }
+    assert(native > 500);
+
+    /* A supported single draw continues the block and writes back. */
+    static const uint32_t flat[] = {
+        IMM(0x76, 200, 1), INS(0xd7, 142, 130, 0), INS(0xf0, 196, 160, 176), IMM(0x76, 201, 2), HALT
+    };
+    for (fixture *f = &a; f; f = f == &a ? &b : NULL) {
+        memset(f->mem.data, 0, 1 << 20);
+        pixel_reset(&f->core->pe);
+        sixteen_bit(f->core);
+        f->core->pe.drawctl  = 2;
+        f->core->pe.dst_mode = 12 | (1U << 20);
+        f->core->pe.fg       = 0xff336699;
+        f->core->reg[130]    = 1 << 16;
+        f->core->reg[160]    = 5 << 16;
+        f->core->reg[161]    = 7 << 16;
+        f->core->reg[176]    = 1 << 16;
+        f->core->reg[177]    = 0;
+    }
+    jit_program(&a, &b, flat, COUNT(flat));
+    assert(jit_compare(&a, &b, 64) == 4);
+    assert(a.core->pc == 16 && a.core->reg[196] == 6U << 16 && a.core->drew && !a.core->pe.cnt);
+
+    /* The same draw into the block's own code leaves right after it. */
+    for (fixture *f = &a; f; f = f == &a ? &b : NULL) {
+        f->core->pe.dst_base = 0;
+        f->core->pe.stride   = 0;
+        f->core->reg[160]    = 6 << 16;
+        f->core->reg[161]    = 0;
+    }
+    jit_program(&a, &b, flat, COUNT(flat));
+    assert(jit_compare(&a, &b, 64) == 3 && a.core->pc == 12);
+
+    /* A loop of single draws stays native and leaves when the count runs out. */
+    static const uint32_t loop[] = {
+        INS(0xd7, 142, 130, 0),
+        INS(0xf0, 160, 160, 176),
+        INS(0x01, 128, 128, 1),
+        INS(0x61, 0xff, 0xfc, 128), /* bnez r128, 0 */
+        IMM(0x76, 129, 0),
+        HALT
+    };
+    for (fixture *f = &a; f; f = f == &a ? &b : NULL) {
+        f->core->pe.dst_base = 0x10000;
+        f->core->pe.stride   = 0x0300;
+        f->core->reg[128]    = 9;
+        f->core->reg[160]    = 2 << 16;
+        f->core->reg[161]    = 3 << 16;
+        f->core->timer       = 100;
+    }
+    jit_program(&a, &b, loop, COUNT(loop));
+    assert(jit_compare(&a, &b, 200) == 45 && a.core->pc == 20);
+    for (unsigned x = 2; x < 11; x++)
+        assert(mem_read16(a.mem, 0x10000 + 3 * 1024 + 2 * x));
+
+    /* At 0x100, the second draw lands in the words after this block, which it
+       guards up to 0x17f, so the loop leaves in its second iteration. */
+    static const uint32_t walk[] = {
+        INS(0xd7, 142, 130, 0),
+        INS(0xf0, 160, 160, 176),
+        INS(0x01, 128, 128, 1),
+        INS(0x61, 0xff, 0xfc, 128), /* bnez r128, 0x100 */
+        IMM(0x76, 129, 0),
+        HALT
+    };
+    for (fixture *f = &a; f; f = f == &a ? &b : NULL) {
+        for (size_t i = 0; i < COUNT(walk); i++)
+            mem_write32(f->mem, 0x100 + 4 * (uint32_t) i, walk[i]);
+        f->core->pc          = 0x100;
+        f->core->npc         = 0x104;
+        f->core->pe.dst_base = 0;
+        f->core->pe.stride   = 0;
+        f->core->reg[128]    = 9;
+        f->core->reg[160]    = 0xc0 << 16;
+        f->core->reg[161]    = 0;
+        f->core->reg[176]    = (uint32_t) -(1 << 16);
+    }
+    assert(jit_compare(&a, &b, 200) == 7 && a.core->pc == 0x108);
+
+    /* Sites rebuild after the span cache drops its code. */
+    risc_jit_reset_sites(a.core);
+    jit_program(&a, &b, flat, COUNT(flat));
+    a.core->pe.dst_base = b.core->pe.dst_base = 0x10000;
+    a.core->pe.cnt = b.core->pe.cnt = 1;
+    a.core->reg[160] = b.core->reg[160] = 40 << 16;
+    assert(jit_compare(&a, &b, 64) == 4);
+
+    done(&a);
+    done(&b);
+    free(image);
+    printf("Vérité draw sites matched the interpreter in %u supported rounds\n", native);
+}
 #endif
 
 int
@@ -1147,6 +1339,7 @@ main(void)
     jit_option();
     jit_differential();
     jit_pixel_ops();
+    jit_draw_sites();
 #endif
     return 0;
 }

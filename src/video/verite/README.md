@@ -22,8 +22,10 @@ arithmetic, branches, and common local VRAM accesses. The cache checks
 instruction bytes before entering a block so microcode changes take effect.
 The card's **Dynamic recompiler** option is enabled by default. Turn it off
 in the video card settings to run all RISC instructions in the interpreter.
-Pixel-engine parameter steps run inline in those blocks, and draws call the
-pixel engine from them and end the block. Repeated parameter draws in common
-render states run as native spans, compiled per state and cached. FIFO and device operations use the
-interpreter, which also runs the RISC on other hosts or when executable memory
-is unavailable.
+Pixel-engine parameter steps run inline in those blocks. Parameter draws in
+common render states run as native spans, compiled per state and cached; each
+draw in a block remembers its last span and calls it directly while the state
+matches, and the block continues unless the draw wrote into its own code.
+Other draws call the C pixel engine and end the block. FIFO and device
+operations use the interpreter, which also runs the RISC on other hosts or
+when executable memory is unavailable.
