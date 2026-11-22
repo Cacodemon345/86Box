@@ -177,7 +177,8 @@ struct verite_core {
     unsigned      dram_wait;
     unsigned      polls;
 #ifdef VERITE_JIT_X64
-    struct verite_jit *jit;
+    struct verite_jit       *jit;
+    struct verite_pixel_jit *pixel_jit;
     bool               jit_disabled;
     bool               jit_unavailable;
 #endif
@@ -263,10 +264,36 @@ void     risc_special_dst(verite_core *core, uint8_t reg, uint32_t value);
 bool     risc_step(verite_core *core, bool forced, uint32_t ir, verite_memory mem, verite_bus bus);
 uint32_t risc_constant(unsigned reg);
 
+/* Bytes per line for a 7-bit stride code. */
+static inline uint32_t
+verite_line_stride(uint32_t code)
+{
+    static const uint32_t high[] = { 0, 16, 32, 64, 128, 1024, 2048, 4096 };
+    static const uint32_t low[]  = { 0, 256, 512, 1024, 4, 768, 576, 1152 };
+    return high[(code >> 4) & 7] + low[code & 7];
+}
+
 #ifdef VERITE_JIT_X64
 unsigned risc_jit_run(verite_core *core, verite_memory mem, unsigned budget);
 void     risc_jit_free(verite_core *core);
+bool     pixel_jit_span(verite_core *core, unsigned count, const uint32_t values[], const uint32_t deltas[],
+                        int cnt, uint32_t x_step, verite_memory mem);
+void     pixel_jit_free(verite_core *core);
 #else
+static inline bool
+pixel_jit_span(verite_core *core, unsigned count, const uint32_t values[], const uint32_t deltas[],
+               int cnt, uint32_t x_step, verite_memory mem)
+{
+    (void) core;
+    (void) count;
+    (void) values;
+    (void) deltas;
+    (void) cnt;
+    (void) x_step;
+    (void) mem;
+    return false;
+}
+
 static inline unsigned
 risc_jit_run(verite_core *core, verite_memory mem, unsigned budget)
 {

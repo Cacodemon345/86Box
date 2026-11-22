@@ -10,6 +10,7 @@
 /* Include the interpreter and pixel engine for their private arithmetic tests. */
 #include "../../src/video/verite/risc.c"
 #include "../../src/video/verite/pixel.c"
+#include "../../src/video/verite/pixel_jit_x64.c"
 
 #define HALT               0x6d000000U
 #define INS(op, d, s2, s1) (((uint32_t) (op) << 24) | ((uint32_t) (d) << 16) | ((uint32_t) (s2) << 8) | (uint8_t) (s1))
@@ -536,6 +537,214 @@ dither_before_quantizing(void)
     assert((encode(4, c, 0, false) >> 11) == 0);
 }
 
+/* The hoisted copy and fill span matches pixel_parallel() pixel for pixel. */
+static void
+parallel_copy_matches(void)
+{
+    static const uint32_t fmts[] = { 1, 2, 4, 6, 12 };
+    uint32_t seed = 0x51ed270b;
+#define RND() (seed = seed * 1664525U + 1013904223U)
+    for (unsigned round = 0; round < 2000; round++) {
+        fixture a = machine(NULL, 0, 0), b = machine(NULL, 0, 0);
+        for (unsigned i = 0; i < (1u << 20) / 4; i++) {
+            uint32_t w = RND();
+            mem_write32(a.mem, 4 * i, w);
+            mem_write32(b.mem, 4 * i, w);
+        }
+        pixel_engine pe = a.core->pe;
+        pe.dst_fmt   = fmts[RND() % COUNT(fmts)];
+        uint32_t textured = RND() % 3, own_fmt = RND() & 1, fmt = fmts[RND() % COUNT(fmts)];
+        pe.src_mode       = (textured ? 0x10 : 0) | (own_fmt ? fmt : 0) | (RND() & SRC_NO_PAD);
+        pe.dst_mode  = 12;
+        pe.dst_base  = RND() & 0x3ffff;
+        pe.src_base  = RND() & 0x3ffff;
+        pe.stride    = RND() & 0x777777;
+        pe.u_mask    = RND() & 0x7ff;
+        pe.v_mask    = RND() & 0x7ff;
+        pe.scissor_x = (RND() % 64) << 16;
+        pe.scissor_x |= RND() % 300;
+        pe.scissor_y = (RND() % 64) << 16;
+        pe.scissor_y |= RND() % 300;
+        pe.x_shadow  = (int32_t) (RND() % 280) << 16;
+        pe.x_dir     = RND() & 1;
+        pe.y         = (int32_t) (RND() % 280) << 16;
+        pe.u         = (int32_t) RND();
+        pe.v         = (int32_t) RND();
+        pe.fg        = RND();
+        pe.pick_hit  = false;
+        a.core->pe = b.core->pe = pe;
+        unsigned n    = RND() % 40;
+        uint32_t step = pe.x_dir ? 0U - 0x10000 : 0x10000;
+        assert(pixel_parallel_copy(a.core, n, step, a.mem));
+        for (unsigned i = 0; i < n; i++) {
+            pixel_engine *q = &b.core->pe;
+            pixel_parallel(b.core, q->x_shadow >> 16, q->y >> 16, q->u >> 16, q->v >> 16, b.mem);
+            q->x_shadow = (int32_t) ((uint32_t) q->x_shadow + step);
+            q->u        = (int32_t) ((uint32_t) q->u + step);
+        }
+        assert(!memcmp(a.mem.data, b.mem.data, a.mem.mask + 1));
+        assert(a.core->pe.x_shadow == b.core->pe.x_shadow && a.core->pe.u == b.core->pe.u);
+        assert(a.core->pe.pick_hit == b.core->pe.pick_hit && a.core->drew == b.core->drew);
+        done(&a);
+        done(&b);
+    }
+#undef RND
+    fixture f = machine(NULL, 0, 0);
+    f.core->pe.pat_mode = 0x10000;
+    assert(!pixel_parallel_copy(f.core, 1, 0x10000, f.mem));
+    f.core->pe.pat_mode = 0;
+    f.core->pe.dst_mode = 6;
+    assert(!pixel_parallel_copy(f.core, 1, 0x10000, f.mem));
+    done(&f);
+}
+
+static uint32_t span_seed = 0x2545f491;
+
+static uint32_t
+span_rand(void)
+{
+    span_seed ^= span_seed << 13;
+    span_seed ^= span_seed >> 17;
+    span_seed ^= span_seed << 5;
+    return span_seed;
+}
+
+/* A plausible value for a parameter and its per-pixel delta. */
+static void
+span_param(pixel_param param, uint32_t *value, uint32_t *delta)
+{
+    uint32_t r = span_rand();
+    switch (param) {
+        case P_X:
+        case P_Y:
+            *value = ((r % 320) << 16) | (span_rand() & 0xffff);
+            *delta = (uint32_t) ((int32_t) (span_rand() % 0x30000) - 0x18000);
+            break;
+        case P_Q:
+            *value = r % 7 == 0 ? span_rand() % 64 : span_rand() % (3U << 24);
+            *delta = (uint32_t) ((int32_t) (span_rand() % 0x20000) - 0x10000);
+            break;
+        case P_U:
+        case P_V:
+            *value = r % 3 ? span_rand() % (512U << 16) : span_rand();
+            *delta = (uint32_t) ((int32_t) (span_rand() % 0x40000) - 0x20000);
+            break;
+        case P_Z:
+            *value = r % 5 ? span_rand() & 0x07ffffff : span_rand();
+            *delta = (uint32_t) ((int32_t) (span_rand() % 0x100000) - 0x80000);
+            break;
+        default:
+            *value = (uint32_t) ((int32_t) (r % (320U << 16)) - (32 << 16));
+            *delta = (uint32_t) ((int32_t) (span_rand() % 0x40000) - 0x20000);
+            break;
+    }
+}
+
+/* Native parameter spans match the C path over random render states. */
+static void
+param_span_matches(void)
+{
+    static const uint8_t ops[]  = { 0xf1, 0xf3, 0xf9, 0xfb, 0xfd };
+    static const uint8_t fmts[] = { 0, 4, 4, 6, 6, 12 };
+    uint8_t *image = malloc(1 << 20);
+    assert(image);
+    for (unsigned i = 0; i < (1u << 20); i++)
+        image[i] = (uint8_t) span_rand();
+    unsigned native = 0, rounds = 6000;
+    fixture  a = machine(NULL, 0, 0), b = machine(NULL, 0, 0);
+    b.core->jit_disabled = true;
+    for (unsigned round = 0; round < rounds; round++) {
+        memcpy(a.mem.data, image, 1 << 20);
+        memcpy(b.mem.data, image, 1 << 20);
+        pixel_engine pe;
+        pixel_reset(&pe);
+        uint8_t  op    = ops[span_rand() % COUNT(ops)];
+        uint32_t texel = mem_read16(a.mem, span_rand() & 0xffffe);
+        pe.drawctl  = span_rand() & 0xffff;
+        pe.src_mode = (span_rand() & 0x1ff80) | ((span_rand() % 5) << 4) | fmts[span_rand() % COUNT(fmts)];
+        pe.dst_mode = 12 | (span_rand() & 0x03f7f0f0);
+        if (span_rand() % 4)
+            pe.dst_mode &= ~(1U << 19 | 1U << 18 | 1U << 21 | 1U << 24);
+        pe.dst_fmt  = span_rand() % 8 ? (span_rand() & 1 ? 4 : 6) : 12;
+        pe.pmask    = span_rand() % 16 ? UINT32_MAX : 0x00ff00ff;
+        pe.pat_mode = span_rand() % 16 ? 0 : 0x10000;
+        pe.src_base = span_rand() & 0xfffff;
+        pe.dst_base = span_rand() & 0xfffff;
+        pe.z_base   = span_rand() & 0xfffff;
+        pe.stride   = span_rand() & 0x777777;
+        pe.src_mask = span_rand() & 0x07ff07ff;
+        pe.scissor_x = (span_rand() % 64) << 16;
+        pe.scissor_x |= span_rand() % 400;
+        pe.scissor_y = (span_rand() % 64) << 16;
+        pe.scissor_y |= span_rand() % 400;
+        pe.dither_offset = span_rand();
+        pe.fg            = span_rand();
+        pe.chroma_color  = span_rand() & 1 ? texel * 0x10001 : span_rand();
+        /* Sparse masks make keyed texels common. */
+        static const uint32_t key_masks[] = { UINT32_MAX, 0, 0x00010001, 0x00200020, 0x80008000 };
+        pe.chroma_mask = span_rand() % 6 ? key_masks[span_rand() % COUNT(key_masks)] : span_rand();
+        pe.alpha_thres   = span_rand();
+        pe.x_dir         = span_rand() & 1;
+        pe.x_shadow      = (int32_t) ((span_rand() % 320) << 16);
+        pe.x             = (int32_t) ((span_rand() % 320) << 16);
+        pe.y             = (int32_t) ((span_rand() % 320) << 16);
+        pe.z             = (int32_t) span_rand();
+        pe.z_ovf         = span_rand() & 1;
+        pe.q             = span_rand() % 4 ? span_rand() % (2U << 24) : 0;
+        pe.u             = (int32_t) span_rand();
+        pe.v             = (int32_t) span_rand();
+        pe.u_mask        = pe.src_mask & 0x7ff;
+        pe.v_mask        = (pe.src_mask >> 16) & 0x7ff;
+        pe.cnt           = 1 + span_rand() % 24;
+
+        unsigned i2 = (pe.drawctl >> 4) & 31;
+        if (i2 > 7 && i2 - 8 >= COUNT(pair2))
+            continue;
+        first_pair  p1 = pair1[pe.drawctl & 15];
+        param_pair  p2 = i2 <= 7 ? pair3[i2] : pair2[i2 - 8];
+        param_pair  p3 = pair3[(pe.drawctl >> 9) & 15], p4 = pair3[(pe.drawctl >> 13) & 7];
+        pixel_param params[] = { p1.pair.even, p1.pair.odd, p2.even, p2.odd, p3.even, p3.odd, p4.even, p4.odd, P_G, P_B };
+        for (unsigned k = 0; k < 10; k++)
+            span_param(params[k], &a.core->reg[160 + k], &a.core->reg[176 + k]);
+        memcpy(b.core->reg, a.core->reg, sizeof(a.core->reg));
+        a.core->pe   = b.core->pe = pe;
+        a.core->drew = b.core->drew = false;
+
+        span_key key = { .src_mode = pe.src_mode & 0x1ffff, .dst_mode = pe.dst_mode & 0x03ff7fff, .dst_fmt = pe.dst_fmt & 15 };
+        native += !pe.pat_mode && (pe.pmask & 0xffff) == 0xffff && key_supported(&key);
+
+        pixel_draw_param(a.core, op, 192, 160, 176, a.mem);
+        pixel_draw_param(b.core, op, 192, 160, 176, b.mem);
+        if (memcmp(a.mem.data, b.mem.data, 1 << 20)) {
+            for (unsigned i = 0; i < (1u << 20); i++)
+                if (a.mem.data[i] != b.mem.data[i]) {
+                    fprintf(stderr, "round %u op %02x ctl %04x src %05x dst %08x fmt %u: byte %05x %02x != %02x\n",
+                            round, op, pe.drawctl, pe.src_mode, pe.dst_mode, pe.dst_fmt, i, a.mem.data[i], b.mem.data[i]);
+                    break;
+                }
+            abort();
+        }
+        const pixel_engine *x = &a.core->pe, *y = &b.core->pe;
+        if (!(x->x_shadow == y->x_shadow && x->x == y->x && x->y == y->y && x->z == y->z && x->z_ovf == y->z_ovf
+              && x->u == y->u && x->v == y->v && x->q == y->q && x->u_mask == y->u_mask && x->v_mask == y->v_mask
+              && x->r == y->r && x->g == y->g && x->b == y->b && x->a == y->a && x->f == y->f && x->fg == y->fg
+              && x->cnt == y->cnt && x->pat_offset == y->pat_offset && x->pick_hit == y->pick_hit
+              && a.core->drew == b.core->drew && !memcmp(a.core->reg, b.core->reg, sizeof(a.core->reg)))) {
+            fprintf(stderr, "round %u op %02x ctl %04x src %05x dst %08x fmt %u: engine state differs\n",
+                    round, op, pe.drawctl, pe.src_mode, pe.dst_mode, pe.dst_fmt);
+            abort();
+        }
+    }
+    if (a.core->jit_unavailable)
+        native = 0;
+    else
+        assert(native > rounds / 4);
+    done(&a);
+    done(&b);
+    free(image);
+    printf("Vérité native parameter spans matched C in %u supported rounds\n", native);
+}
+
 static void
 copy_unpadded_565(void)
 {
@@ -929,6 +1138,8 @@ main(void)
     pixel_formats();
     dither_before_quantizing();
     copy_unpadded_565();
+    parallel_copy_matches();
+    param_span_matches();
     bilinear_unpadded_565();
     bilinear_matches_nearest_taps();
     puts("Vérité regression cases passed");

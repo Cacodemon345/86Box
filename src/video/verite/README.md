@@ -23,6 +23,7 @@ instruction bytes before entering a block so microcode changes take effect.
 The card's **Dynamic recompiler** option is enabled by default. Turn it off
 in the video card settings to run all RISC instructions in the interpreter.
 Pixel-engine parameter steps run inline in those blocks, and draws call the
-pixel engine from them and end the block. FIFO and device operations use the
+pixel engine from them and end the block. Repeated parameter draws in common
+render states run as native spans, compiled per state and cached. FIFO and device operations use the
 interpreter, which also runs the RISC on other hosts or when executable memory
 is unavailable.

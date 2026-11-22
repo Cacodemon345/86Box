@@ -873,6 +873,7 @@ alloc_code(void)
 void
 risc_jit_free(verite_core *c)
 {
+    pixel_jit_free(c);
     if (c->jit) {
 #    ifdef _WIN32
         VirtualFree(c->jit->arena, 0, MEM_RELEASE);

@@ -137,9 +137,7 @@ fmt_bytes(unsigned fmt)
 static uint32_t
 line_stride(uint32_t code)
 {
-    static const uint32_t high[] = { 0, 16, 32, 64, 128, 1024, 2048, 4096 };
-    static const uint32_t low[]  = { 0, 256, 512, 1024, 4, 768, 576, 1152 };
-    return high[(code >> 4) & 7] + low[code & 7];
+    return verite_line_stride(code);
 }
 
 static uint32_t
@@ -858,6 +856,52 @@ pixel_parallel(verite_core *c, int32_t x, int32_t y, int32_t sx, int32_t sy, ver
     pe->pick_hit = c->drew = true;
 }
 
+/* Copies and fills with no pattern, chroma key, raster op or plane mask: the
+   same pixels as pixel_parallel(), with the per-span state hoisted. */
+static bool
+pixel_parallel_copy(verite_core *c, unsigned n, uint32_t step, verite_memory mem)
+{
+    pixel_engine *pe     = &c->pe;
+    unsigned      bytes  = dst_bytes(pe);
+    uint32_t      mask   = pixel_mask(bytes);
+    bool          filled = !((pe->src_mode >> 4) & 7);
+    if ((pe->pat_mode & 0x10000) || (pe->dst_mode & 15) != 12 || (pe->pmask & mask) != mask
+        || (!filled && (pe->src_mode & SRC_CHROMA)))
+        return false;
+
+    int32_t y = pe->y >> 16;
+    bool    row_inside = y >= (int32_t) ((pe->scissor_y >> 16) & 0xfff) && y < (int32_t) (pe->scissor_y & 0xfff) && y < 2048;
+    int32_t x_min = (int32_t) ((pe->scissor_x >> 16) & 0xfff);
+    int32_t x_end = (int32_t) (pe->scissor_x & 0xfff);
+    if (x_end > 2048)
+        x_end = 2048;
+    uint32_t line = pe->dst_base + line_stride(pe->stride >> 8) * (uint32_t) y;
+    unsigned n_src = fmt_bytes(src_fmt(pe));
+    if (!n_src)
+        n_src = 1;
+    uint32_t row = pe->src_base + line_stride(pe->stride) * ((uint32_t) (pe->v >> 16) & pe->v_mask);
+    uint32_t x_shadow = (uint32_t) pe->x_shadow, u = (uint32_t) pe->u;
+    bool     drew = false;
+    for (unsigned i = 0; i < n; i++, x_shadow += step, u += step) {
+        int32_t x = (int32_t) x_shadow >> 16;
+        if (!row_inside || x < x_min || x >= x_end)
+            continue;
+        uint32_t addr = line + (uint32_t) x * bytes;
+        uint32_t source;
+        if (filled)
+            source = pe->fg >> (8 * (4 - bytes - (addr & 3 & ~(bytes - 1))));
+        else
+            source = read_pixel(mem, row + (((int32_t) u >> 16) & pe->u_mask) * n_src, n_src);
+        write_pixel(mem, addr, bytes, source & mask);
+        drew = true;
+    }
+    pe->x_shadow = (int32_t) x_shadow;
+    pe->u        = (int32_t) u;
+    if (drew)
+        pe->pick_hit = c->drew = true;
+    return true;
+}
+
 /* drawp stops at a word boundary. rdrawp continues until Cnt is exhausted. */
 void
 pixel_draw_parallel(verite_core *c, uint8_t op, uint8_t d, uint8_t s2, uint8_t s1, verite_memory mem)
@@ -884,10 +928,12 @@ pixel_draw_parallel(verite_core *c, uint8_t op, uint8_t d, uint8_t s2, uint8_t s
         if (left < n)
             n = left;
     }
-    for (unsigned i = 0; i < n; i++) {
-        pixel_parallel(c, pe->x_shadow >> 16, pe->y >> 16, pe->u >> 16, pe->v >> 16, mem);
-        pe->x_shadow = (int32_t) ((uint32_t) pe->x_shadow + step);
-        pe->u        = (int32_t) ((uint32_t) pe->u + step);
+    if (!pixel_parallel_copy(c, n, step, mem)) {
+        for (unsigned i = 0; i < n; i++) {
+            pixel_parallel(c, pe->x_shadow >> 16, pe->y >> 16, pe->u >> 16, pe->v >> 16, mem);
+            pe->x_shadow = (int32_t) ((uint32_t) pe->x_shadow + step);
+            pe->u        = (int32_t) ((uint32_t) pe->u + step);
+        }
     }
     pe->cnt = resetting ? cnt : cnt - n;
     if (resetting)
@@ -1173,6 +1219,11 @@ pixel_draw_param(verite_core *c, uint8_t op, uint8_t d, uint8_t s2, uint8_t s1, 
     span.read_dst = !span.read_disabled && (span.blend || rop_reads(span.rop_code) || span.pmask != span.mask);
 
     uint32_t step     = pe->x_dir ? 0U - 0x10000 : 0x10000;
+    /* Repeated draws can run as a native span compiled for this render state. */
+    if ((op & 1) && pixel_jit_span(c, count, values, deltas, cnt, step, mem)) {
+        pe->cnt = 0;
+        return;
+    }
     if (op == 0xf3 && params[0] == P_Q && params[1] == P_U && params[2] == P_Z && params[3] == P_V) {
         pixel_draw_perspective_span(c, &span, values, deltas, cnt, step, mem);
         return;
