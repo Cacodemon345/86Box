@@ -654,12 +654,15 @@ span_state(fixture *a, fixture *b, uint8_t op, bool *native)
     pe.drawctl  = span_rand() & 0xffff;
     pe.src_mode = (span_rand() & 0x1ff80) | ((span_rand() % 5) << 4) | fmts[span_rand() % COUNT(fmts)];
     pe.dst_mode = 12 | (span_rand() & 0x03fffff0);
-    /* A quarter blend, half use no output stage, and the rest are arbitrary. */
-    uint32_t stages = span_rand() % 4;
+    /* A fifth blend, two fifths use no output stage, a fifth fog (some also
+       blending), and the rest are arbitrary. */
+    uint32_t stages = span_rand() % 5;
     if (stages == 0)
         pe.dst_mode = (pe.dst_mode & ~(1U << 18 | 1U << 21 | 1U << 24)) | 1U << 19;
     else if (stages < 3)
         pe.dst_mode &= ~(1U << 19 | 1U << 18 | 1U << 21 | 1U << 24);
+    else if (stages == 3)
+        pe.dst_mode = (pe.dst_mode & ~(1U << 18 | 1U << 19 | 1U << 24)) | 1U << 21 | (span_rand() & 1U << 19);
     pe.dst_fmt  = span_rand() % 8 ? (span_rand() & 1 ? 4 : 6) : 12;
     pe.pmask    = span_rand() % 16 ? UINT32_MAX : 0x00ff00ff;
     pe.pat_mode = span_rand() % 16 ? 0 : 0x10000;
@@ -685,6 +688,7 @@ span_state(fixture *a, fixture *b, uint8_t op, bool *native)
     pe.fg            = span_rand();
     pe.dst_color     = span_rand();
     pe.fog_color     = span_rand();
+    pe.f             = (int32_t) span_rand();
     pe.chroma_color  = span_rand() & 1 ? texel * 0x10001 : span_rand();
     /* Sparse masks make keyed texels common. */
     static const uint32_t key_masks[] = { UINT32_MAX, 0, 0x00010001, 0x00200020, 0x80008000 };

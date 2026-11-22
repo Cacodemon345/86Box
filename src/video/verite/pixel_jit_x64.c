@@ -746,6 +746,38 @@ emit_quantize(as *a, unsigned n, bool dither)
     shift_ri(a, 5, RCX, 8 - n, false);
 }
 
+/* c = f * (c - fog) / 255 + fog for red, green and blue, with f = sat(F)
+   and C's truncating division. Clobbers EAX, ECX, EDX, R8D, R10D, R11D. */
+static void
+emit_fog(as *a)
+{
+    LD(RAX, PE, PEF(f));
+    emit_sat(a);
+    MOV(R10, RAX);
+    LD(R11, PE, PEF(fog_color));
+    for (unsigned ch = 0; ch < 3; ch++) {
+        static const unsigned sh[] = { 16, 8, 0 };
+        int32_t c = CTXF(c[0]) + 4 * (int32_t) ch;
+        MOV(R8, R11);
+        shift_ri(a, 5, R8, sh[ch], false);
+        alu_ri(a, 4, R8, 255);
+        LD(RAX, CTX, c);
+        rr(a, 0x29, R8, RAX, false);     /* sub eax, r8d */
+        rr(a, 0x0faf, RAX, R10, false);  /* imul eax, r10d */
+        /* |product| <= 255 * 255, where (n * 0x8081) >> 23 == n / 255. */
+        b8(a, 0x99);                     /* cdq */
+        rr(a, 0x31, RDX, RAX, false);    /* xor eax, edx */
+        rr(a, 0x29, RDX, RAX, false);    /* sub eax, edx */
+        rr(a, 0x69, RAX, RAX, false);    /* imul eax, eax, 0x8081 */
+        d32(a, 0x8081);
+        shift_ri(a, 5, RAX, 23, false);
+        rr(a, 0x31, RDX, RAX, false);
+        rr(a, 0x29, RDX, RAX, false);
+        rr(a, 0x01, R8, RAX, false);     /* add eax, r8d */
+        ST(RAX, CTX, c);
+    }
+}
+
 static bool
 key_supported(const span_key *k)
 {
@@ -753,7 +785,7 @@ key_supported(const span_key *k)
     unsigned fmt  = k->src_mode & 15 ? k->src_mode & 15 : k->dst_fmt;
     if ((k->dst_fmt != 4 && k->dst_fmt != 6) || (k->dst_mode & 15) != 12)
         return false;
-    if (k->dst_mode & (DST_RAW_YUV | DST_RAW_FOG | DST_RAW_BGR))
+    if (k->dst_mode & (DST_RAW_YUV | DST_RAW_BGR))
         return false;
     if (func > 3)
         return false;
@@ -830,7 +862,7 @@ compile(as *a, const span_key *k)
        the dither term never reaches, and a keyed texel encodes as 0. Copy the
        texel itself, as pixel_copy_565() does. */
     bool raw_copy = func == 1 && fmt == 4 && k->dst_fmt == 4 && (k->src_mode & SRC_NO_PAD)
-        && !(k->src_mode & (SRC_FILTER | SRC_BGR)) && !(k->dst_mode & DST_RAW_BLEND);
+        && !(k->src_mode & (SRC_FILTER | SRC_BGR)) && !(k->dst_mode & (DST_RAW_BLEND | DST_RAW_FOG));
 
     /* Spans call nothing, so the frame needs no particular alignment. */
     static const unsigned saved[] = { RBX, RBP, RSI, RDI, R12, R13, R14, R15 };
@@ -1043,6 +1075,9 @@ compile(as *a, const span_key *k)
         rr(a, 0x39, RCX, RAX, false);
         skips[nskip++] = jcc(a, CC_LE);
     }
+
+    if (k->dst_mode & DST_RAW_FOG)
+        emit_fog(a);
 
     if (k->dst_mode & DST_RAW_BLEND)
         emit_blend(a, k);
