@@ -91,6 +91,9 @@ typedef struct {
     uint32_t      frame_flags;
     uint32_t      pll_shift;
     double        pixel_clock_hz;
+    uint32_t     *word_colors; /* 16-bit scanout word to output colour */
+    uint32_t      word_colors_key;
+    int           word_colors_valid;
 } verite_t;
 
 static const uint16_t dac_ports[] = { 0x3c8, 0x3c9, 0x3c6, 0x3c7 };
@@ -103,11 +106,56 @@ verite_reg(const verite_t *v, uint8_t reg)
     return v->regs[reg] | ((uint32_t) v->regs[reg + 1] << 8) | ((uint32_t) v->regs[reg + 2] << 16) | ((uint32_t) v->regs[reg + 3] << 24);
 }
 
+/* Builds the map from a 16-bit scanout word to the RAMDAC's output colour.
+   Palette and format changes mark it stale. */
+static const uint32_t *
+verite_word_colors(verite_t *v, uint32_t ctl)
+{
+    svga_t  *svga       = &v->vga.svga;
+    int      rgb565     = bt48x_rgb565(v->ramdac);
+    int      contiguous = bt48x_clut_contiguous(v->ramdac);
+    int      bgr        = !!(ctl & CRTC_CTL_BGR);
+    uint32_t key        = v->native_bpp | (rgb565 << 8) | (contiguous << 9) | (svga->lut_map << 10) | (bgr << 11)
+                   | (svga->ramdac_type << 12);
+
+    if (v->word_colors_valid && v->word_colors_key == key)
+        return v->word_colors;
+
+    /* The CRTC's 1555 format holds 5:5:5 colour with bit 15 unused, whatever
+       layout the RAMDAC is in. The 16-bit format passes words through in the
+       RAMDAC's RGB layout. */
+    int             src565 = v->native_bpp == 16 && rgb565;
+    const uint32_t *colors = src565 ? video_16to32 : video_15to32;
+    /* The Bt485 routes the 5/6-bit components to either end of the palette
+       address, filling the unused bits with zero. 1555 pixels reach a 5:6:5
+       RAMDAC with their 5-bit green in the low bits of its 6-bit field;
+       Scorched Planet's identity palette puts the green ramp there. */
+    unsigned green_shift      = src565 ? 2 : 3;
+    unsigned rb_address_shift = contiguous ? 0 : 3;
+    unsigned g_address_shift  = contiguous ? 0 : (rgb565 ? 2 : 3);
+
+    for (uint32_t c = 0; c < 65536; c++) {
+        uint32_t p = colors[c];
+        if (bgr)
+            p = makecol32(getcolb(p), getcolg(p), getcolr(p));
+        if (svga->lut_map) {
+            unsigned r = (getcolr(p) >> 3) << rb_address_shift;
+            unsigned g = (getcolg(p) >> green_shift) << g_address_shift;
+            unsigned b = (getcolb(p) >> 3) << rb_address_shift;
+            p          = svga_lookup_lut_ram(svga, makecol32(r, g, b));
+        }
+        v->word_colors[c] = p;
+    }
+    v->word_colors_key   = key;
+    v->word_colors_valid = 1;
+    return v->word_colors;
+}
+
 static void
 verite_render(svga_t *svga)
 {
-    const verite_t *v = svga->priv;
-    int             y = svga->displine + svga->y_add;
+    verite_t *v = svga->priv;
+    int       y = svga->displine + svga->y_add;
     if (y < 0 || y >= 2048 || !svga->monitor->target_buffer)
         return;
 
@@ -124,62 +172,31 @@ verite_render(svga_t *svga)
         svga->firstline_draw = svga->displine;
     svga->lastline_draw = svga->displine;
 
-    /* The CRTC fetches 16-bit words. The RAMDAC selects their RGB layout. */
-    int rgb565 = bt48x_rgb565(v->ramdac);
-    const uint32_t *colors = rgb565 ? video_16to32 : video_15to32;
-    if ((v->native_bpp == 15 || v->native_bpp == 16) && !(addr & 3)
-        && !(width & 1) && 2U * width <= VRAM_SIZE - addr) {
-        /* VRAM stores the two 16-bit pixels in each dword in reverse order. */
-        for (int x = 0; x < width; x += 2) {
-            const uint8_t *pair = ram + addr + 2 * x;
-            pixel[x]     = colors[pair[2] | (pair[3] << 8)];
-            pixel[x + 1] = colors[pair[0] | (pair[1] << 8)];
+    if (v->native_bpp == 15 || v->native_bpp == 16) {
+        const uint32_t *colors = verite_word_colors(v, ctl);
+        if (!(addr & 3) && !(width & 1) && 2U * width <= VRAM_SIZE - addr) {
+            /* VRAM stores the two 16-bit pixels in each dword in reverse order. */
+            for (int x = 0; x < width; x += 2) {
+                const uint8_t *pair = ram + addr + 2 * x;
+                pixel[x]     = colors[pair[2] | (pair[3] << 8)];
+                pixel[x + 1] = colors[pair[0] | (pair[1] << 8)];
+            }
+        } else {
+            for (int x = 0; x < width; x++, addr += 2) {
+                uint32_t a = addr & (VRAM_SIZE - 1);
+                pixel[x]   = colors[ram[a ^ 2] | (ram[((a + 1) & (VRAM_SIZE - 1)) ^ 2] << 8)];
+            }
         }
+    } else if (v->native_bpp == 8) {
+        for (int x = 0; x < width; x++, addr++)
+            pixel[x] = svga->map8[ram[(addr & (VRAM_SIZE - 1)) ^ 3] & svga->dac_mask];
     } else {
-        for (int x = 0; x < width; x++) {
+        for (int x = 0; x < width; x++, addr += 4) {
             uint32_t a = addr & (VRAM_SIZE - 1);
-            switch (v->native_bpp) {
-                case 8:
-                    pixel[x] = svga->map8[ram[a ^ 3] & svga->dac_mask];
-                    addr++;
-                    break;
-                case 15:
-                case 16:
-                    {
-                        uint16_t color = ram[a ^ 2] | ((uint16_t) ram[((a + 1) & (VRAM_SIZE - 1)) ^ 2] << 8);
-                        pixel[x]       = colors[color];
-                        addr += 2;
-                        break;
-                    }
-                default:
-                    pixel[x] = ((uint32_t) ram[(a + 2) & (VRAM_SIZE - 1)] << 16) | ((uint32_t) ram[(a + 1) & (VRAM_SIZE - 1)] << 8) | ram[a];
-                    addr += 4;
-                    break;
-            }
-        }
-    }
-
-    if (v->native_bpp > 8) {
-        if (ctl & CRTC_CTL_BGR) {
-            for (int x = 0; x < width; x++)
-                pixel[x] = makecol32(getcolb(pixel[x]), getcolg(pixel[x]), getcolr(pixel[x]));
-        }
-        if (svga->lut_map && v->native_bpp < 32) {
-            /* The Bt485 routes the 5/6-bit components to either end of
-               the palette address, filling the unused bits with zero. */
-            unsigned green_shift = rgb565 ? 2 : 3;
-            int contiguous = bt48x_clut_contiguous(v->ramdac);
-            unsigned rb_address_shift = contiguous ? 0 : 3;
-            unsigned g_address_shift  = contiguous ? 0 : green_shift;
-            for (int x = 0; x < width; x++) {
-                unsigned r = (getcolr(pixel[x]) >> 3) << rb_address_shift;
-                unsigned g = (getcolg(pixel[x]) >> green_shift) << g_address_shift;
-                unsigned b = (getcolb(pixel[x]) >> 3) << rb_address_shift;
-                pixel[x] = svga_lookup_lut_ram(svga, makecol32(r, g, b));
-            }
-        } else if (svga->lut_map) {
-            for (int x = 0; x < width; x++)
-                pixel[x] = svga_lookup_lut_ram(svga, pixel[x]);
+            uint32_t p = ((uint32_t) ram[(a + 2) & (VRAM_SIZE - 1)] << 16) | ((uint32_t) ram[(a + 1) & (VRAM_SIZE - 1)] << 8) | ram[a];
+            if (ctl & CRTC_CTL_BGR)
+                p = makecol32(getcolb(p), getcolg(p), getcolr(p));
+            pixel[x] = svga->lut_map ? svga_lookup_lut_ram(svga, p) : p;
         }
     }
 
@@ -423,6 +440,8 @@ verite_dac_write(verite_t *v, uint16_t port, int rs2, int rs3, uint8_t value)
     uint8_t gdc_mode = svga->gdcreg[5];
     int     dac_type = svga->ramdac_type;
     int     command0 = port == 0x3c6 && rs2 && !rs3;
+
+    v->word_colors_valid = 0;
 
     if (command0)
         v->dac_command0 = value;
@@ -871,8 +890,10 @@ verite_init(const device_t *info)
     verite_t *v = calloc(1, sizeof(*v));
     if (!v)
         return NULL;
-    v->core = verite_core_new();
+    v->word_colors = malloc(65536 * sizeof(*v->word_colors));
+    v->core        = v->word_colors ? verite_core_new() : NULL;
     if (!v->core) {
+        free(v->word_colors);
         free(v);
         return NULL;
     }
@@ -881,6 +902,7 @@ verite_init(const device_t *info)
 #endif
     if (rom_init(&v->bios, VERITE_ROM, 0xc0000, ROM_SIZE, ROM_SIZE - 1, 0, MEM_MAPPING_EXTERNAL)) {
         verite_core_free(v->core);
+        free(v->word_colors);
         free(v);
         return NULL;
     }
@@ -927,6 +949,7 @@ verite_close(void *priv)
     i2c_gpio_close(v->ddc_bus);
     verite_core_free(v->core);
     free(v->bios.rom);
+    free(v->word_colors);
     free(v);
 }
 
