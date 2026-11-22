@@ -47,6 +47,7 @@ typedef struct {
     uint32_t          row0, row1, x0, x1;
     uint32_t          lo, hi;
     uint32_t          prev_u, prev_v; /* the last pixel's texel coordinates */
+    int32_t           scissor[4];     /* x lo, x hi, y lo, y hi */
 } span_ctx;
 
 /* unsigned fn(verite_core *core, verite_draw_site *site): draws with the
@@ -109,6 +110,36 @@ init_tables(void)
         for (unsigned v = 0; v <= max; v++)
             widen_table[t][v] = (v * 255 + max / 2) / max;
     }
+}
+
+/* Every 16-bit texel of a 565 (fmt 4) or 1555 (fmt 6) texture, padded or not,
+   decoded as texel() does and packed for the bilinear filter: entry 2n is
+   R | B << 32 and entry 2n + 1 is G | A << 32. Built on first use. */
+static uint64_t *packed_tables[2][2];
+
+static const uint64_t *
+packed_table(unsigned fmt, bool no_pad)
+{
+    uint64_t **table = &packed_tables[fmt == 6][no_pad];
+    if (*table)
+        return *table;
+    uint64_t *t = malloc(65536 * 2 * sizeof(uint64_t));
+    if (!t)
+        abort();
+    static const unsigned shift565[] = { 11, 5, 0 }, bits565[] = { 5, 6, 5 }, shift1555[] = { 10, 5, 0 };
+    for (unsigned texel = 0; texel < 65536; texel++) {
+        uint64_t ch[4];
+        for (unsigned k = 0; k < 3; k++) {
+            unsigned shift = fmt == 4 ? shift565[k] : shift1555[k];
+            unsigned bits  = fmt == 4 ? bits565[k] : 5;
+            unsigned v     = (texel >> shift) & ((1U << bits) - 1);
+            ch[k]          = no_pad ? v << (8 - bits) : widen_table[bits - 4][v];
+        }
+        ch[3]            = fmt == 4 || (texel & 0x8000) ? 255 : 0;
+        t[2 * texel]     = ch[0] | ch[2] << 32;
+        t[2 * texel + 1] = ch[1] | ch[3] << 32;
+    }
+    return *table = t;
 }
 
 /* ---- Assembler ------------------------------------------------------------ */
@@ -336,12 +367,8 @@ emit_set(as *a, pixel_param param, uint32_t src_mode)
         case P_V:
             {
                 bool u = (param == P_U) != !!(src_mode & SRC_SWAP_UV);
+                /* emit_uv_mask() sets the mask once, before the loop. */
                 ST(RAX, PE, u ? PEF(u) : PEF(v));
-                LD(RCX, PE, PEF(src_mask));
-                if (!u)
-                    shift_ri(a, 5, RCX, 16, false);
-                alu_ri(a, 4, RCX, 0x7ff);
-                ST(RCX, PE, u ? PEF(u_mask) : PEF(v_mask));
                 break;
             }
         case P_R:
@@ -365,6 +392,19 @@ emit_set(as *a, pixel_param param, uint32_t src_mode)
         default:
             break;
     }
+}
+
+/* The mask pixel_set() takes from SrcMask with U or V. SrcMask is fixed for
+   the span, so this runs once before its first pixel. Clobbers ECX. */
+static void
+emit_uv_mask(as *a, pixel_param param, uint32_t src_mode)
+{
+    bool u = (param == P_U) != !!(src_mode & SRC_SWAP_UV);
+    LD(RCX, PE, PEF(src_mask));
+    if (!u)
+        shift_ri(a, 5, RCX, 16, false);
+    alu_ri(a, 4, RCX, 0x7ff);
+    ST(RCX, PE, u ? PEF(u_mask) : PEF(v_mask));
 }
 
 /* EAX = texture_coord(EAX, mask from the engine). Clobbers ECX. */
@@ -397,11 +437,12 @@ emit_widen(as *a, unsigned shift, unsigned bits, bool no_pad)
     }
 }
 
-/* texel() for a 16-bit format at row (ctx field) + x (ctx field), into out[4]. */
+/* R8 = R | B << 32 and R9 = G | A << 32 for the 16-bit texel at row (ctx
+   field) + x (ctx field) or, keyed, black or YUV black (128, 16, 128, 0).
+   RDX holds packed_table(). Clobbers RAX, RCX. */
 static void
-emit_texel(as *a, unsigned fmt, uint32_t src_mode, int32_t row, int32_t x, int32_t out)
+emit_texel_packed(as *a, uint32_t src_mode, int32_t row, int32_t x)
 {
-    bool no_pad = !!(src_mode & SRC_NO_PAD);
     LD(RAX, CTX, x);
     rr(a, 0x01, RAX, RAX, false); /* add eax, eax */
     rm(a, 0x03, RAX, CTX, NO_INDEX, row, false, false);
@@ -413,37 +454,19 @@ emit_texel(as *a, unsigned fmt, uint32_t src_mode, int32_t row, int32_t x, int32
         rm(a, 0x33, RCX, PE, NO_INDEX, PEF(chroma_color), false, false);
         rm(a, 0x23, RCX, PE, NO_INDEX, PEF(chroma_mask), false, false);
         decode = jcc(a, CC_NE);
-        bool yuv = !!(src_mode & SRC_CHROMA_BLACK_YUV);
-        static const uint32_t black[] = { 0, 0, 0, 0 }, yuv_black[] = { 128, 16, 128, 0 };
-        for (unsigned k = 0; k < 4; k++) {
-            rm(a, 0xc7, 0, CTX, NO_INDEX, out + 4 * (int32_t) k, false, false);
-            d32(a, yuv ? yuv_black[k] : black[k]);
+        if (src_mode & SRC_CHROMA_BLACK_YUV) {
+            mov_ri64(a, R8, UINT64_C(128) | UINT64_C(128) << 32);
+            mov_ri(a, R9, 16);
+        } else {
+            rr(a, 0x31, R8, R8, false);
+            rr(a, 0x31, R9, R9, false);
         }
         done = jmp(a);
         land(decode, a->p);
     }
-    if (fmt == 4) {
-        emit_widen(a, 11, 5, no_pad);
-        ST(RCX, CTX, out);
-        emit_widen(a, 5, 6, no_pad);
-        ST(RCX, CTX, out + 4);
-        emit_widen(a, 0, 5, no_pad);
-        ST(RCX, CTX, out + 8);
-        rm(a, 0xc7, 0, CTX, NO_INDEX, out + 12, false, false);
-        d32(a, 255);
-    } else {
-        emit_widen(a, 10, 5, no_pad);
-        ST(RCX, CTX, out);
-        emit_widen(a, 5, 5, no_pad);
-        ST(RCX, CTX, out + 4);
-        emit_widen(a, 0, 5, no_pad);
-        ST(RCX, CTX, out + 8);
-        shift_ri(a, 5, RAX, 15, false);
-        alu_ri(a, 4, RAX, 1);
-        rr(a, 0xf7, 3, RAX, false); /* neg eax */
-        alu_ri(a, 4, RAX, 255);
-        ST(RAX, CTX, out + 12);
-    }
+    shift_ri(a, 4, RAX, 4, false);             /* 16-byte entries */
+    rm(a, 0x8b, R8, RDX, RAX, 0, true, false); /* mov r8, [rdx + rax] */
+    rm(a, 0x8b, R9, RDX, RAX, 8, true, false); /* mov r9, [rdx + rax + 8] */
     if (done)
         land(done, a->p);
 }
@@ -493,8 +516,15 @@ emit_sample(as *a, unsigned fmt, uint32_t src_mode)
     rm(a, 0x0faf, RAX, CTX, NO_INDEX, CTXF(tex_stride), false, false);
     rm(a, 0x03, RAX, PE, NO_INDEX, PEF(src_base), false, false);
     ST(RAX, CTX, CTXF(row0));
+    mov_ri64(a, RDX, (uint64_t) (uintptr_t) packed_table(fmt, !!(src_mode & SRC_NO_PAD)));
     if (!filter) {
-        emit_texel(a, fmt, src_mode, CTXF(row0), CTXF(x0), CTXF(t));
+        emit_texel_packed(a, src_mode, CTXF(row0), CTXF(x0));
+        ST(R8, CTX, CTXF(t[0]));
+        ST(R9, CTX, CTXF(t[1]));
+        shift_ri(a, 5, R8, 32, true);
+        shift_ri(a, 5, R9, 32, true);
+        ST(R8, CTX, CTXF(t[2]));
+        ST(R9, CTX, CTXF(t[3]));
         return;
     }
 
@@ -538,56 +568,32 @@ emit_sample(as *a, unsigned fmt, uint32_t src_mode)
     static const int32_t rows[] = { CTXF(row0), CTXF(row0), CTXF(row1), CTXF(row1) };
     static const int32_t xs[]   = { CTXF(x0), CTXF(x1), CTXF(x0), CTXF(x1) };
 
-    if (fmt == 4 && !(src_mode & SRC_CHROMA)) {
-        /* sample_bilinear_565() */
-        bool no_pad = !!(src_mode & SRC_NO_PAD);
-        for (unsigned k = 0; k < 3; k++)
-            rm(a, 0xc7, 0, CTX, NO_INDEX, CTXF(sum[0]) + 4 * (int32_t) k, false, false), d32(a, 0);
-        static const unsigned shifts[] = { 11, 5, 0 }, bits[] = { 5, 6, 5 };
-        for (unsigned tap = 0; tap < 4; tap++) {
-            LD(RAX, CTX, xs[tap]);
-            rr(a, 0x01, RAX, RAX, false);
-            rm(a, 0x03, RAX, CTX, NO_INDEX, rows[tap], false, false);
-            emit_load16(a, RAX, RAX);
-            for (unsigned k = 0; k < 3; k++) {
-                if (no_pad) {
-                    MOV(RCX, RAX);
-                    shift_ri(a, 5, RCX, shifts[k], false);
-                    alu_ri(a, 4, RCX, (1U << bits[k]) - 1);
-                } else
-                    emit_widen(a, shifts[k], bits[k], false);
-                rm(a, 0x0faf, RCX, CTX, NO_INDEX, CTXF(w[0]) + 4 * (int32_t) tap, false, false);
-                rm(a, 0x01, RCX, CTX, NO_INDEX, CTXF(sum[0]) + 4 * (int32_t) k, false, false);
-            }
-        }
-        static const uint32_t round_np[] = { 4096, 8192, 4096 }, shift_np[] = { 13, 14, 13 };
-        for (unsigned k = 0; k < 3; k++) {
-            LD(RAX, CTX, CTXF(sum[0]) + 4 * (int32_t) k);
-            alu_ri(a, 0, RAX, no_pad ? round_np[k] : 32768);
-            shift_ri(a, 7, RAX, no_pad ? shift_np[k] : 16, false);
-            ST(RAX, CTX, CTXF(t[0]) + 4 * (int32_t) k);
-        }
-        rm(a, 0xc7, 0, CTX, NO_INDEX, CTXF(t[3]), false, false);
-        d32(a, 255);
-        return;
-    }
-
-    /* Generic four-tap filter over decoded (and keyed) texels. */
-    for (unsigned k = 0; k < 4; k++)
-        rm(a, 0xc7, 0, CTX, NO_INDEX, CTXF(sum[0]) + 4 * (int32_t) k, false, false), d32(a, 0);
+    /* Four taps from the packed decode table, summed two channels to a
+       register: R10 = R | B << 32, R11 = G | A << 32. The weights total 65536,
+       so no lane passes 2^24 and lanes never carry into each other. For an
+       unpadded 565 texel this also matches sample_bilinear_565()'s rounding:
+       (8 sum + 32768) >> 16 == (sum + 4096) >> 13, and likewise for green. */
+    mov_ri64(a, RDX, (uint64_t) (uintptr_t) packed_table(fmt, !!(src_mode & SRC_NO_PAD)));
+    rr(a, 0x31, R10, R10, false);
+    rr(a, 0x31, R11, R11, false);
     for (unsigned tap = 0; tap < 4; tap++) {
-        emit_texel(a, fmt, src_mode, rows[tap], xs[tap], CTXF(tap));
-        for (unsigned k = 0; k < 4; k++) {
-            LD(RAX, CTX, CTXF(tap[0]) + 4 * (int32_t) k);
-            rm(a, 0x0faf, RAX, CTX, NO_INDEX, CTXF(w[0]) + 4 * (int32_t) tap, false, false);
-            rm(a, 0x01, RAX, CTX, NO_INDEX, CTXF(sum[0]) + 4 * (int32_t) k, false, false);
-        }
+        emit_texel_packed(a, src_mode, rows[tap], xs[tap]);
+        LD(RCX, CTX, CTXF(w[0]) + 4 * (int32_t) tap);
+        rr(a, 0x0faf, R8, RCX, true);  /* imul r8, rcx */
+        rr(a, 0x0faf, R9, RCX, true);  /* imul r9, rcx */
+        rr(a, 0x01, R8, R10, true);    /* add r10, r8 */
+        rr(a, 0x01, R9, R11, true);    /* add r11, r9 */
     }
+    mov_ri64(a, RAX, UINT64_C(0x0000800000008000));
+    rr(a, 0x01, RAX, R10, true);
+    rr(a, 0x01, RAX, R11, true);
     for (unsigned k = 0; k < 4; k++) {
-        LD(RAX, CTX, CTXF(sum[0]) + 4 * (int32_t) k);
-        alu_ri(a, 0, RAX, 32768);
-        shift_ri(a, 7, RAX, 16, false);
-        ST(RAX, CTX, CTXF(t[0]) + 4 * (int32_t) k);
+        static const int32_t out[] = { CTXF(t[0]), CTXF(t[2]), CTXF(t[1]), CTXF(t[3]) };
+        rr(a, 0x89, k < 2 ? R10 : R11, RAX, true); /* mov rax, sum */
+        shift_ri(a, 5, RAX, k & 1 ? 48 : 16, true);
+        if (!(k & 1))
+            alu_ri(a, 4, RAX, 255);
+        ST(RAX, CTX, out[k]);
     }
 }
 
@@ -1019,6 +1025,24 @@ compile(as *a, const span_key *k)
         d32(a, 0);
     }
 
+    /* Loop-invariant state: U and V masks, and the scissor bounds
+       [lo, min(hi, 2048)) for each axis. */
+    for (unsigned i = 0; i < count; i++)
+        if (params[i] == P_U || params[i] == P_V)
+            emit_uv_mask(a, params[i], k->src_mode);
+    for (unsigned axis = 0; axis < 2; axis++) {
+        LD(RAX, PE, axis ? PEF(scissor_y) : PEF(scissor_x));
+        MOV(RCX, RAX);
+        shift_ri(a, 5, RCX, 16, false);
+        alu_ri(a, 4, RCX, 0xfff);
+        ST(RCX, CTX, CTXF(scissor[0]) + 8 * (int32_t) axis);
+        alu_ri(a, 4, RAX, 0xfff);
+        mov_ri(a, RCX, 2048);
+        rr(a, 0x39, RCX, RAX, false);   /* cmp eax, ecx */
+        rr(a, 0x0f4f, RAX, RCX, false); /* cmovg eax, ecx */
+        ST(RAX, CTX, CTXF(scissor[1]) + 8 * (int32_t) axis);
+    }
+
     uint8_t *loop = a->p;
     for (unsigned i = 0; i < count; i++) {
         if (params[i] == P_NONE || params[i] == P_Q)
@@ -1036,16 +1060,9 @@ compile(as *a, const span_key *k)
     shift_ri(a, 7, RDI, 16, false);
     for (unsigned axis = 0; axis < 2; axis++) {
         unsigned r = axis ? RDI : RSI;
-        LD(RAX, PE, axis ? PEF(scissor_y) : PEF(scissor_x));
-        MOV(RCX, RAX);
-        shift_ri(a, 5, RCX, 16, false);
-        alu_ri(a, 4, RCX, 0xfff);
-        rr(a, 0x39, RCX, r, false); /* cmp r, ecx */
+        rm(a, 0x3b, r, CTX, NO_INDEX, CTXF(scissor[0]) + 8 * (int32_t) axis, false, false); /* cmp r, lo */
         skips[nskip++] = jcc(a, CC_L);
-        alu_ri(a, 4, RAX, 0xfff);
-        rr(a, 0x39, RAX, r, false);
-        skips[nskip++] = jcc(a, CC_GE);
-        alu_ri(a, 7, r, 2048);
+        rm(a, 0x3b, r, CTX, NO_INDEX, CTXF(scissor[1]) + 8 * (int32_t) axis, false, false); /* cmp r, hi */
         skips[nskip++] = jcc(a, CC_GE);
     }
     if (k->src_mode & SRC_Z_SCISSOR) {
@@ -1122,10 +1139,10 @@ compile(as *a, const span_key *k)
             land(opaque, a->p);
     }
 
-    /* c = argb(fg) */
+    /* c = argb(fg), unless a replaced texel overwrites all of it. */
     if (!raw_copy) {
     LD(RAX, PE, PEF(fg));
-    for (unsigned ch = 0; ch < 4; ch++) {
+    for (unsigned ch = 0; ch < 4 && func != 1; ch++) {
         static const unsigned sh[] = { 16, 8, 0, 24 };
         MOV(RCX, RAX);
         shift_ri(a, 5, RCX, sh[ch], false);
