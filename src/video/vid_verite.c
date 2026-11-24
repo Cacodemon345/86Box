@@ -102,7 +102,7 @@ typedef struct {
     atomic_int   owner, cpu_want, stop, sleeping;
     atomic_int   irq, drew, dma_parked;
     atomic_uint  head, tail;
-    atomic_ullong now_ns;
+    atomic_ullong now_ns, dma_end_ns;
     atomic_uint  refresh;
     /* The board request. */
     atomic_int   req;
@@ -763,6 +763,7 @@ verite_publish(verite_t *v)
     atomic_thread_fence(memory_order_release);
     memcpy(w->mirror, regs, sizeof(regs));
     w->mirror_head = atomic_load_explicit(&w->head, memory_order_relaxed);
+    atomic_store_explicit(&w->dma_end_ns, verite_core_dma_end_ns(v->core), memory_order_relaxed);
     atomic_store_explicit(&w->dma_parked, verite_core_dma_parked(v->core), memory_order_relaxed);
     atomic_store_explicit(&w->mirror_seq, seq + 2, memory_order_release);
 }
@@ -942,7 +943,26 @@ verite_sync(verite_t *v)
     verite_take(v);
     atomic_store(&v->w->now_ns, v->time_ns);
     verite_drain(v, &board, 0);
+    verite_core_finish_dma(v->core, v->time_ns, &board, v);
     verite_settle(v);
+}
+
+/* Ends a DMA the worker ran to the end of its list once the guest's time
+   reaches the point the RISC got there, unless the guest has extended the
+   list meanwhile. Ending it at the next tick instead would leave it busy
+   for a guest that in step would find it done; such a guest may then append
+   to it, and the end would be reread halfway through the guest's patch. */
+static void
+verite_finish_parked(verite_t *v)
+{
+    verite_worker *w = v->w;
+    if (!atomic_load_explicit(&w->dma_parked, memory_order_acquire)
+        || !verite_core_dma_end_due(atomic_load_explicit(&w->dma_end_ns, memory_order_relaxed), v->time_ns))
+        return;
+    verite_take(v);
+    verite_core_finish_dma(v->core, v->time_ns, &board, v);
+    verite_settle(v);
+    verite_give(v);
 }
 
 static void
@@ -1017,14 +1037,7 @@ verite_timer(void *priv)
         if (!atomic_load_explicit(&w->wait_input, memory_order_relaxed))
             verite_wake(w);
         verite_serve(v);
-        /* A DMA the worker ran to the end of its list ends here, in step with
-           the guest, unless the guest has extended the list meanwhile. */
-        if (atomic_load_explicit(&w->dma_parked, memory_order_relaxed)) {
-            verite_take(v);
-            verite_core_finish_dma(v->core, &board, v);
-            verite_settle(v);
-            verite_give(v);
-        }
+        verite_finish_parked(v);
         verite_settle_async(v);
     } else
         verite_run(v);
@@ -1067,6 +1080,7 @@ verite_port_read(uint16_t port, uint8_t len, verite_t *v)
            FIFO space and idle status counting the queue in front of the
            RISC; the host's own registers come from the core directly. */
         if (reg >= 0x40 && reg + len <= 0x60) {
+            verite_finish_parked(v);
             verite_settle_async(v);
             return verite_mirror_read(w, reg, len);
         }

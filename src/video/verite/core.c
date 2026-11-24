@@ -269,6 +269,15 @@ verite_core_read(verite_core *c, uint8_t reg, uint8_t len, const uint8_t *vram, 
     return value;
 }
 
+/* The RISC's own time, which runs ahead of the last advance while it has
+   spent more cycles than it was owed. */
+static uint64_t
+risc_now_ns(const verite_core *c)
+{
+    int64_t ahead = c->run_used - c->credit;
+    return c->last_ns + ahead * (1000 / RISC_MHZ);
+}
+
 static void
 dma_command(verite_core *c, verite_bus bus)
 {
@@ -279,6 +288,7 @@ dma_command(verite_core *c, verite_bus bus)
         if (!addr) {
             if (c->defer_dma_end) {
                 dma->parked = true;
+                dma->end_ns = risc_now_ns(c);
                 return;
             }
             break;
@@ -332,6 +342,7 @@ run(verite_core *c, verite_memory mem, verite_bus bus, int64_t budget)
     int64_t used = 0;
     c->polls     = 0;
     while (used < budget && c->polls < POLLS) {
+        c->run_used = used;
         if (c->dma.busy)
             dma_pump(c, bus);
         if (!runnable(c))
@@ -345,6 +356,7 @@ run(verite_core *c, verite_memory mem, verite_bus bus, int64_t budget)
             break;
         used += 1 + c->dram_wait;
     }
+    c->run_used = 0;
     return used;
 }
 
@@ -473,10 +485,24 @@ verite_core_dma_parked(const verite_core *c)
     return c->dma.busy && c->dma.parked;
 }
 
-void
-verite_core_finish_dma(verite_core *c, const verite_board *ops, void *opaque)
+uint64_t
+verite_core_dma_end_ns(const verite_core *c)
 {
-    if (!verite_core_dma_parked(c))
+    return c->dma.end_ns;
+}
+
+int
+verite_core_dma_end_due(uint64_t end_ns, uint64_t now_ns)
+{
+    /* In step, the RISC runs up to AHEAD cycles past the guest's time
+       whenever the guest reads a register. */
+    return end_ns <= now_ns + AHEAD * (1000 / RISC_MHZ);
+}
+
+void
+verite_core_finish_dma(verite_core *c, uint64_t now_ns, const verite_board *ops, void *opaque)
+{
+    if (!verite_core_dma_parked(c) || !verite_core_dma_end_due(c->dma.end_ns, now_ns))
         return;
     bool defer       = c->defer_dma_end;
     c->defer_dma_end = false;

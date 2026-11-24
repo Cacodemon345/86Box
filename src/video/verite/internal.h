@@ -171,6 +171,8 @@ typedef struct {
     bool     busy;
     /* At the end of its list but still busy, until verite_core_finish_dma. */
     bool     parked;
+    /* When the RISC reached the end of the list, in its own time. */
+    uint64_t end_ns;
     uint32_t ptr, addr, left;
     uint8_t  swap;
 } verite_dma;
@@ -190,6 +192,8 @@ struct verite_core {
     uint16_t      intr;
     verite_dma    dma;
     bool          defer_dma_end;
+    /* Cycles the current run has used so far; zero outside a run. */
+    int64_t       run_used;
     uint8_t       rom[ROM_SIZE];
     uint64_t      last_ns;
     int64_t       credit;
