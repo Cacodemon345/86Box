@@ -121,6 +121,7 @@ typedef struct {
     /* Host registers 40h-5Fh as of the last time the core changed hands. */
     atomic_uint  mirror_seq;
     uint8_t      mirror[32];
+    unsigned     mirror_head; /* the queue head the mirror reflects */
     verite_entry queue[QUEUE_SIZE];
 } verite_worker;
 
@@ -761,20 +762,38 @@ verite_publish(verite_t *v)
     atomic_store_explicit(&w->mirror_seq, seq + 1, memory_order_relaxed);
     atomic_thread_fence(memory_order_release);
     memcpy(w->mirror, regs, sizeof(regs));
+    w->mirror_head = atomic_load_explicit(&w->head, memory_order_relaxed);
     atomic_store_explicit(&w->dma_parked, verite_core_dma_parked(v->core), memory_order_relaxed);
     atomic_store_explicit(&w->mirror_seq, seq + 2, memory_order_release);
 }
 
+/* Reads the published status registers. Data-FIFO writes still queued in
+   front of the worker are in the FIFO as far as the guest can tell, so with
+   any queued the FIFO is not empty and the RISC is not waiting for input. A
+   guest that waits for an empty FIFO before reusing VRAM the RISC reads
+   from, as Speedy3D does without DMA, would otherwise race the worker. */
 static uint32_t
 verite_mirror_read(verite_worker *w, uint8_t reg, uint8_t len)
 {
     uint8_t  regs[32];
-    unsigned seq;
+    unsigned seq, head;
     do {
         seq = atomic_load_explicit(&w->mirror_seq, memory_order_acquire);
         memcpy(regs, w->mirror, sizeof(regs));
+        head = w->mirror_head;
         atomic_thread_fence(memory_order_acquire);
     } while ((seq & 1) || seq != atomic_load_explicit(&w->mirror_seq, memory_order_relaxed));
+    unsigned queued = atomic_load_explicit(&w->tail, memory_order_acquire) - head;
+    if (queued) {
+        /* The queue takes writes while it has room, though never all 32. */
+        regs[0] = QUEUE_SIZE - queued >= SYNC_FREE ? 30 : 0;
+        uint8_t *status = &regs[0x4a - 0x40];
+        if (*status & 0x10) {
+            *status &= ~0x10;
+            if (!(*status & 0x23))
+                *status &= ~0x80;
+        }
+    }
     uint32_t value = 0;
     for (unsigned i = 0; i < len; i++)
         value |= (uint32_t) regs[reg - 0x40 + i] << (8 * i);
@@ -1044,14 +1063,9 @@ verite_port_read(uint16_t port, uint8_t len, verite_t *v)
     if (v->w) {
         verite_worker *w = v->w;
         verite_serve(v);
-        /* FIFO space comes from the queue in front of the RISC. */
-        if (reg == 0x40 && len == 1
-            && QUEUE_SIZE - (atomic_load(&w->tail) - atomic_load(&w->head)) >= SYNC_FREE) {
-            verite_settle_async(v);
-            return 31;
-        }
-        /* Status registers come from the last state the worker published;
-           the host's own registers from the core directly. */
+        /* Status registers come from the last state the worker published,
+           FIFO space and idle status counting the queue in front of the
+           RISC; the host's own registers come from the core directly. */
         if (reg >= 0x40 && reg + len <= 0x60) {
             verite_settle_async(v);
             return verite_mirror_read(w, reg, len);
