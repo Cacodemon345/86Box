@@ -15,6 +15,8 @@ typedef struct verite_board {
     uint32_t (*read)(void *opaque, uint8_t reg, uint8_t len);
     void (*write)(void *opaque, uint8_t reg, uint32_t value, uint8_t len);
     uint32_t (*dma_read)(void *opaque, uint32_t address);
+    /* Optional: reads count consecutive dwords for a DMA transfer. */
+    void (*dma_read_block)(void *opaque, uint32_t address, uint32_t *words, unsigned count);
 } verite_board;
 
 verite_core *verite_core_new(void);
@@ -29,6 +31,15 @@ void         verite_core_write(verite_core *core, uint8_t reg, uint32_t value, u
                                uint8_t *vram, size_t size, const verite_board *board, void *opaque);
 void         verite_core_run(verite_core *core, uint64_t now_ns, uint8_t *vram, size_t size,
                              const verite_board *board, void *opaque);
+/* Runs the RISC with the time up to now_ns, letting it get ahead cycles past
+   now_ns but running at most cap cycles in this call. Returns the cycles run. */
+int64_t      verite_core_advance(verite_core *core, uint64_t now_ns, int64_t ahead, int64_t cap,
+                                 uint8_t *vram, size_t size, const verite_board *board, void *opaque);
+/* The RISC can't run until the host writes to it. */
+int          verite_core_waiting(const verite_core *core);
+/* The last run stopped after the RISC polled the board for too long. */
+int          verite_core_polling(const verite_core *core);
+int          verite_core_input_full(const verite_core *core);
 void         verite_core_retrace(verite_core *core);
 void         verite_core_set_precharge(verite_core *core, int slow);
 void         verite_core_refresh(verite_core *core, unsigned cycles);

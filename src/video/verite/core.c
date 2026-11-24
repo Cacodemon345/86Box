@@ -298,9 +298,20 @@ dma_pump(verite_core *c, verite_bus bus)
 {
     verite_dma *dma = &c->dma;
     while (dma->busy && c->in_count < IN_FIFO) {
-        push_input(c, swap_word(bus.ops->dma_read(bus.opaque, dma->addr), dma->swap));
-        dma->addr += 4;
-        dma->left -= 4;
+        unsigned count = IN_FIFO - c->in_count;
+        if (count > dma->left / 4)
+            count = dma->left / 4;
+        if (count > 1 && bus.ops->dma_read_block) {
+            uint32_t words[IN_FIFO];
+            bus.ops->dma_read_block(bus.opaque, dma->addr, words, count);
+            for (unsigned i = 0; i < count; i++)
+                push_input(c, swap_word(words[i], dma->swap));
+        } else {
+            count = 1;
+            push_input(c, swap_word(bus.ops->dma_read(bus.opaque, dma->addr), dma->swap));
+        }
+        dma->addr += 4 * count;
+        dma->left -= 4 * count;
         if (!dma->left) {
             dma->ptr += 8;
             dma_command(c, bus);
@@ -407,19 +418,50 @@ verite_core_write(verite_core *c, uint8_t reg, uint32_t value, uint8_t len,
         c->dma.busy = false;
 }
 
-void
-verite_core_run(verite_core *c, uint64_t now_ns, uint8_t *vram, size_t size,
-                const verite_board *ops, void *opaque)
+int64_t
+verite_core_advance(verite_core *c, uint64_t now_ns, int64_t ahead, int64_t cap, uint8_t *vram, size_t size,
+                    const verite_board *ops, void *opaque)
 {
     uint64_t elapsed = now_ns > c->last_ns ? now_ns - c->last_ns : 0;
+    int64_t  used    = 0;
     c->last_ns += elapsed;
     c->credit += (int64_t) (elapsed / (1000 / RISC_MHZ));
     if (c->credit > MOST_OWED)
         c->credit = MOST_OWED;
-    if (c->credit + AHEAD > 0)
-        c->credit -= run(c, (verite_memory) { vram, size - 1 }, (verite_bus) { ops, opaque }, c->credit + AHEAD);
+    c->polls = 0;
+    int64_t budget = c->credit + ahead < cap ? c->credit + ahead : cap;
+    if (budget > 0) {
+        used = run(c, (verite_memory) { vram, size - 1 }, (verite_bus) { ops, opaque }, budget);
+        c->credit -= used;
+    }
     if ((!runnable(c) || c->polls >= POLLS) && c->credit > 0) {
         c->timer += (uint32_t) c->credit;
         c->credit = 0;
     }
+    return used;
+}
+
+void
+verite_core_run(verite_core *c, uint64_t now_ns, uint8_t *vram, size_t size,
+                const verite_board *ops, void *opaque)
+{
+    verite_core_advance(c, now_ns, AHEAD, INT64_MAX, vram, size, ops, opaque);
+}
+
+int
+verite_core_waiting(const verite_core *c)
+{
+    return !runnable(c) && !c->dma.busy;
+}
+
+int
+verite_core_polling(const verite_core *c)
+{
+    return c->polls >= POLLS;
+}
+
+int
+verite_core_input_full(const verite_core *c)
+{
+    return c->in_count == IN_FIFO;
 }

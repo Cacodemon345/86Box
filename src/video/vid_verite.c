@@ -3,6 +3,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#    include <immintrin.h>
+#    define verite_pause() _mm_pause()
+#else
+#    define verite_pause() ((void) 0)
+#endif
 
 #include <86box/86box.h>
 #include <86box/device.h>
@@ -12,6 +19,7 @@
 #include <86box/mem.h>
 #include <86box/pci.h>
 #include <86box/rom.h>
+#include <86box/thread.h>
 #include <86box/timer.h>
 #include <86box/video.h>
 #include <86box/vid_ddc.h>
@@ -66,6 +74,56 @@ enum {
     PLL_DEVICE  = 0xc0
 };
 
+/* Threaded RISC. The core belongs to whichever thread holds owner. The CPU
+   thread queues data-FIFO writes and retrace events for the worker, answers
+   status reads from the registers the worker last published, and takes the
+   core itself for other reads and register writes. The worker posts its board
+   writes to the CPU thread and asks it for board state the CPU thread owns. */
+#define QUEUE_SIZE  8192
+#define POSTED_SIZE 1024
+#define RUN_AHEAD   25000 /* RISC cycles the worker may run past guest time */
+#define SYNC_AHEAD  2000  /* the same for a catch-up to a queued entry */
+#define SLICE       4000  /* RISC cycles the worker runs per hold of the core */
+#define SYNC_FREE   64    /* queue space left before FIFO space reads sync */
+
+enum { OWN_NONE, OWN_WORKER, OWN_CPU };
+enum { REQ_IDLE, REQ_READ, REQ_FLUSH, REQ_DMA, REQ_DONE };
+enum { Q_WRITE, Q_RETRACE };
+
+typedef struct {
+    uint64_t t;
+    uint32_t value;
+    uint8_t  kind, reg, len;
+} verite_entry;
+
+typedef struct {
+    thread_t    *thread;
+    event_t     *wake, *done;
+    atomic_int   owner, cpu_want, stop, sleeping;
+    atomic_int   irq, drew;
+    atomic_uint  head, tail;
+    atomic_ullong now_ns;
+    atomic_uint  refresh;
+    /* The board request. */
+    atomic_int   req;
+    uint8_t      req_reg, req_len;
+    uint32_t     req_value, req_count;
+    uint32_t    *req_words;
+    /* The worker's own. */
+    uint64_t     slept_ns;
+    atomic_int   wait_input;
+    /* Board writes from the RISC, applied in order on the CPU thread. */
+    struct {
+        uint32_t value;
+        uint8_t  reg, len;
+    } posted[POSTED_SIZE];
+    atomic_uint  posted_head, posted_tail;
+    /* Host registers 40h-5Fh as of the last time the core changed hands. */
+    atomic_uint  mirror_seq;
+    uint8_t      mirror[32];
+    verite_entry queue[QUEUE_SIZE];
+} verite_worker;
+
 typedef struct {
     vga_t         vga;
     rom_t         bios;
@@ -94,6 +152,7 @@ typedef struct {
     uint32_t     *word_colors; /* 16-bit scanout word to output colour */
     uint32_t      word_colors_key;
     int           word_colors_valid;
+    verite_worker *w;
 } verite_t;
 
 static const uint16_t dac_ports[] = { 0x3c8, 0x3c9, 0x3c6, 0x3c7 };
@@ -508,7 +567,23 @@ verite_dma_read(void *priv, uint32_t address)
     return data[0] | ((uint32_t) data[1] << 8) | ((uint32_t) data[2] << 16) | ((uint32_t) data[3] << 24);
 }
 
-static const verite_board board = { verite_ext_read, verite_ext_write, verite_dma_read };
+static void
+verite_dma_read_block(void *priv, uint32_t address, uint32_t *words, unsigned count)
+{
+    const verite_t *v = priv;
+    uint8_t         data[4 * 32];
+    if (!(v->command & 4) || count > 32) {
+        for (unsigned i = 0; i < count; i++)
+            words[i] = (v->command & 4) ? verite_dma_read(priv, address + 4 * i) : UINT32_MAX;
+        return;
+    }
+    dma_bm_read(address, data, 4 * count, 4);
+    for (unsigned i = 0; i < count; i++)
+        words[i] = data[4 * i] | ((uint32_t) data[4 * i + 1] << 8) | ((uint32_t) data[4 * i + 2] << 16)
+                   | ((uint32_t) data[4 * i + 3] << 24);
+}
+
+static const verite_board board = { verite_ext_read, verite_ext_write, verite_dma_read, verite_dma_read_block };
 
 static void
 verite_update_bank(verite_t *v)
@@ -555,6 +630,342 @@ verite_run(verite_t *v)
     verite_settle(v);
 }
 
+/* The worker thread's view of the board. CRTC and DRAM register reads only
+   look at state, so the worker reads them directly once its posted writes
+   have landed; a torn read of the beam position costs one poll. RAMDAC and
+   PLL reads, and DMA outside plain RAM, run on the CPU thread while the
+   worker waits. */
+static uint32_t
+verite_request(verite_t *v, int kind)
+{
+    verite_worker *w = v->w;
+    atomic_store_explicit(&w->req, kind, memory_order_release);
+    for (unsigned spin = 0; atomic_load_explicit(&w->req, memory_order_acquire) != REQ_DONE; spin++) {
+        if (atomic_load_explicit(&w->stop, memory_order_relaxed))
+            return 0;
+        if (spin < 256)
+            verite_pause();
+        else {
+            thread_reset_event(w->done);
+            if (atomic_load_explicit(&w->req, memory_order_acquire) != REQ_DONE)
+                thread_wait_event(w->done, 1);
+        }
+    }
+    uint32_t value = w->req_value;
+    atomic_store_explicit(&w->req, REQ_IDLE, memory_order_relaxed);
+    return value;
+}
+
+static uint32_t
+worker_board_read(void *priv, uint8_t reg, uint8_t len)
+{
+    verite_t *v = priv;
+    if (atomic_load_explicit(&v->w->posted_head, memory_order_relaxed)
+        != atomic_load_explicit(&v->w->posted_tail, memory_order_relaxed))
+        verite_request(v, REQ_FLUSH);
+    if (reg + len <= RAMDAC)
+        return verite_ext_read(v, reg, len);
+    v->w->req_reg = reg;
+    v->w->req_len = len;
+    return verite_request(v, REQ_READ);
+}
+
+static void
+worker_board_write(void *priv, uint8_t reg, uint32_t value, uint8_t len)
+{
+    verite_t      *v    = priv;
+    verite_worker *w    = v->w;
+    unsigned       tail = atomic_load_explicit(&w->posted_tail, memory_order_relaxed);
+    if (tail - atomic_load_explicit(&w->posted_head, memory_order_acquire) >= POSTED_SIZE)
+        verite_request(v, REQ_FLUSH);
+    w->posted[tail % POSTED_SIZE].reg   = reg;
+    w->posted[tail % POSTED_SIZE].len   = len;
+    w->posted[tail % POSTED_SIZE].value = value;
+    atomic_store_explicit(&w->posted_tail, tail + 1, memory_order_release);
+}
+
+static void
+worker_dma_read_block(void *priv, uint32_t address, uint32_t *words, unsigned count)
+{
+    verite_t *v     = priv;
+    /* Plain RAM above the first megabyte needs no mapping lookup. This
+       assumes nothing remaps it, as SMRAM or a memory hole could. */
+    size_t top = mem_ram_size();
+    if (top > (1U << 30))
+        top = 1U << 30;
+    if ((v->command & 4) && address >= 0x100000 && (size_t) address + 4 * count <= top) {
+        memcpy(words, ram + address, 4 * count);
+        return;
+    }
+    v->w->req_value = address;
+    v->w->req_words = words;
+    v->w->req_count = count;
+    verite_request(v, REQ_DMA);
+}
+
+static uint32_t
+worker_dma_read(void *priv, uint32_t address)
+{
+    uint32_t word;
+    worker_dma_read_block(priv, address, &word, 1);
+    return word;
+}
+
+static const verite_board worker_board = { worker_board_read, worker_board_write, worker_dma_read,
+                                           worker_dma_read_block };
+
+/* Applies the worker's posted board writes and answers its request, on the
+   CPU thread. */
+static void
+verite_serve(verite_t *v)
+{
+    verite_worker *w    = v->w;
+    unsigned       head = atomic_load_explicit(&w->posted_head, memory_order_relaxed);
+    unsigned       tail = atomic_load_explicit(&w->posted_tail, memory_order_acquire);
+    for (; head != tail; head++)
+        verite_ext_write(v, w->posted[head % POSTED_SIZE].reg, w->posted[head % POSTED_SIZE].value,
+                         w->posted[head % POSTED_SIZE].len);
+    atomic_store_explicit(&w->posted_head, head, memory_order_release);
+
+    int kind = atomic_load_explicit(&w->req, memory_order_acquire);
+    switch (kind) {
+        case REQ_READ:
+            w->req_value = verite_ext_read(v, w->req_reg, w->req_len);
+            break;
+        case REQ_FLUSH:
+            break;
+        case REQ_DMA:
+            if (w->req_count == 1)
+                w->req_words[0] = verite_dma_read(v, w->req_value);
+            else
+                verite_dma_read_block(v, w->req_value, w->req_words, w->req_count);
+            break;
+        default:
+            return;
+    }
+    atomic_store_explicit(&w->req, REQ_DONE, memory_order_release);
+    thread_set_event(w->done);
+}
+
+/* Copies the status registers for the CPU thread. Called by the core's owner. */
+static void
+verite_publish(verite_t *v)
+{
+    verite_worker *w = v->w;
+    uint8_t        regs[32];
+    for (unsigned r = 0; r < 32; r += 4) {
+        uint32_t value = verite_core_read(v->core, 0x40 + r, 4, v->vga.svga.vram, VRAM_SIZE);
+        memcpy(regs + r, &value, 4);
+    }
+    unsigned seq = atomic_load_explicit(&w->mirror_seq, memory_order_relaxed);
+    atomic_store_explicit(&w->mirror_seq, seq + 1, memory_order_relaxed);
+    atomic_thread_fence(memory_order_release);
+    memcpy(w->mirror, regs, sizeof(regs));
+    atomic_store_explicit(&w->mirror_seq, seq + 2, memory_order_release);
+}
+
+static uint32_t
+verite_mirror_read(verite_worker *w, uint8_t reg, uint8_t len)
+{
+    uint8_t  regs[32];
+    unsigned seq;
+    do {
+        seq = atomic_load_explicit(&w->mirror_seq, memory_order_acquire);
+        memcpy(regs, w->mirror, sizeof(regs));
+        atomic_thread_fence(memory_order_acquire);
+    } while ((seq & 1) || seq != atomic_load_explicit(&w->mirror_seq, memory_order_relaxed));
+    uint32_t value = 0;
+    for (unsigned i = 0; i < len; i++)
+        value |= (uint32_t) regs[reg - 0x40 + i] << (8 * i);
+    return value;
+}
+
+static void
+verite_wake(verite_worker *w)
+{
+    if (atomic_load(&w->sleeping))
+        thread_set_event(w->wake);
+}
+
+/* Applies queued entries and runs the RISC. The worker stops at the end of
+   its slice, when the RISC polls the board or when it would get too far ahead
+   of the guest. The CPU thread applies everything and catches the RISC up as
+   the synchronous path does. Returns whether the RISC can make more progress
+   without the guest's time advancing. */
+static int
+verite_drain(verite_t *v, const verite_board *ops, int worker)
+{
+    verite_worker *w      = v->w;
+    verite_core   *c      = v->core;
+    uint8_t       *vram   = v->vga.svga.vram;
+    uint64_t       now    = atomic_load_explicit(&w->now_ns, memory_order_acquire);
+    int64_t        budget = worker ? SLICE : INT64_MAX;
+    int            more   = 0;
+
+    unsigned refresh = atomic_exchange_explicit(&w->refresh, 0, memory_order_relaxed);
+    if (refresh)
+        verite_core_refresh(c, refresh);
+
+    while (budget > 0) {
+        if (worker && atomic_load_explicit(&w->cpu_want, memory_order_relaxed)) {
+            more = 1;
+            break;
+        }
+        unsigned head = atomic_load_explicit(&w->head, memory_order_relaxed);
+        unsigned tail = atomic_load_explicit(&w->tail, memory_order_acquire);
+        if (head == tail) {
+            if (!worker)
+                break;
+            int64_t used = verite_core_advance(c, now, RUN_AHEAD, budget, vram, VRAM_SIZE, ops, v);
+            budget -= used;
+            more = used > 0 && budget <= 0;
+            break;
+        }
+
+        const verite_entry *e    = &w->queue[head % QUEUE_SIZE];
+        int64_t             used = verite_core_advance(c, e->t, SYNC_AHEAD, budget, vram, VRAM_SIZE, ops, v);
+        budget -= used;
+        if (budget <= 0) {
+            more = 1;
+            break;
+        }
+        if (worker && e->kind == Q_WRITE && e->reg < 0x10 && verite_core_input_full(c) && !verite_core_waiting(c)) {
+            /* Let the RISC make room, as far as it may run ahead. */
+            used = verite_core_advance(c, now, RUN_AHEAD, budget, vram, VRAM_SIZE, ops, v);
+            budget -= used;
+            more = used > 0 && !verite_core_polling(c);
+            if (!more || verite_core_input_full(c))
+                break;
+        }
+        if (e->kind == Q_WRITE)
+            verite_core_write(c, e->reg, e->value, e->len, vram, VRAM_SIZE, ops, v);
+        else
+            verite_core_retrace(c);
+        atomic_store_explicit(&w->head, head + 1, memory_order_release);
+        more = 1;
+    }
+    if (!worker)
+        verite_core_run(c, now, vram, VRAM_SIZE, ops, v);
+    return more;
+}
+
+static int
+verite_has_work(verite_worker *w)
+{
+    if (atomic_load(&w->owner) != OWN_NONE || atomic_load(&w->cpu_want))
+        return 0;
+    if (atomic_load(&w->head) != atomic_load(&w->tail))
+        return 1;
+    return !atomic_load(&w->wait_input) && atomic_load(&w->now_ns) != w->slept_ns;
+}
+
+static void
+verite_worker_thread(void *priv)
+{
+    verite_t      *v = priv;
+    verite_worker *w = v->w;
+
+    while (!atomic_load(&w->stop)) {
+        int expected = OWN_NONE;
+        if (!atomic_load(&w->cpu_want) && atomic_compare_exchange_strong(&w->owner, &expected, OWN_WORKER)) {
+            uint64_t now  = atomic_load(&w->now_ns);
+            int      more = verite_drain(v, &worker_board, 1);
+            uint32_t st   = verite_core_status(v->core);
+            verite_publish(v);
+            atomic_store(&w->irq, st & 1);
+            if (st & 2)
+                atomic_store(&w->drew, 1);
+            atomic_store(&w->wait_input, verite_core_waiting(v->core));
+            w->slept_ns = now;
+            atomic_store(&w->owner, OWN_NONE);
+            if (more)
+                continue;
+        }
+        atomic_store(&w->sleeping, 1);
+        thread_reset_event(w->wake);
+        if (!verite_has_work(w) && !atomic_load(&w->stop))
+            thread_wait_event(w->wake, 1);
+        atomic_store(&w->sleeping, 0);
+    }
+}
+
+/* Takes the core from the worker, answering its board requests meanwhile. */
+static void
+verite_take(verite_t *v)
+{
+    verite_worker *w = v->w;
+    atomic_store(&w->cpu_want, 1);
+    for (;;) {
+        int expected = OWN_NONE;
+        if (atomic_compare_exchange_weak(&w->owner, &expected, OWN_CPU))
+            break;
+        verite_serve(v);
+        verite_pause();
+    }
+    atomic_store(&w->cpu_want, 0);
+}
+
+static void
+verite_give(verite_t *v)
+{
+    verite_worker *w = v->w;
+    verite_publish(v);
+    atomic_store(&w->irq, v->irq_asserted);
+    atomic_store(&w->owner, OWN_NONE);
+    verite_wake(w);
+}
+
+/* Takes the core and brings the RISC up to the guest's time. */
+static void
+verite_sync(verite_t *v)
+{
+    verite_take(v);
+    atomic_store(&v->w->now_ns, v->time_ns);
+    verite_drain(v, &board, 0);
+    verite_settle(v);
+}
+
+static void
+verite_settle_async(verite_t *v)
+{
+    verite_worker *w = v->w;
+    if (atomic_exchange(&w->drew, 0))
+        verite_redraw(v);
+    uint8_t asserted = atomic_load(&w->irq);
+    if (asserted != v->irq_asserted) {
+        v->irq_asserted = asserted;
+        pci_irq(v->pci_slot, PCI_INTA, 0, asserted, &v->irq_state);
+    }
+}
+
+static void
+verite_push(verite_t *v, uint8_t kind, uint8_t reg, uint32_t value, uint8_t len)
+{
+    verite_worker *w    = v->w;
+    unsigned       tail = atomic_load_explicit(&w->tail, memory_order_relaxed);
+    if (tail - atomic_load_explicit(&w->head, memory_order_acquire) >= QUEUE_SIZE) {
+        verite_sync(v);
+        verite_give(v);
+    }
+    verite_entry *e = &w->queue[tail % QUEUE_SIZE];
+    e->t            = v->time_ns;
+    e->kind         = kind;
+    e->reg          = reg;
+    e->value        = value;
+    e->len          = len;
+    atomic_store(&w->tail, tail + 1);
+    verite_wake(w);
+}
+
+static void
+verite_add_refresh(verite_t *v, unsigned cycles)
+{
+    if (v->w)
+        atomic_fetch_add_explicit(&v->w->refresh, cycles, memory_order_relaxed);
+    else
+        verite_core_refresh(v->core, cycles);
+}
+
 static void
 verite_dram_refresh(verite_t *v)
 {
@@ -569,7 +980,7 @@ verite_dram_refresh(verite_t *v)
     if ((dram & DRAM_REFRESH_VBLANK) && v->vga.svga.dispon)
         return;
 
-    verite_core_refresh(v->core, v->dram_refresh_pending * (DRAM_REFRESH_CYCLES + !!(dram & DRAM_SLOW_PRECHARGE)));
+    verite_add_refresh(v, v->dram_refresh_pending * (DRAM_REFRESH_CYCLES + !!(dram & DRAM_SLOW_PRECHARGE)));
     v->dram_refresh_pending = 0;
 }
 
@@ -580,7 +991,15 @@ verite_timer(void *priv)
     timer_advance_u64(&v->timer, TICK_US * TIMER_USEC);
     v->time_ns += TICK_US * 1000;
     verite_dram_refresh(v);
-    verite_run(v);
+    if (v->w) {
+        verite_worker *w = v->w;
+        atomic_store(&w->now_ns, v->time_ns);
+        if (!atomic_load_explicit(&w->wait_input, memory_order_relaxed))
+            verite_wake(w);
+        verite_serve(v);
+        verite_settle_async(v);
+    } else
+        verite_run(v);
 }
 
 static void
@@ -599,8 +1018,13 @@ verite_vsync(svga_t *svga)
     v->frame_flags = (v->frame_flags ^ CRTC_CTL_EVEN_FRAME) | CRTC_CTL_DISPLAYED | CRTC_CTL_SWITCHED;
     if (ctl & CRTC_CTL_VSYNC) {
         v->ddc1_bit = (v->ddc1_bit + 1) % (sizeof(v->ddc1_edid) * 9);
-        verite_core_retrace(v->core);
-        verite_settle(v);
+        if (v->w) {
+            verite_push(v, Q_RETRACE, 0, 0, 0);
+            verite_settle_async(v);
+        } else {
+            verite_core_retrace(v->core);
+            verite_settle(v);
+        }
     }
 }
 
@@ -608,6 +1032,32 @@ static uint32_t
 verite_port_read(uint16_t port, uint8_t len, verite_t *v)
 {
     uint8_t reg = port & 0xff;
+    if (v->w) {
+        verite_worker *w = v->w;
+        verite_serve(v);
+        /* FIFO space comes from the queue in front of the RISC. */
+        if (reg == 0x40 && len == 1
+            && QUEUE_SIZE - (atomic_load(&w->tail) - atomic_load(&w->head)) >= SYNC_FREE) {
+            verite_settle_async(v);
+            return 31;
+        }
+        /* Status registers come from the last state the worker published;
+           the host's own registers from the core directly. */
+        if (reg >= 0x40 && reg + len <= 0x60) {
+            verite_settle_async(v);
+            return verite_mirror_read(w, reg, len);
+        }
+        if (reg >= 0x60 && reg + len <= 0x80 && !(reg < 0x68 && reg + len > 0x64)) {
+            verite_settle_async(v);
+            return verite_core_read(v->core, reg, len, v->vga.svga.vram, VRAM_SIZE);
+        }
+        verite_sync(v);
+        uint32_t value = reg >= 0x80 ? verite_ext_read(v, reg, len)
+                                     : verite_core_read(v->core, reg, len, v->vga.svga.vram, VRAM_SIZE);
+        verite_settle(v);
+        verite_give(v);
+        return value;
+    }
     verite_run(v);
     if (reg >= 0x80)
         return verite_ext_read(v, reg, len);
@@ -620,6 +1070,24 @@ static void
 verite_port_write(uint16_t port, uint32_t value, uint8_t len, verite_t *v)
 {
     uint8_t reg = port & 0xff;
+    if (v->w) {
+        verite_serve(v);
+        if (reg < 0x10) {
+            verite_push(v, Q_WRITE, reg, value, len);
+            return;
+        }
+        verite_sync(v);
+        if (reg >= 0x80)
+            verite_ext_write(v, reg, value, len);
+        else {
+            verite_core_write(v->core, reg, value, len, v->vga.svga.vram, VRAM_SIZE, &board, v);
+            if ((reg <= 0x48 && reg + len > 0x48) || (reg < 0x78 && reg + len > 0x72))
+                verite_update_bank(v);
+        }
+        verite_settle(v);
+        verite_give(v);
+        return;
+    }
     verite_run(v);
     if (reg >= 0x80)
         verite_ext_write(v, reg, value, len);
@@ -858,6 +1326,11 @@ static void
 verite_reset(void *priv)
 {
     verite_t *v = priv;
+    if (v->w) {
+        verite_take(v);
+        atomic_store(&v->w->head, atomic_load(&v->w->tail));
+        atomic_store(&v->w->refresh, 0);
+    }
     verite_core_reset(v->core);
     memset(v->regs, 0, sizeof(v->regs));
     v->command = 3;
@@ -881,6 +1354,8 @@ verite_reset(void *priv)
     v->mode                                             = verite_core_mode(v->core);
     verite_decode(v, 1);
     verite_settle(v);
+    if (v->w)
+        verite_give(v);
     verite_speed_changed(v);
 }
 
@@ -928,6 +1403,16 @@ verite_init(const device_t *info)
                     NULL, MEM_MAPPING_EXTERNAL, v);
     pci_add_card(PCI_ADD_NORMAL, verite_pci_read, verite_pci_write, v, &v->pci_slot);
     verite_reset(v);
+    if (device_get_config_int("risc_thread")) {
+        verite_worker *w = calloc(1, sizeof(*w));
+        if (w) {
+            w->wake = thread_create_event();
+            w->done = thread_create_event();
+            atomic_store(&w->now_ns, v->time_ns);
+            v->w      = w;
+            w->thread = thread_create_named(verite_worker_thread, v, "Verite RISC");
+        }
+    }
     timer_add(&v->timer, verite_timer, v, 0);
     timer_set_delay_u64(&v->timer, TICK_US * TIMER_USEC);
     return v;
@@ -937,6 +1422,17 @@ static void
 verite_close(void *priv)
 {
     verite_t *v = priv;
+    if (v->w) {
+        verite_worker *w = v->w;
+        atomic_store(&w->stop, 1);
+        thread_set_event(w->wake);
+        thread_set_event(w->done);
+        thread_wait(w->thread);
+        thread_destroy_event(w->wake);
+        thread_destroy_event(w->done);
+        free(w);
+        v->w = NULL;
+    }
     timer_disable(&v->timer);
     timer_disable(&v->vga.svga.timer);
     mem_mapping_disable(&v->vga.svga.mapping);
@@ -953,17 +1449,23 @@ verite_close(void *priv)
     free(v);
 }
 
-#ifdef VERITE_JIT_X64
 static const device_config_t verite_config[] = {
+#ifdef VERITE_JIT_X64
     {
         .name        = "recompiler",
         .description = "Dynamic recompiler",
         .type        = CONFIG_BINARY,
         .default_int = 1
     },
+#endif
+    {
+        .name        = "risc_thread",
+        .description = "Run the RISC on its own thread",
+        .type        = CONFIG_BINARY,
+        .default_int = 1
+    },
     { .name = "", .description = "", .type = CONFIG_END }
 };
-#endif
 
 const device_t verite_v1000_device = {
     .name          = "Rendition Vérité V1000",
@@ -975,7 +1477,5 @@ const device_t verite_v1000_device = {
     .available     = verite_available,
     .speed_changed = verite_speed_changed,
     .force_redraw  = verite_redraw,
-#ifdef VERITE_JIT_X64
     .config        = verite_config
-#endif
 };

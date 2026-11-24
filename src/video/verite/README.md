@@ -29,3 +29,11 @@ matches, and the block continues unless the draw wrote into its own code.
 Other draws call the C pixel engine and end the block. FIFO and device
 operations use the interpreter, which also runs the RISC on other hosts or
 when executable memory is unavailable.
+
+The **Run the RISC on its own thread** option, on by default, runs the RISC
+and pixel engine on a worker thread. The worker may run up to 1 ms of RISC
+time ahead of the guest. The guest's data-FIFO writes queue in front of it,
+DMA reads guest RAM directly, and status register reads come from the state
+the worker last published; other register accesses bring the RISC up to the
+guest's time first. The RISC's board writes are applied on the emulation
+thread. Turn the option off to run the RISC in step with the guest CPU.
