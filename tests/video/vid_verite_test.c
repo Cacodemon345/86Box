@@ -1072,6 +1072,10 @@ jit_perspective_division(void)
 {
     uint8_t *code = alloc_code();
     assert(code);
+    /* The divide reads 2^24 from the span constants before the code. */
+    span_consts *consts = (span_consts *) code;
+    consts->two24       = 16777216.0;
+    code += sizeof(span_consts);
     as a = { code };
     /* void fn(pixel_engine *pe, int32_t uv[2]) */
 #    ifdef _WIN32
@@ -1084,7 +1088,7 @@ jit_perspective_division(void)
     rr(&a, 0x89, arg_uv, R9, true);
     rm(&a, 0x8b, R10, R9, NO_INDEX, 0, false, false);
     rm(&a, 0x8b, R11, R9, NO_INDEX, 4, false, false);
-    emit_divide_uv(&a);
+    emit_divide_uv(&a, consts);
     rm(&a, 0x89, R10, R9, NO_INDEX, 0, false, false);
     rm(&a, 0x89, R11, R9, NO_INDEX, 4, false, false);
     b8(&a, 0x41), b8(&a, 0x5c); /* pop r12 */

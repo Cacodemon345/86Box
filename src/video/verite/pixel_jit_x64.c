@@ -35,20 +35,39 @@ enum {
     DST_RAW_TREJECT = 1 << 25,
 };
 
-/* The span's stack frame, addressed through R15. */
+/* The span's stack frame, addressed through R15 and 16-byte aligned. The
+   values and deltas step four at a time with aligned SSE operands. */
 typedef struct {
+    uint32_t          values[12], deltas[12];
+    int32_t           c[4], tap[4], sum[4];
+    uint16_t          fg[4]; /* argb(FgColor) as words R, G, B, A */
     verite_core      *core;
     verite_draw_site *site;
     int32_t           cnt;
     uint32_t          x_step, dst_stride, z_stride, tex_stride;
-    uint32_t          values[10], deltas[10];
-    int32_t           c[4], t[4], tap[4], sum[4], w[4];
     uint32_t          z_addr, z;
-    uint32_t          row0, row1, x0, x1;
     uint32_t          lo, hi;
     uint32_t          prev_u, prev_v; /* the last pixel's texel coordinates */
     int32_t           scissor[4];     /* x lo, x hi, y lo, y hi */
+    uint32_t          dst_row, z_row; /* row addresses when Y is no parameter */
+    uint32_t          dither_x, dither_y, thres, zero;
+    uint32_t          prefetch;   /* whether the texture outgrows the L1 cache */
+    const uint16_t   *dither_row; /* the dither vectors for a fixed Y */
 } span_ctx;
+typedef char span_ctx_aligned[offsetof(span_ctx, deltas) % 16 == 0 && offsetof(span_ctx, c) % 16 == 0 ? 1 : -1];
+
+/* Per-state SSE constants, placed before the span's code and addressed
+   RIP-relative. Vectors hold words R, G, B, A twice. */
+typedef struct {
+    uint16_t k127[8], k8081[8], k255[8];
+    uint16_t shift[8]; /* x >> (8 - n) as a pmulhuw multiplier, n the field width */
+    uint16_t pos[8];   /* the field's position as a pmullw multiplier */
+    uint16_t ones[8], rgb[8], alpha[8];
+    uint32_t bias[4], round[4];
+    uint16_t dither[16][8]; /* (dither_table[i] << 4) >> n */
+    uint32_t black, pad;
+    double   two24;
+} span_consts;
 
 /* unsigned fn(verite_core *core, verite_draw_site *site): draws with the
    site's value and delta registers and returns whether a pixel was written. */
@@ -113,31 +132,30 @@ init_tables(void)
 }
 
 /* Every 16-bit texel of a 565 (fmt 4) or 1555 (fmt 6) texture, padded or not,
-   decoded as texel() does and packed for the bilinear filter: entry 2n is
-   R | B << 32 and entry 2n + 1 is G | A << 32. Built on first use. */
-static uint64_t *packed_tables[2][2];
+   decoded as texel() does into R | G << 8 | B << 16 | A << 24. Built on first
+   use. */
+static uint32_t *texel_tables[2][2];
 
-static const uint64_t *
-packed_table(unsigned fmt, bool no_pad)
+static const uint32_t *
+texel_table(unsigned fmt, bool no_pad)
 {
-    uint64_t **table = &packed_tables[fmt == 6][no_pad];
+    uint32_t **table = &texel_tables[fmt == 6][no_pad];
     if (*table)
         return *table;
-    uint64_t *t = malloc(65536 * 2 * sizeof(uint64_t));
+    uint32_t *t = malloc(65536 * sizeof(uint32_t));
     if (!t)
         abort();
     static const unsigned shift565[] = { 11, 5, 0 }, bits565[] = { 5, 6, 5 }, shift1555[] = { 10, 5, 0 };
     for (unsigned texel = 0; texel < 65536; texel++) {
-        uint64_t ch[4];
+        uint32_t ch[4];
         for (unsigned k = 0; k < 3; k++) {
             unsigned shift = fmt == 4 ? shift565[k] : shift1555[k];
             unsigned bits  = fmt == 4 ? bits565[k] : 5;
             unsigned v     = (texel >> shift) & ((1U << bits) - 1);
             ch[k]          = no_pad ? v << (8 - bits) : widen_table[bits - 4][v];
         }
-        ch[3]            = fmt == 4 || (texel & 0x8000) ? 255 : 0;
-        t[2 * texel]     = ch[0] | ch[2] << 32;
-        t[2 * texel + 1] = ch[1] | ch[3] << 32;
+        ch[3]    = fmt == 4 || (texel & 0x8000) ? 255 : 0;
+        t[texel] = ch[0] | ch[1] << 8 | ch[2] << 16 | ch[3] << 24;
     }
     return *table = t;
 }
@@ -145,7 +163,9 @@ packed_table(unsigned fmt, bool no_pad)
 /* ---- Assembler ------------------------------------------------------------ */
 
 enum { RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8, R9, R10, R11, R12, R13, R14, R15 };
-enum { CTX = R15, VRAM = R14, MASK = R13, PE = R12, COUNT = RBX, DREW = RBP };
+/* MASK is the VRAM mask with bit 0 clear; TABLE is the texel table in the
+   loop and becomes the drew flag after it. */
+enum { CTX = R15, VRAM = R14, MASK = R13, PE = R12, COUNT = RBX, TABLE = RBP, DREW = RBP };
 enum { NO_INDEX = -1 };
 enum { CC_B = 2, CC_AE, CC_E, CC_NE, CC_BE, CC_A, CC_S, CC_NS, CC_L = 12, CC_GE, CC_LE, CC_G };
 
@@ -191,9 +211,10 @@ rr(as *a, unsigned op, unsigned reg, unsigned rm, bool w)
     b8(a, 0xc0 | ((reg & 7) << 3) | (rm & 7));
 }
 
-/* op reg, [base + index + disp32]. byte forces a REX so SIL/DIL can be used. */
+/* op reg, [base + (index << scale) + disp32]. byte forces a REX so SIL/DIL
+   can be used. */
 static void
-rm(as *a, unsigned op, unsigned reg, unsigned base, int index, int32_t disp, bool w, bool byte)
+rmx(as *a, unsigned op, unsigned reg, unsigned base, int index, unsigned scale, int32_t disp, bool w, bool byte)
 {
     unsigned ix = index < 0 ? 4 : (unsigned) index;
     rex(a, w, reg, index < 0 ? 0 : ix, base, byte && reg >= 4);
@@ -202,10 +223,60 @@ rm(as *a, unsigned op, unsigned reg, unsigned base, int index, int32_t disp, boo
         b8(a, 0x80 | ((reg & 7) << 3) | (base & 7));
     } else {
         b8(a, 0x80 | ((reg & 7) << 3) | 4);
-        b8(a, ((ix & 7) << 3) | (base & 7));
+        b8(a, (scale << 6) | ((ix & 7) << 3) | (base & 7));
     }
     d32(a, (uint32_t) disp);
 }
+
+static void
+rm(as *a, unsigned op, unsigned reg, unsigned base, int index, int32_t disp, bool w, bool byte)
+{
+    rmx(a, op, reg, base, index, 0, disp, w, byte);
+}
+
+/* SSE2, XMM0-XMM5 only: pfx op xmm, xmm/r32. */
+static void
+sse(as *a, unsigned pfx, unsigned op, unsigned reg, unsigned rm_)
+{
+    b8(a, pfx);
+    rr(a, op, reg, rm_, false);
+}
+
+/* pfx op xmm, [base + (index << scale) + disp32] */
+static void
+sse_m(as *a, unsigned pfx, unsigned op, unsigned reg, unsigned base, int index, unsigned scale, int32_t disp)
+{
+    b8(a, pfx);
+    rmx(a, op, reg, base, index, scale, disp, false, false);
+}
+
+/* pfx op xmm, [rip + target], for an instruction without an immediate. */
+static void
+sse_rip(as *a, unsigned pfx, unsigned op, unsigned reg, const void *target)
+{
+    b8(a, pfx);
+    opcode(a, op);
+    b8(a, ((reg & 7) << 3) | 5);
+    d32(a, (uint32_t) ((const uint8_t *) target - (a->p + 4)));
+}
+
+/* pfx op xmm, xmm/r32, imm8 (shifts take the extension as reg). */
+static void
+sse_i(as *a, unsigned pfx, unsigned op, unsigned reg, unsigned rm_, unsigned imm)
+{
+    sse(a, pfx, op, reg, rm_);
+    b8(a, imm);
+}
+
+enum {
+    P66 = 0x66, PF2 = 0xf2, PF3 = 0xf3,
+    PUNPCKLBW = 0x0f60, PUNPCKLWD = 0x0f61, PACKSSDW = 0x0f6b, MOVD_TO = 0x0f6e, MOVDQA = 0x0f6f,
+    PSHUFD = 0x0f70, PSHIFTW = 0x0f71, PSHIFTD = 0x0f72, MOVD_FROM = 0x0f7e, MOVDQA_ST = 0x0f7f,
+    PINSRW = 0x0fc4, PEXTRW = 0x0fc5, MOVQ_ST = 0x0fd6, PMULLW = 0x0fd5, PAND = 0x0fdb,
+    PMULHUW = 0x0fe4, PMINSW = 0x0fea, POR = 0x0feb, PXOR = 0x0fef, PMADDWD = 0x0ff5, PSUBW = 0x0ff9,
+    PADDW = 0x0ffd, PADDD = 0x0ffe,
+    SH_SRL = 2, SH_SRA = 4, SH_SLL = 6,
+};
 
 static void
 mov_ri(as *a, unsigned reg, uint32_t imm)
@@ -287,7 +358,6 @@ static void
 emit_load16(as *a, unsigned dst, unsigned addr)
 {
     rr(a, 0x21, MASK, addr, false); /* and addr, mask */
-    alu_ri(a, 4, addr, ~1U);
     alu_ri(a, 6, addr, 2);
     rm(a, 0x0fb7, dst, VRAM, (int) addr, 0, false, false);
 }
@@ -298,7 +368,6 @@ static void
 emit_store16(as *a, unsigned val, unsigned addr)
 {
     rr(a, 0x21, MASK, addr, false);
-    alu_ri(a, 4, addr, ~1U);
     rm(a, 0x3b, addr, CTX, NO_INDEX, (int32_t) offsetof(span_ctx, lo), false, false); /* cmp addr, lo */
     uint8_t *above = jcc(a, CC_AE);
     rm(a, 0x89, addr, CTX, NO_INDEX, (int32_t) offsetof(span_ctx, lo), false, false);
@@ -437,38 +506,39 @@ emit_widen(as *a, unsigned shift, unsigned bits, bool no_pad)
     }
 }
 
-/* R8 = R | B << 32 and R9 = G | A << 32 for the 16-bit texel at row (ctx
-   field) + x (ctx field) or, keyed, black or YUV black (128, 16, 128, 0).
-   RDX holds packed_table(). Clobbers RAX, RCX. */
+/* XMM xmm = the decoded texel at row + 2 * x (both registers) as bytes R, G,
+   B, A or, keyed, black or YUV black (128, 16, 128, 0). TABLE holds
+   texel_table(). Clobbers R9. */
 static void
-emit_texel_packed(as *a, uint32_t src_mode, int32_t row, int32_t x)
+emit_tap(as *a, uint32_t src_mode, const span_consts *k, unsigned xmm, unsigned row, unsigned x)
 {
-    LD(RAX, CTX, x);
-    rr(a, 0x01, RAX, RAX, false); /* add eax, eax */
-    rm(a, 0x03, RAX, CTX, NO_INDEX, row, false, false);
-    emit_load16(a, RAX, RAX);
-    uint8_t *decode = NULL, *done = NULL;
+    rmx(a, 0x8d, R9, row, (int) x, 1, 0, true, false); /* lea r9, [row + x * 2] */
+    rr(a, 0x21, MASK, R9, false);
+    alu_ri(a, 6, R9, 2);
+    rm(a, 0x0fb7, R9, VRAM, R9, 0, false, false);
+    sse_m(a, P66, MOVD_TO, xmm, TABLE, R9, 2, 0); /* movd xmm, [table + r9 * 4] */
     if (src_mode & SRC_CHROMA) {
-        rr(a, 0x69, RCX, RAX, false); /* imul ecx, eax, 0x10001 */
+        rr(a, 0x69, R9, R9, false); /* imul r9d, r9d, 0x10001 */
         d32(a, 0x10001);
-        rm(a, 0x33, RCX, PE, NO_INDEX, PEF(chroma_color), false, false);
-        rm(a, 0x23, RCX, PE, NO_INDEX, PEF(chroma_mask), false, false);
-        decode = jcc(a, CC_NE);
-        if (src_mode & SRC_CHROMA_BLACK_YUV) {
-            mov_ri64(a, R8, UINT64_C(128) | UINT64_C(128) << 32);
-            mov_ri(a, R9, 16);
-        } else {
-            rr(a, 0x31, R8, R8, false);
-            rr(a, 0x31, R9, R9, false);
-        }
-        done = jmp(a);
-        land(decode, a->p);
+        rm(a, 0x33, R9, PE, NO_INDEX, PEF(chroma_color), false, false);
+        rm(a, 0x23, R9, PE, NO_INDEX, PEF(chroma_mask), false, false);
+        uint8_t *opaque = jcc(a, CC_NE);
+        sse_rip(a, P66, MOVD_TO, xmm, &k->black);
+        land(opaque, a->p);
     }
-    shift_ri(a, 4, RAX, 4, false);             /* 16-byte entries */
-    rm(a, 0x8b, R8, RDX, RAX, 0, true, false); /* mov r8, [rdx + rax] */
-    rm(a, 0x8b, R9, RDX, RAX, 8, true, false); /* mov r9, [rdx + rax + 8] */
-    if (done)
-        land(done, a->p);
+}
+
+/* reg = texture_coord(reg, mask from the engine). */
+static void
+emit_coord_reg(as *a, unsigned reg, int32_t mask_field, bool clamped)
+{
+    if (clamped) {
+        rm(a, 0x3b, reg, PE, NO_INDEX, mask_field, false, false);   /* cmp reg, mask */
+        rm(a, 0x0f4f, reg, PE, NO_INDEX, mask_field, false, false); /* cmovg reg, mask */
+        rr(a, 0x85, reg, reg, false);
+        rm(a, 0x0f4c, reg, CTX, NO_INDEX, CTXF(zero), false, false); /* cmovl reg, 0 */
+    } else
+        rm(a, 0x23, reg, PE, NO_INDEX, mask_field, false, false);
 }
 
 /* Prefetch the texel 1 << PREFETCH_SHIFT pixels on, extrapolated from how far u
@@ -497,104 +567,85 @@ emit_prefetch(as *a)
     rm(a, 0x0f18, 1, VRAM, RCX, 0, false, false); /* prefetcht0 [vram + rcx] */
 }
 
-/* sample() into ctx.t. R10D = u, R11D = v after any perspective division. */
+/* sample() into XMM3 as words R, G, B, A. R10D = u, R11D = v after any
+   perspective division. Clobbers RAX, RCX, RDX, R8-R11, XMM0, XMM1, XMM4,
+   XMM5.
+
+   The bilinear weights (256 - fu, fu) x (256 - fv, fv) separate. Each row
+   sums its two taps with pmaddwd, h = (256 - fu) t0 + fu t1 <= 65280, and the
+   rows then sum with pmaddwd on h - 32768, which fits a signed word; as the
+   row weights total 256 that takes 2^23 off the exact sum, which the rounding
+   constant puts back. The result is (sum + 32768) >> 16 as in sample(); for
+   an unpadded 565 texel this also matches sample_bilinear_565(): (8 sum +
+   32768) >> 16 == (sum + 4096) >> 13, and likewise for green. */
 static void
-emit_sample(as *a, unsigned fmt, uint32_t src_mode)
+emit_sample(as *a, uint32_t src_mode, const span_consts *k)
 {
     bool uc = !!(src_mode & SRC_U_CLAMP), vc = !!(src_mode & SRC_V_CLAMP);
     bool filter = !!(src_mode & SRC_FILTER);
+    rm(a, 0x83, 7, CTX, NO_INDEX, CTXF(prefetch), false, false); /* cmp dword [prefetch], 0 */
+    b8(a, 0);
+    uint8_t *cached = jcc(a, CC_E);
     emit_prefetch(a);
+    land(cached, a->p);
 
-    /* x0, row0 */
+    /* EAX = x0, ECX = x1, EDX = row0, R8D = row1 */
     MOV(RAX, R10);
     shift_ri(a, 7, RAX, 16, false);
-    emit_coord(a, PEF(u_mask), uc);
-    ST(RAX, CTX, CTXF(x0));
-    MOV(RAX, R11);
-    shift_ri(a, 7, RAX, 16, false);
-    emit_coord(a, PEF(v_mask), vc);
-    rm(a, 0x0faf, RAX, CTX, NO_INDEX, CTXF(tex_stride), false, false);
-    rm(a, 0x03, RAX, PE, NO_INDEX, PEF(src_base), false, false);
-    ST(RAX, CTX, CTXF(row0));
-    mov_ri64(a, RDX, (uint64_t) (uintptr_t) packed_table(fmt, !!(src_mode & SRC_NO_PAD)));
+    MOV(RDX, R11);
+    shift_ri(a, 7, RDX, 16, false);
+    if (filter) {
+        rm(a, 0x8d, RCX, RAX, NO_INDEX, 1, false, false); /* lea ecx, [rax + 1] */
+        rm(a, 0x8d, R8, RDX, NO_INDEX, 1, false, false);
+        emit_coord_reg(a, RCX, PEF(u_mask), uc);
+        emit_coord_reg(a, R8, PEF(v_mask), vc);
+        rm(a, 0x0faf, R8, CTX, NO_INDEX, CTXF(tex_stride), false, false);
+        rm(a, 0x03, R8, PE, NO_INDEX, PEF(src_base), false, false);
+    }
+    emit_coord_reg(a, RAX, PEF(u_mask), uc);
+    emit_coord_reg(a, RDX, PEF(v_mask), vc);
+    rm(a, 0x0faf, RDX, CTX, NO_INDEX, CTXF(tex_stride), false, false);
+    rm(a, 0x03, RDX, PE, NO_INDEX, PEF(src_base), false, false);
+
     if (!filter) {
-        emit_texel_packed(a, src_mode, CTXF(row0), CTXF(x0));
-        ST(R8, CTX, CTXF(t[0]));
-        ST(R9, CTX, CTXF(t[1]));
-        shift_ri(a, 5, R8, 32, true);
-        shift_ri(a, 5, R9, 32, true);
-        ST(R8, CTX, CTXF(t[2]));
-        ST(R9, CTX, CTXF(t[3]));
+        emit_tap(a, src_mode, k, 3, RDX, RAX);
+        sse(a, P66, PXOR, 1, 1);
+        sse(a, P66, PUNPCKLBW, 3, 1);
         return;
     }
 
-    /* x1, row1 */
-    MOV(RAX, R10);
-    shift_ri(a, 7, RAX, 16, false);
-    alu_ri(a, 0, RAX, 1);
-    emit_coord(a, PEF(u_mask), uc);
-    ST(RAX, CTX, CTXF(x1));
-    MOV(RAX, R11);
-    shift_ri(a, 7, RAX, 16, false);
-    alu_ri(a, 0, RAX, 1);
-    emit_coord(a, PEF(v_mask), vc);
-    rm(a, 0x0faf, RAX, CTX, NO_INDEX, CTXF(tex_stride), false, false);
-    rm(a, 0x03, RAX, PE, NO_INDEX, PEF(src_base), false, false);
-    ST(RAX, CTX, CTXF(row1));
-
-    /* Weights: fu = (u >> 8) & 255 in ESI-free registers R8D/R9D. */
-    MOV(R8, R10);
-    shift_ri(a, 5, R8, 8, false);
-    alu_ri(a, 4, R8, 255);
-    MOV(R9, R11);
-    shift_ri(a, 5, R9, 8, false);
-    alu_ri(a, 4, R9, 255);
-    mov_ri(a, RAX, 256);
-    rr(a, 0x29, R8, RAX, false); /* eax = 256 - fu */
-    mov_ri(a, RCX, 256);
-    rr(a, 0x29, R9, RCX, false); /* ecx = 256 - fv */
-    MOV(RDX, RAX);
-    rr(a, 0x0faf, RDX, RCX, false); /* (256-fu)(256-fv) */
-    ST(RDX, CTX, CTXF(w[0]));
-    MOV(RDX, R8);
-    rr(a, 0x0faf, RDX, RCX, false); /* fu(256-fv) */
-    ST(RDX, CTX, CTXF(w[1]));
-    rr(a, 0x0faf, RAX, R9, false); /* (256-fu)fv */
-    ST(RAX, CTX, CTXF(w[2]));
-    MOV(RAX, R8);
-    rr(a, 0x0faf, RAX, R9, false); /* fu fv */
-    ST(RAX, CTX, CTXF(w[3]));
-
-    static const int32_t rows[] = { CTXF(row0), CTXF(row0), CTXF(row1), CTXF(row1) };
-    static const int32_t xs[]   = { CTXF(x0), CTXF(x1), CTXF(x0), CTXF(x1) };
-
-    /* Four taps from the packed decode table, summed two channels to a
-       register: R10 = R | B << 32, R11 = G | A << 32. The weights total 65536,
-       so no lane passes 2^24 and lanes never carry into each other. For an
-       unpadded 565 texel this also matches sample_bilinear_565()'s rounding:
-       (8 sum + 32768) >> 16 == (sum + 4096) >> 13, and likewise for green. */
-    mov_ri64(a, RDX, (uint64_t) (uintptr_t) packed_table(fmt, !!(src_mode & SRC_NO_PAD)));
-    rr(a, 0x31, R10, R10, false);
-    rr(a, 0x31, R11, R11, false);
-    for (unsigned tap = 0; tap < 4; tap++) {
-        emit_texel_packed(a, src_mode, rows[tap], xs[tap]);
-        LD(RCX, CTX, CTXF(w[0]) + 4 * (int32_t) tap);
-        rr(a, 0x0faf, R8, RCX, true);  /* imul r8, rcx */
-        rr(a, 0x0faf, R9, RCX, true);  /* imul r9, rcx */
-        rr(a, 0x01, R8, R10, true);    /* add r10, r8 */
-        rr(a, 0x01, R9, R11, true);    /* add r11, r9 */
+    /* (256 - f) | f << 16 = 256 + f * 0xffff, from u in R10D and v in R11D. */
+    for (unsigned axis = 0; axis < 2; axis++) {
+        unsigned reg = axis ? R11 : R10;
+        shift_ri(a, 5, reg, 8, false);
+        alu_ri(a, 4, reg, 255);
+        rr(a, 0x69, reg, reg, false);
+        d32(a, 0xffff);
+        alu_ri(a, 0, reg, 256);
     }
-    mov_ri64(a, RAX, UINT64_C(0x0000800000008000));
-    rr(a, 0x01, RAX, R10, true);
-    rr(a, 0x01, RAX, R11, true);
-    for (unsigned k = 0; k < 4; k++) {
-        static const int32_t out[] = { CTXF(t[0]), CTXF(t[2]), CTXF(t[1]), CTXF(t[3]) };
-        rr(a, 0x89, k < 2 ? R10 : R11, RAX, true); /* mov rax, sum */
-        shift_ri(a, 5, RAX, k & 1 ? 48 : 16, true);
-        if (!(k & 1))
-            alu_ri(a, 4, RAX, 255);
-        ST(RAX, CTX, out[k]);
-    }
+    sse(a, P66, MOVD_TO, 3, R10);
+    sse_i(a, P66, PSHUFD, 3, 3, 0);
+
+    emit_tap(a, src_mode, k, 0, RDX, RAX);
+    emit_tap(a, src_mode, k, 1, RDX, RCX);
+    emit_tap(a, src_mode, k, 4, R8, RAX);
+    emit_tap(a, src_mode, k, 5, R8, RCX);
+    sse(a, P66, PUNPCKLBW, 0, 1); /* t00, t01 interleaved */
+    sse(a, P66, PUNPCKLBW, 4, 5); /* t10, t11 */
+    sse(a, P66, PXOR, 1, 1);
+    sse(a, P66, PUNPCKLBW, 0, 1);
+    sse(a, P66, PUNPCKLBW, 4, 1);
+    sse(a, P66, PMADDWD, 0, 3);
+    sse(a, P66, PMADDWD, 4, 3);
+    sse_i(a, P66, PSHIFTD, SH_SLL, 4, 16);
+    sse(a, P66, POR, 0, 4); /* h0 | h1 << 16 */
+    sse_rip(a, P66, PXOR, 0, k->bias);
+    sse(a, P66, MOVD_TO, 3, R11);
+    sse_i(a, P66, PSHUFD, 3, 3, 0);
+    sse(a, P66, PMADDWD, 3, 0);
+    sse_rip(a, P66, PADDD, 3, k->round);
+    sse_i(a, P66, PSHIFTD, SH_SRL, 3, 16);
+    sse(a, P66, PACKSSDW, 3, 3);
 }
 
 /* R10D, R11D = u, v * 2^24 / q unless Q is 0 (exact truncating division).
@@ -602,7 +653,7 @@ emit_sample(as *a, unsigned fmt, uint32_t src_mode)
    and corrects the truncated estimate by its remainder; two 64-bit idivs a
    pixel cost several times as much. Clobbers RAX, RCX, RDX, R8, XMM0-XMM1. */
 static void
-emit_divide_uv(as *a)
+emit_divide_uv(as *a, const span_consts *k)
 {
     LD(R8, PE, PEF(q));
     rr(a, 0x85, R8, R8, false);
@@ -625,9 +676,7 @@ emit_divide_uv(as *a)
     rr(a, 0x0fef, 1, 1, false);   /* pxor xmm1, xmm1 */
     b8(a, 0xf2);
     rr(a, 0x0f2a, 1, R8, true);   /* cvtsi2sd xmm1, r8 */
-    mov_ri64(a, RAX, UINT64_C(0x4170000000000000)); /* 2^24 */
-    b8(a, 0x66);
-    rr(a, 0x0f6e, 0, RAX, true);  /* movq xmm0, rax */
+    sse_rip(a, PF2, 0x0f10, 0, &k->two24); /* movsd xmm0, 2^24 */
     b8(a, 0xf2);
     rr(a, 0x0f5e, 0, 1, false);   /* divsd xmm0, xmm1 */
     for (unsigned axis = 0; axis < 2; axis++) {
@@ -826,28 +875,13 @@ emit_blend(as *a, const span_key *k)
     }
 }
 
-/* ECX = quantize(channel in EAX, n bits) with the dither term (d << 4) >> n in R9D. */
-static void
-emit_quantize(as *a, unsigned n, bool dither)
-{
-    MOV(RCX, RAX);
-    if (dither) {
-        MOV(RDX, R9);
-        shift_ri(a, 5, RDX, n, false);
-        rr(a, 0x01, RDX, RCX, false);
-        mov_ri(a, RDX, 255);
-        rr(a, 0x39, RDX, RCX, false);   /* cmp ecx, edx */
-        rr(a, 0x0f47, RCX, RDX, false); /* cmova ecx, edx */
-    }
-    shift_ri(a, 5, RCX, 8 - n, false);
-}
-
 /* c = f * (c - fog) / 255 + fog for red, green and blue, with f = sat(F)
-   and C's truncating division. Clobbers EAX, ECX, EDX, R8D, R10D, R11D. */
+   and C's truncating division, F at [base + f]. Clobbers EAX, ECX, EDX,
+   R8D, R10D, R11D. */
 static void
-emit_fog(as *a)
+emit_fog(as *a, unsigned base, int32_t f)
 {
-    LD(RAX, PE, PEF(f));
+    LD(RAX, base, f);
     emit_sat(a);
     MOV(R10, RAX);
     LD(R11, PE, PEF(fog_color));
@@ -926,12 +960,74 @@ draw_count(uint8_t op)
     }
 }
 
+/* reg = the parameter register idx this pixel or, without one, the engine
+   field, which then stays fixed for the span. */
+static void
+emit_source(as *a, unsigned reg, int idx, int32_t field)
+{
+    if (idx >= 0)
+        LD(reg, CTX, CTXF(values[0]) + 4 * idx);
+    else
+        LD(reg, PE, field);
+}
+
+/* ctx.c = XMM2 as dwords, for the scalar stages; and back. */
+static void
+emit_spill_c(as *a)
+{
+    sse(a, P66, PXOR, 1, 1);
+    sse(a, P66, MOVDQA, 0, 2);
+    sse(a, P66, PUNPCKLWD, 0, 1);
+    sse_m(a, P66, MOVDQA_ST, 0, CTX, NO_INDEX, 0, CTXF(c[0]));
+}
+
+static void
+emit_reload_c(as *a)
+{
+    sse_m(a, P66, MOVDQA, 2, CTX, NO_INDEX, 0, CTXF(c[0]));
+    sse(a, P66, PACKSSDW, 2, 2);
+}
+
+/* The constants for this state; see span_consts. */
+static void
+build_consts(span_consts *c, const span_key *k)
+{
+    /* Field width and position for R, G, B, A; a 565 target drops alpha. */
+    static const uint8_t n565[] = { 5, 6, 5, 0 }, pos565[] = { 11, 5, 0, 0 };
+    static const uint8_t n1555[] = { 5, 5, 5, 1 }, pos1555[] = { 10, 5, 0, 15 };
+    bool is565 = k->dst_fmt == 4;
+    memset(c, 0, sizeof(*c));
+    for (unsigned l = 0; l < 8; l++) {
+        unsigned ch = l & 3, n = is565 ? n565[ch] : n1555[ch], pos = is565 ? pos565[ch] : pos1555[ch];
+        bool     on = n != 0;
+        c->k127[l]  = 127;
+        c->k8081[l] = 0x8081;
+        c->k255[l]  = 255;
+        c->shift[l] = on ? 1U << (8 + n) : 0;
+        c->pos[l]   = on ? 1U << pos : 0;
+        c->ones[l]  = 1;
+        c->rgb[l]   = ch == 3 ? 0 : 0xffff;
+        c->alpha[l] = ch == 3 ? 0xffff : 0;
+        for (unsigned i = 0; i < 16; i++)
+            c->dither[i][l] = on ? (dither_table[i] << 4) >> n : 0;
+    }
+    for (unsigned l = 0; l < 4; l++) {
+        c->bias[l]  = 0x80008000;
+        c->round[l] = 0x00808000;
+    }
+    c->black = k->src_mode & SRC_CHROMA_BLACK_YUV ? 128 | 16 << 8 | 128 << 16 : 0;
+    c->two24 = 16777216.0;
+}
+
 /* Generates a span_fn. op holds the register count, plus 0x100 for a single
-   draw that writes back its stepped values and decrements Cnt. */
+   draw that writes back its stepped values and decrements Cnt.
+
+   Within the loop the parameters feed the pixel straight from ctx.values;
+   the engine fields pixel_set() would write are written once after it, from
+   the last pixel's values. The colour stays in XMM2 as words R, G, B, A. */
 static uint8_t *
 compile(as *a, const span_key *k)
 {
-    uint8_t     *start = a->p;
     unsigned     count = k->op & 0xff;
     bool         single = !!(k->op & 0x100);
     unsigned     ctl   = k->drawctl;
@@ -942,11 +1038,46 @@ compile(as *a, const span_key *k)
                               p3.even, p3.odd, p4.even, p4.odd, P_G, P_B };
     bool         shadow   = jit_pair1[ctl & 15].shadow;
     int          q_index  = -1;
+    /* The last register to set each value this pixel, or -1. */
+    int          src_x = -1, src_y = -1, src_z = -1, src_u = -1, src_v = -1, src_f = -1;
+    int          src_ch[4] = { -1, -1, -1, -1 };
     for (unsigned i = 0; i < count; i++) {
-        if (params[i] == P_Q)
-            q_index = (int) i;
-        if (params[i] == P_X)
-            shadow = false;
+        switch (params[i]) {
+            case P_Q:
+                q_index = (int) i;
+                break;
+            case P_X:
+                shadow = false;
+                src_x  = (int) i;
+                break;
+            case P_Y:
+                src_y = (int) i;
+                break;
+            case P_Z:
+                src_z = (int) i;
+                break;
+            case P_F:
+                src_f = (int) i;
+                break;
+            case P_U:
+            case P_V:
+                if ((params[i] == P_U) != !!(k->src_mode & SRC_SWAP_UV))
+                    src_u = (int) i;
+                else
+                    src_v = (int) i;
+                break;
+            case P_R:
+            case P_G:
+            case P_B:
+            case P_A:
+                src_ch[params[i] == P_R ? 0 : params[i] == P_G ? 1 : params[i] == P_B ? 2 : 3] = (int) i;
+                break;
+            case P_I:
+                src_ch[0] = src_ch[1] = src_ch[2] = (int) i;
+                break;
+            default:
+                break;
+        }
     }
     unsigned func       = (k->src_mode >> 4) & 7;
     unsigned fmt        = k->src_mode & 15 ? k->src_mode & 15 : k->dst_fmt;
@@ -960,14 +1091,25 @@ compile(as *a, const span_key *k)
     bool raw_copy = func == 1 && fmt == 4 && k->dst_fmt == 4 && (k->src_mode & SRC_NO_PAD)
         && !(k->src_mode & (SRC_FILTER | SRC_BGR)) && !(k->dst_mode & (DST_RAW_BLEND | DST_RAW_FOG));
 
-    /* Spans call nothing, so the frame needs no particular alignment. */
+    /* Constants first, then the code. */
+    while ((uintptr_t) a->p & 15)
+        b8(a, 0xcc);
+    span_consts *kc = (span_consts *) a->p;
+    build_consts(kc, k);
+    a->p += sizeof(span_consts);
+    uint8_t *start = a->p;
+
+    /* Spans call nothing. ctx is aligned to 16 bytes within the frame, as
+       generated callers need not keep the stack aligned. */
     static const unsigned saved[] = { RBX, RBP, RSI, RDI, R12, R13, R14, R15 };
-    uint32_t frame = (sizeof(span_ctx) + 15) & ~15U;
+    uint32_t frame = ((sizeof(span_ctx) + 15) & ~15U) + 16;
     for (unsigned i = 0; i < 8; i++)
         rex(a, false, 0, 0, saved[i], false), b8(a, 0x50 | (saved[i] & 7));
     rr(a, 0x81, 5, RSP, true); /* sub rsp, frame */
     d32(a, frame);
-    rr(a, 0x89, RSP, CTX, true);
+    rm(a, 0x8d, CTX, RSP, NO_INDEX, 15, true, false); /* lea r15, [rsp + 15] */
+    rr(a, 0x83, 4, CTX, true);                          /* and r15, -16 */
+    b8(a, 0xf0);
 #    ifdef _WIN32
     unsigned arg_core = RCX, arg_site = RDX;
 #    else
@@ -979,6 +1121,7 @@ compile(as *a, const span_key *k)
     rm(a, 0x8b, RAX, arg_core, NO_INDEX, (int32_t) offsetof(verite_core, jit_mem), true, false);
     rm(a, 0x8b, VRAM, RAX, NO_INDEX, (int32_t) offsetof(verite_jit_memory, vram), true, false);
     LD(MASK, RAX, (int32_t) offsetof(verite_jit_memory, mask));
+    alu_ri(a, 4, MASK, ~1U);
     rr(a, 0x31, DREW, DREW, false);
     rm(a, 0xc7, 0, CTX, NO_INDEX, CTXF(lo), false, false);
     d32(a, UINT32_MAX);
@@ -1025,8 +1168,9 @@ compile(as *a, const span_key *k)
         d32(a, 0);
     }
 
-    /* Loop-invariant state: U and V masks, and the scissor bounds
-       [lo, min(hi, 2048)) for each axis. */
+    /* Loop-invariant state: U and V masks, the scissor bounds [lo, min(hi,
+       2048)) for each axis, row addresses for a fixed Y, the dither offset,
+       the alpha threshold, argb(FgColor) and the texel table. */
     for (unsigned i = 0; i < count; i++)
         if (params[i] == P_U || params[i] == P_V)
             emit_uv_mask(a, params[i], k->src_mode);
@@ -1042,43 +1186,138 @@ compile(as *a, const span_key *k)
         rr(a, 0x0f4f, RAX, RCX, false); /* cmovg eax, ecx */
         ST(RAX, CTX, CTXF(scissor[1]) + 8 * (int32_t) axis);
     }
+    rm(a, 0xc7, 0, CTX, NO_INDEX, CTXF(zero), false, false);
+    d32(a, 0);
+    /* A fixed Y outside the scissor, or a fixed Z overflow under the Z
+       scissor, rejects every pixel; so does an empty X range. */
+    uint8_t *rejects[3];
+    unsigned nreject = 0;
+    if (src_y < 0) {
+        LD(RDX, PE, PEF(y));
+        shift_ri(a, 7, RDX, 16, false);
+        rm(a, 0x3b, RDX, CTX, NO_INDEX, CTXF(scissor[2]), false, false);
+        rejects[nreject++] = jcc(a, CC_L);
+        rm(a, 0x3b, RDX, CTX, NO_INDEX, CTXF(scissor[3]), false, false);
+        rejects[nreject++] = jcc(a, CC_GE);
+    }
+    if ((k->src_mode & SRC_Z_SCISSOR) && src_z < 0) {
+        rm(a, 0x80, 7, PE, NO_INDEX, PEF(z_ovf), false, false); /* cmp byte [z_ovf], 0 */
+        b8(a, 0);
+        rejects[nreject++] = jcc(a, CC_NE);
+    }
+    if (nreject) {
+        uint8_t *accept = jmp(a);
+        for (unsigned i = 0; i < nreject; i++)
+            land(rejects[i], a->p);
+        rm(a, 0xc7, 0, CTX, NO_INDEX, CTXF(scissor[0]), false, false);
+        d32(a, 0);
+        rm(a, 0xc7, 0, CTX, NO_INDEX, CTXF(scissor[1]), false, false);
+        d32(a, 0);
+        land(accept, a->p);
+    }
+    if (src_y < 0) {
+        MOV(RAX, RDX);
+        rm(a, 0x0faf, RAX, CTX, NO_INDEX, CTXF(dst_stride), false, false);
+        rm(a, 0x03, RAX, PE, NO_INDEX, PEF(dst_base), false, false);
+        ST(RAX, CTX, CTXF(dst_row));
+        if (depth_mode || zwrite) {
+            rm(a, 0x0faf, RDX, CTX, NO_INDEX, CTXF(z_stride), false, false);
+            rm(a, 0x03, RDX, PE, NO_INDEX, PEF(z_base), false, false);
+            ST(RDX, CTX, CTXF(z_row));
+        }
+    }
+    if (dither && !raw_copy) {
+        LD(RDX, PE, PEF(dither_offset));
+        MOV(RAX, RDX);
+        alu_ri(a, 4, RAX, 3);
+        ST(RAX, CTX, CTXF(dither_x));
+        shift_ri(a, 5, RDX, 4, false);
+        alu_ri(a, 4, RDX, 3);
+        ST(RDX, CTX, CTXF(dither_y));
+        if (src_y < 0) {
+            /* dither_row = the four vectors for ((y + dither_y) & 3) */
+            LD(RAX, PE, PEF(y));
+            shift_ri(a, 7, RAX, 16, false);
+            rr(a, 0x01, RDX, RAX, false);
+            alu_ri(a, 4, RAX, 3);
+            shift_ri(a, 4, RAX, 6, false);
+            rex(a, true, RCX, 0, 0, false); /* lea rcx, [rip + dither] */
+            b8(a, 0x8d);
+            b8(a, ((RCX & 7) << 3) | 5);
+            d32(a, (uint32_t) ((const uint8_t *) kc->dither - (a->p + 4)));
+            rr(a, 0x01, RAX, RCX, true);
+            rm(a, 0x89, RCX, CTX, NO_INDEX, CTXF(dither_row), true, false);
+        }
+    }
+    if ((k->dst_mode & DST_RAW_TREJECT) && !raw_copy) {
+        LD(RCX, PE, PEF(alpha_thres));
+        alu_ri(a, 4, RCX, 255);
+        ST(RCX, CTX, CTXF(thres));
+    }
+    if (func != 1 && !raw_copy) {
+        sse_m(a, P66, MOVD_TO, 2, PE, NO_INDEX, 0, PEF(fg));
+        sse(a, P66, PXOR, 1, 1);
+        sse(a, P66, PUNPCKLBW, 2, 1);
+        sse_i(a, PF2, PSHUFD, 2, 2, 0xc6); /* pshuflw: B, G, R, A to R, G, B, A */
+        for (unsigned lane = 0; lane < 4; lane++)
+            if (src_ch[lane] >= 0)
+                sse_i(a, P66, PINSRW, 2, DREW, lane); /* EBP is still 0: parameters fill these */
+        sse_m(a, P66, MOVQ_ST, 2, CTX, NO_INDEX, 0, CTXF(fg));
+    }
+    if (func && !raw_copy) {
+        mov_ri64(a, TABLE, (uint64_t) (uintptr_t) texel_table(fmt, !!(k->src_mode & SRC_NO_PAD)));
+        /* Prefetch once the texels the masks reach, each row rounded up to
+           cache lines, pass 16 KiB; smaller textures stay in the L1 cache,
+           where the hint only costs time. */
+        LD(RAX, PE, PEF(u_mask));
+        rr(a, 0x01, RAX, RAX, false);
+        alu_ri(a, 1, RAX, 63);
+        alu_ri(a, 0, RAX, 1);
+        LD(RCX, PE, PEF(v_mask));
+        alu_ri(a, 0, RCX, 1);
+        rr(a, 0x0faf, RAX, RCX, false); /* imul eax, ecx */
+        rr(a, 0x31, RCX, RCX, false);
+        alu_ri(a, 7, RAX, 16384);
+        rr(a, 0x0f97, 0, RCX, false); /* seta cl */
+        ST(RCX, CTX, CTXF(prefetch));
+    }
 
     uint8_t *loop = a->p;
-    for (unsigned i = 0; i < count; i++) {
-        if (params[i] == P_NONE || params[i] == P_Q)
-            continue;
-        LD(RAX, CTX, CTXF(values[0]) + 4 * (int32_t) i);
-        emit_set(a, params[i], k->src_mode);
-    }
 
     /* ESI = x, EDI = y; scissor. */
     uint8_t *skips[16];
     unsigned nskip = 0;
-    LD(RSI, PE, shadow ? PEF(x_shadow) : PEF(x));
+    emit_source(a, RSI, src_x, shadow ? PEF(x_shadow) : PEF(x));
     shift_ri(a, 7, RSI, 16, false);
-    LD(RDI, PE, PEF(y));
-    shift_ri(a, 7, RDI, 16, false);
-    for (unsigned axis = 0; axis < 2; axis++) {
+    /* A fixed Y only addresses a read destination. */
+    if (src_y >= 0 || ((k->dst_mode & DST_RAW_BLEND) && !(k->dst_mode & DST_RAW_READ_DISABLE))) {
+        emit_source(a, RDI, src_y, PEF(y));
+        shift_ri(a, 7, RDI, 16, false);
+    }
+    for (unsigned axis = 0; axis < (src_y >= 0 ? 2U : 1U); axis++) {
         unsigned r = axis ? RDI : RSI;
         rm(a, 0x3b, r, CTX, NO_INDEX, CTXF(scissor[0]) + 8 * (int32_t) axis, false, false); /* cmp r, lo */
         skips[nskip++] = jcc(a, CC_L);
         rm(a, 0x3b, r, CTX, NO_INDEX, CTXF(scissor[1]) + 8 * (int32_t) axis, false, false); /* cmp r, hi */
         skips[nskip++] = jcc(a, CC_GE);
     }
-    if (k->src_mode & SRC_Z_SCISSOR) {
-        rm(a, 0x80, 7, PE, NO_INDEX, PEF(z_ovf), false, false); /* cmp byte [z_ovf], 0 */
-        b8(a, 0);
+    if ((k->src_mode & SRC_Z_SCISSOR) && src_z >= 0) {
+        rm(a, 0xf7, 0, CTX, NO_INDEX, CTXF(values[0]) + 4 * src_z, false, false); /* test dword [z], imm32 */
+        d32(a, 0xf8000000);
         skips[nskip++] = jcc(a, CC_NE);
     }
 
     if (depth_mode || zwrite) {
-        MOV(RAX, RDI);
-        rm(a, 0x0faf, RAX, CTX, NO_INDEX, CTXF(z_stride), false, false);
-        rm(a, 0x03, RAX, PE, NO_INDEX, PEF(z_base), false, false);
+        if (src_y >= 0) {
+            MOV(RAX, RDI);
+            rm(a, 0x0faf, RAX, CTX, NO_INDEX, CTXF(z_stride), false, false);
+            rm(a, 0x03, RAX, PE, NO_INDEX, PEF(z_base), false, false);
+        } else
+            LD(RAX, CTX, CTXF(z_row));
         rr(a, 0x01, RSI, RAX, false);
         rr(a, 0x01, RSI, RAX, false);
         ST(RAX, CTX, CTXF(z_addr));
-        LD(RCX, PE, PEF(z));
+        emit_source(a, RCX, src_z, PEF(z));
         shift_ri(a, 7, RCX, 11, false);
         alu_ri(a, 4, RCX, 0xffff);
         ST(RCX, CTX, CTXF(z));
@@ -1092,12 +1331,12 @@ compile(as *a, const span_key *k)
         }
     }
 
-    if (raw_copy) {
-        LD(R10, PE, PEF(u));
-        LD(R11, PE, PEF(v));
+    if (func) {
+        emit_source(a, R10, src_u, PEF(u));
+        emit_source(a, R11, src_v, PEF(v));
+        if (q_index >= 0)
+            emit_divide_uv(a, kc);
     }
-    if (raw_copy && q_index >= 0)
-        emit_divide_uv(a);
     if (raw_copy) {
         bool uc = !!(k->src_mode & SRC_U_CLAMP), vc = !!(k->src_mode & SRC_V_CLAMP);
         MOV(RAX, R11);
@@ -1119,11 +1358,13 @@ compile(as *a, const span_key *k)
             rm(a, 0x33, RCX, PE, NO_INDEX, PEF(chroma_color), false, false);
             rm(a, 0x23, RCX, PE, NO_INDEX, PEF(chroma_mask), false, false);
             opaque = jcc(a, CC_NE);
-            /* Keyed: alpha 0 is always rejected; otherwise it encodes as 0. */
+            /* Keyed: alpha 0 is always rejected; otherwise it encodes as 0,
+               or YUV black (128, 16, 128) as 0x8090, which dither never
+               changes either. */
             if (k->dst_mode & DST_RAW_TREJECT)
                 skips[nskip++] = jmp(a);
             else
-                rr(a, 0x31, R8, R8, false);
+                mov_ri(a, R8, k->src_mode & SRC_CHROMA_BLACK_YUV ? 0x8090 : 0);
             uint8_t *keyed = jmp(a);
             land(opaque, a->p);
             opaque = keyed;
@@ -1137,107 +1378,116 @@ compile(as *a, const span_key *k)
         }
         if (opaque)
             land(opaque, a->p);
-    }
-
-    /* c = argb(fg), unless a replaced texel overwrites all of it. */
-    if (!raw_copy) {
-    LD(RAX, PE, PEF(fg));
-    for (unsigned ch = 0; ch < 4 && func != 1; ch++) {
-        static const unsigned sh[] = { 16, 8, 0, 24 };
-        MOV(RCX, RAX);
-        shift_ri(a, 5, RCX, sh[ch], false);
-        alu_ri(a, 4, RCX, 255);
-        ST(RCX, CTX, CTXF(c[0]) + 4 * (int32_t) ch);
-    }
-
-    if (func) {
-        LD(R10, PE, PEF(u));
-        LD(R11, PE, PEF(v));
-        if (q_index >= 0)
-            emit_divide_uv(a);
-        emit_sample(a, fmt, k->src_mode);
-        for (unsigned ch = 0; ch < 4; ch++) {
-            int32_t c = CTXF(c[0]) + 4 * (int32_t) ch, t = CTXF(t[0]) + 4 * (int32_t) ch;
-            if (func == 1) {
-                LD(RAX, CTX, t);
-                ST(RAX, CTX, c);
-            } else if (func == 3) {
-                LD(RAX, CTX, c);
-                rm(a, 0x0faf, RAX, CTX, NO_INDEX, t, false, false);
-                emit_div255(a);
-                ST(RAX, CTX, c);
-            } else if (ch < 3) {
-                /* Decal: c * (255 - ta) + t * ta. */
-                LD(RCX, CTX, CTXF(t[3]));
-                LD(RAX, CTX, t);
-                rr(a, 0x0faf, RAX, RCX, false);
-                mov_ri(a, RDX, 255);
-                rr(a, 0x29, RCX, RDX, false);
-                rm(a, 0x0faf, RDX, CTX, NO_INDEX, c, false, false);
-                rr(a, 0x01, RDX, RAX, false);
-                emit_div255(a);
-                ST(RAX, CTX, c);
+    } else {
+        /* XMM3 = t; XMM2 = c = argb(fg) with the colour parameters set. */
+        if (func)
+            emit_sample(a, k->src_mode, kc);
+        if (func != 1) {
+            sse_m(a, PF3, MOVD_FROM, 2, CTX, NO_INDEX, 0, CTXF(fg)); /* movq xmm2, [fg] */
+            for (unsigned ch = 0; ch < 4; ch++) {
+                int idx = src_ch[ch];
+                bool first = idx >= 0;
+                for (unsigned prev = 0; prev < ch; prev++)
+                    first = first && src_ch[prev] != idx;
+                if (!first)
+                    continue;
+                /* Broadcast sat(value) to its lanes, the others taking the
+                   zero in lane 1 of the movd. */
+                unsigned order = 0;
+                for (unsigned lane = 0; lane < 4; lane++)
+                    order |= (src_ch[lane] == idx ? 0U : 1U) << (2 * lane);
+                LD(RAX, CTX, CTXF(values[0]) + 4 * idx);
+                emit_sat(a);
+                sse(a, P66, MOVD_TO, 0, RAX);
+                sse_i(a, PF2, PSHUFD, 0, 0, order); /* pshuflw */
+                sse(a, P66, POR, 2, 0);
             }
         }
-    }
+        if (func == 1)
+            sse(a, P66, MOVDQA, 2, 3);
+        else if (func == 3) {
+            /* (c t + 127) / 255 for c t + 127 < 65536: (x * 0x8081) >> 23. */
+            sse(a, P66, PMULLW, 2, 3);
+            sse_rip(a, P66, PADDW, 2, kc->k127);
+            sse_rip(a, P66, PMULHUW, 2, kc->k8081);
+            sse_i(a, P66, PSHIFTW, SH_SRL, 2, 7);
+        } else if (func == 2) {
+            /* Decal: (c (255 - ta) + t ta + 127) / 255; alpha stays c's. */
+            sse_i(a, PF2, PSHUFD, 0, 3, 0xff); /* pshuflw xmm0, xmm3: ta */
+            sse_rip(a, P66, MOVDQA, 1, kc->k255);
+            sse(a, P66, PSUBW, 1, 0);
+            sse(a, P66, PMULLW, 0, 3);
+            sse(a, P66, PMULLW, 1, 2);
+            sse(a, P66, PADDW, 0, 1);
+            sse_rip(a, P66, PADDW, 0, kc->k127);
+            sse_rip(a, P66, PMULHUW, 0, kc->k8081);
+            sse_i(a, P66, PSHIFTW, SH_SRL, 0, 7);
+            sse_rip(a, P66, PAND, 0, kc->rgb);
+            sse_rip(a, P66, PAND, 2, kc->alpha);
+            sse(a, P66, POR, 2, 0);
+        }
 
-    if (k->dst_mode & DST_RAW_TREJECT) {
-        LD(RAX, CTX, CTXF(c[3]));
-        LD(RCX, PE, PEF(alpha_thres));
-        alu_ri(a, 4, RCX, 255);
-        rr(a, 0x39, RCX, RAX, false);
-        skips[nskip++] = jcc(a, CC_LE);
-    }
+        if (k->dst_mode & DST_RAW_TREJECT) {
+            sse_i(a, P66, PEXTRW, RAX, 2, 3);
+            rm(a, 0x3b, RAX, CTX, NO_INDEX, CTXF(thres), false, false);
+            skips[nskip++] = jcc(a, CC_LE);
+        }
 
-    if (k->dst_mode & DST_RAW_FOG)
-        emit_fog(a);
+        if (k->dst_mode & (DST_RAW_FOG | DST_RAW_BLEND)) {
+            emit_spill_c(a);
+            if (k->dst_mode & DST_RAW_FOG) {
+                if (src_f >= 0)
+                    emit_fog(a, CTX, CTXF(values[0]) + 4 * src_f);
+                else
+                    emit_fog(a, PE, PEF(f));
+            }
+            if (k->dst_mode & DST_RAW_BLEND)
+                emit_blend(a, k);
+            emit_reload_c(a);
+        }
 
-    if (k->dst_mode & DST_RAW_BLEND)
-        emit_blend(a, k);
-
-    /* Dither term d << 4 in R9D. */
-    if (dither) {
-        LD(RDX, PE, PEF(dither_offset));
-        MOV(RAX, RDX);
-        alu_ri(a, 4, RAX, 3);
-        rr(a, 0x01, RSI, RAX, false);
-        alu_ri(a, 4, RAX, 3);
-        shift_ri(a, 5, RDX, 4, false);
-        alu_ri(a, 4, RDX, 3);
-        rr(a, 0x01, RDI, RDX, false);
-        alu_ri(a, 4, RDX, 3);
-        shift_ri(a, 4, RDX, 2, false);
-        rr(a, 0x01, RDX, RAX, false); /* index = dy * 4 + dx */
-        mov_ri64(a, RDX, (uint64_t) (uintptr_t) dither_table);
-        rm(a, 0x0fb6, R9, RDX, RAX, 0, false, false);
-        shift_ri(a, 4, R9, 4, false);
-    }
-
-    }
-
-    /* Encode into R8D. */
-    if (!raw_copy) {
-    rr(a, 0x31, R8, R8, false);
-    static const struct {
-        unsigned ch, n, pos;
-    } fields565[] = { { 0, 5, 11 }, { 1, 6, 5 }, { 2, 5, 0 } },
-      fields1555[] = { { 3, 1, 15 }, { 0, 5, 10 }, { 1, 5, 5 }, { 2, 5, 0 } };
-    unsigned nf = k->dst_fmt == 4 ? 3 : 4;
-    for (unsigned f = 0; f < nf; f++) {
-        unsigned ch  = k->dst_fmt == 4 ? fields565[f].ch : fields1555[f].ch;
-        unsigned n   = k->dst_fmt == 4 ? fields565[f].n : fields1555[f].n;
-        unsigned pos = k->dst_fmt == 4 ? fields565[f].pos : fields1555[f].pos;
-        LD(RAX, CTX, CTXF(c[0]) + 4 * (int32_t) ch);
-        emit_quantize(a, n, dither);
-        shift_ri(a, 4, RCX, pos, false);
-        rr(a, 0x09, RCX, R8, false);
-    }
+        /* Encode into R8D: per field, min(c + (d << 4 >> n), 255) >> (8 - n)
+           << pos, the fields summed by pmaddwd and one add. */
+        if (dither && src_y < 0) {
+            MOV(RAX, RSI);
+            rm(a, 0x03, RAX, CTX, NO_INDEX, CTXF(dither_x), false, false);
+            alu_ri(a, 4, RAX, 3);
+            shift_ri(a, 4, RAX, 4, false);
+            rm(a, 0x03, RAX, CTX, NO_INDEX, CTXF(dither_row), true, false); /* add rax, [dither_row] */
+            sse_m(a, P66, PADDW, 2, RAX, NO_INDEX, 0, 0);
+            sse_rip(a, P66, PMINSW, 2, kc->k255);
+        } else if (dither) {
+            MOV(RAX, RSI);
+            rm(a, 0x03, RAX, CTX, NO_INDEX, CTXF(dither_x), false, false);
+            alu_ri(a, 4, RAX, 3);
+            MOV(RCX, RDI);
+            rm(a, 0x03, RCX, CTX, NO_INDEX, CTXF(dither_y), false, false);
+            alu_ri(a, 4, RCX, 3);
+            rmx(a, 0x8d, RAX, RAX, RCX, 2, 0, false, false); /* lea eax, [rax + rcx * 4] */
+            shift_ri(a, 4, RAX, 4, false);
+            /* lea rcx, [rip + dither] */
+            rex(a, true, RCX, 0, 0, false);
+            b8(a, 0x8d);
+            b8(a, ((RCX & 7) << 3) | 5);
+            d32(a, (uint32_t) ((const uint8_t *) kc->dither - (a->p + 4)));
+            sse_m(a, P66, PADDW, 2, RCX, RAX, 0, 0);
+            sse_rip(a, P66, PMINSW, 2, kc->k255);
+        }
+        sse_rip(a, P66, PMULHUW, 2, kc->shift);
+        sse_rip(a, P66, PMULLW, 2, kc->pos);
+        sse_rip(a, P66, PMADDWD, 2, kc->ones);
+        sse_i(a, P66, PSHUFD, 0, 2, 1);
+        sse(a, P66, PADDD, 0, 2);
+        sse(a, P66, MOVD_FROM, 0, R8);
     }
 
     /* addr = dst_base + dst_stride * y + 2x */
-    MOV(RAX, RDI);
-    rm(a, 0x0faf, RAX, CTX, NO_INDEX, CTXF(dst_stride), false, false);
-    rm(a, 0x03, RAX, PE, NO_INDEX, PEF(dst_base), false, false);
+    if (src_y >= 0) {
+        MOV(RAX, RDI);
+        rm(a, 0x0faf, RAX, CTX, NO_INDEX, CTXF(dst_stride), false, false);
+        rm(a, 0x03, RAX, PE, NO_INDEX, PEF(dst_base), false, false);
+    } else
+        LD(RAX, CTX, CTXF(dst_row));
     rr(a, 0x01, RSI, RAX, false);
     rr(a, 0x01, RSI, RAX, false);
     emit_store16(a, R8, RAX);
@@ -1246,7 +1496,6 @@ compile(as *a, const span_key *k)
         LD(RCX, CTX, CTXF(z));
         emit_store16(a, RCX, RAX);
     }
-    mov_ri(a, DREW, 1);
 
     for (unsigned i = 0; i < nskip; i++)
         land(skips[i], a->p);
@@ -1258,12 +1507,29 @@ compile(as *a, const span_key *k)
         LD(RAX, CTX, CTXF(x_step));
         rm(a, 0x01, RAX, PE, NO_INDEX, PEF(x_shadow), false, false);
     }
-    for (unsigned i = 0; i < count; i++) {
-        LD(RAX, CTX, CTXF(deltas[0]) + 4 * (int32_t) i);
-        rm(a, 0x01, RAX, CTX, NO_INDEX, CTXF(values[0]) + 4 * (int32_t) i, false, false);
+    for (unsigned i = 0; i < count; i += 4) {
+        sse_m(a, P66, MOVDQA, 0, CTX, NO_INDEX, 0, CTXF(values[0]) + 4 * (int32_t) i);
+        sse_m(a, P66, PADDD, 0, CTX, NO_INDEX, 0, CTXF(deltas[0]) + 4 * (int32_t) i);
+        sse_m(a, P66, MOVDQA_ST, 0, CTX, NO_INDEX, 0, CTXF(values[0]) + 4 * (int32_t) i);
     }
     rr(a, 0xff, 1, COUNT, false); /* dec ebx */
     land(jcc(a, CC_NE), loop);
+
+    /* The engine as pixel_set() left it for the last pixel. */
+    for (unsigned i = 0; i < count; i++) {
+        if (params[i] == P_NONE || params[i] == P_Q)
+            continue;
+        LD(RAX, CTX, CTXF(values[0]) + 4 * (int32_t) i);
+        rm(a, 0x2b, RAX, CTX, NO_INDEX, CTXF(deltas[0]) + 4 * (int32_t) i, false, false);
+        emit_set(a, params[i], k->src_mode);
+    }
+    /* Every written pixel lowered lo. */
+    rr(a, 0x31, DREW, DREW, false);
+    LD(RAX, CTX, CTXF(lo));
+    alu_ri(a, 7, RAX, UINT32_MAX);
+    uint8_t *none_written = jcc(a, CC_E);
+    mov_ri(a, DREW, 1);
+    land(none_written, a->p);
 
     if (single) {
         /* dest[k] = value + delta (already stepped); Cnt decrements. */
@@ -1365,13 +1631,13 @@ lookup(verite_core *c, const span_key *key)
         jit->used = 0;
         risc_jit_reset_sites(c);
     }
-    as a = { jit->arena + jit->used };
-    uint8_t *code = compile(&a, key);
-    size_t   size = (size_t) (a.p - code);
+    as       a    = { jit->arena + jit->used };
+    uint8_t *code = compile(&a, key); /* after its constants */
+    size_t   size = (size_t) (a.p - (jit->arena + jit->used));
     if (size > SPAN_MAX_CODE)
         abort();
 #    ifdef _WIN32
-    FlushInstructionCache(GetCurrentProcess(), code, size);
+    FlushInstructionCache(GetCurrentProcess(), jit->arena + jit->used, size);
 #    endif
     jit->used += (size + 15) & ~(size_t) 15;
     span_entry *e = &jit->entries[jit->next];
