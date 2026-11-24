@@ -31,6 +31,7 @@
 #ifdef ENABLE_EMU8008_LOG
 #include <stdarg.h>
 #endif
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -83,31 +84,45 @@ emu8008_log(void *priv, const char *fmt, ...)
 /* Interrupt Status bits (IOBase + 0x10, 32-bit W1C) */
 #define EMU8008_INT_BIT23           0x00800000u /* Callback +0x3E724 */
 #define EMU8008_INT_BIT22_20        0x00700000u /* Callback +0x3E728 */
-#define EMU8008_INT_BIT17_16        0x00030000u /* Callback +0x3E72C */
+#define EMU8008_INT_ADC_HALF        0x00010000u
+#define EMU8008_INT_ADC_FULL        0x00020000u
+#define EMU8008_INT_ADC_MASK        (EMU8008_INT_ADC_HALF | EMU8008_INT_ADC_FULL)
 #define EMU8008_INT_BIT9            0x00000200u /* Callback +0x3E73C */
 #define EMU8008_INT_MPU_RX          0x00000100u /* Callback +0x3E734 (MPU-401) */
 #define EMU8008_INT_BIT7            0x00000080u /* Callback +0x3E738 */
 #define EMU8008_INT_WAV_MASK        0x0000005Fu /* Callback +0x3E730 */
+#define EMU8008_INT_VOICE_LOOP      0x00000040u
 
 /* Interrupt Enable bits (IOBase + 0x18, 16-bit R/W) */
 #define EMU8008_INTE_BIT23          0x1000u
 #define EMU8008_INTE_BIT22_20       0x0E00u
-#define EMU8008_INTE_BIT17_16       0x0080u
+#define EMU8008_INTE_ADC            0x0080u
 #define EMU8008_INTE_BIT9           0x0004u
 #define EMU8008_INTE_MPU_RX         0x0002u
 #define EMU8008_INTE_BIT7           0x0001u
 
 /* Wave Capture (Bank 0, Reg 0x01) field masks */
-#define EMU8008_CAP_PAGE_SHIFT      12
-#define EMU8008_CAP_MODE_MASK       0x0300u /* bits [9:8]: 0=stop, 1=mono, 3=stereo */
-#define EMU8008_CAP_MODE_SHIFT      8
-#define EMU8008_CAP_RATE_MASK       0x00E0u /* bits [7:5]: 0..7 -> 48k..8k Hz */
+#define EMU8008_CAP_CONTROL        0x01
+#define EMU8008_CAP_PAGE_MASK       0xFFFFF000u
+#define EMU8008_CAP_MODE_MASK       0x0300u
+#define EMU8008_CAP_MONO            0x0100u
+#define EMU8008_CAP_STEREO          0x0300u
+#define EMU8008_CAP_RATE_MASK       0x00E0u
 #define EMU8008_CAP_RATE_SHIFT      5
-#define EMU8008_CAP_FRAMES_MASK     0x001Fu /* bits [4:0]: frame count */
+#define EMU8008_CAP_SIZE_MASK       0x001Fu
+#define EMU8008_CAP_INPUT_FRAMES    4096
 
 static const uint32_t emu8008_cap_rates[8] = {
     48000, 44100, 32000, 24000, 22050, 16000, 11025, 8000
 };
+
+#define EMU8008_SAMPLE_PAGE_MASK     0x1FFFu
+#define EMU8008_PAGE_TABLE           0x00
+#define EMU8008_LOOP_IRQ_ENABLE      0xE0
+#define EMU8008_LOOP_START_MASK      0xE4
+#define EMU8008_LOOP_END_MASK        0xE5
+#define EMU8008_LOOP_PENDING         0xE6
+#define EMU8008_LOOP_END_PENDING     0xE7
 
 typedef struct emu8008_t {
     uint8_t  pci_slot;
@@ -119,7 +134,7 @@ typedef struct emu8008_t {
     /* Core Interrupt & Clock state */
     uint32_t int_status;        /* IOBase + 0x10 */
     uint16_t int_enable;        /* IOBase + 0x18 */
-    uint32_t sample_clock;      /* 48 kHz sample counter (Reg 0xE0 bits[19:8]) */
+    uint16_t sample_clock;      /* 48 kHz sample counter (Bank 5, Reg 0x3B) */
     uint16_t chip_id_reg;       /* Reg 0xE0 low bits (must satisfy & 0x0C == 0x0C) */
 
     /* EMU8000/EMU8008 indexed register state */
@@ -128,13 +143,34 @@ typedef struct emu8008_t {
     uint16_t bank4_regs[256];   /* Bank 4 (Data4) 16-bit registers */
     uint16_t bank5_regs[256];   /* Bank 5 (Data5) 16-bit registers */
 
+    /* At +08h only dword indices 00h–1Fh address the voice cursor. */
+    uint32_t bank4_dwords[256 - EMU8K_VOICE_COUNT];
+    uint32_t active_voices;
+    uint32_t loop_irq_queue;
+    int                 playback_pos;
+    int32_t             playback_frame[2];
+    emu8k_effect_sends_t effect_frame;
+    int32_t             playback_buffer[WTBUFLEN * 2];
+    int                 playback_gain[2];
+
     /* Wave Capture / ADC DMA state (Bank 0, Reg 0x01) */
-    uint32_t cap_phys_addr;
-    uint8_t  cap_mode;          /* 0=stop, 1=mono, 3=stereo */
-    uint8_t  cap_rate_idx;      /* 0..7 */
-    uint8_t  cap_frames;
+    uint32_t cap_rate;
+    uint32_t cap_size;
     uint32_t cap_buf_pos;
+    uint32_t cap_phase;
+    uint8_t  cap_channels;
     uint8_t  cap_active;
+
+    /* Host samples arrive in blocks and are consumed by the emulated ADC clock. */
+    int16_t  cap_input[EMU8008_CAP_INPUT_FRAMES][2];
+    uint32_t cap_input_read;
+    uint32_t cap_input_write;
+    uint32_t cap_input_rate;
+    uint32_t cap_input_phase;
+    uint8_t  cap_input_ready;
+    uint8_t  cap_source[2];
+    double   cap_gain[2];
+    int      cap_mic_boost;
 
     /* AC97 / Codec Mixer state (IOBase + 0x16/0x1C/0x1E) */
     uint8_t  ac97_latch;
@@ -164,7 +200,7 @@ emu8008_update_irq(emu8008_t *dev)
         assert_irq = 1;
     if ((dev->int_status & EMU8008_INT_BIT22_20) && (dev->int_enable & EMU8008_INTE_BIT22_20))
         assert_irq = 1;
-    if ((dev->int_status & EMU8008_INT_BIT17_16) && (dev->int_enable & EMU8008_INTE_BIT17_16))
+    if ((dev->int_status & EMU8008_INT_ADC_MASK) && (dev->int_enable & EMU8008_INTE_ADC))
         assert_irq = 1;
     if ((dev->int_status & EMU8008_INT_MPU_RX) && (dev->int_enable & EMU8008_INTE_MPU_RX))
         assert_irq = 1;
@@ -195,76 +231,318 @@ emu8008_mpu_irq(void *priv, int state)
     emu8008_update_irq(dev);
 }
 
-static void
-emu8008_clock_tick(void *priv)
-{
-    emu8008_t *dev = (emu8008_t *) priv;
-
-    dev->sample_clock = (dev->sample_clock + 1) & 0x0FFFu;
-    /* ~20.833 us per 48 kHz sample tick */
-    timer_advance_u64(&dev->clock_timer, (uint64_t) (20.833333 * TIMER_USEC));
-}
-
-/* --- EMU8008 Banked Data Port Helpers --- */
+/* --- Wave Capture --- */
 
 static void
 emu8008_put_buffer(int16_t *buffer, int len, void *priv)
 {
     emu8008_t *dev = (emu8008_t *) priv;
-    if (!dev || !dev->cap_mode || !dev->cap_phys_addr || !buffer || len <= 0)
+
+    if (!dev->cap_active)
         return;
 
-    uint32_t rate    = emu8008_cap_rates[dev->cap_rate_idx & 7u];
-    uint32_t step_fp = (SOUND_FREQ << 16) / rate;
-    uint32_t pos_fp  = 0;
-    uint32_t max_fp  = (uint32_t) len << 16;
-    int      stereo  = (dev->cap_mode == 3);
-    int16_t  out_buf[2048];
-    int      out_samples = 0;
+    const int      host_rate = al_capture_get_rate();
+    const uint32_t rate      = (host_rate > 0) ? host_rate : SOUND_FREQ;
 
-    while (pos_fp < max_fp && out_samples < (stereo ? 2046 : 2047)) {
-        int idx = (int) (pos_fp >> 16);
-        if (stereo) {
-            out_buf[out_samples++] = buffer[idx * 2];
-            out_buf[out_samples++] = buffer[idx * 2 + 1];
-        } else {
-            int32_t mono = ((int32_t) buffer[idx * 2] + (int32_t) buffer[idx * 2 + 1]) >> 1;
-            out_buf[out_samples++] = (int16_t) mono;
-        }
-        pos_fp += step_fp;
+    if (dev->cap_input_rate != rate) {
+        dev->cap_input_rate  = rate;
+        dev->cap_input_read  = dev->cap_input_write;
+        dev->cap_input_phase = 0;
+        dev->cap_input_ready = 0;
     }
 
-    uint32_t bytes     = (uint32_t) out_samples * sizeof(int16_t);
-    const uint8_t *src = (const uint8_t *) out_buf;
-    uint32_t prev_half = dev->cap_buf_pos >> 11;
-
-    while (bytes > 0) {
-        uint32_t space = 4096u - dev->cap_buf_pos;
-        uint32_t chunk = (bytes < space) ? bytes : space;
-        dma_bm_write(dev->cap_phys_addr + dev->cap_buf_pos, src, chunk, 4);
-        src += chunk;
-        bytes -= chunk;
-        dev->cap_buf_pos = (dev->cap_buf_pos + chunk) & 0x0FFFu;
-        if ((dev->cap_buf_pos >> 11) != prev_half) {
-            prev_half = dev->cap_buf_pos >> 11;
-            dev->int_status |= 0x00000001u;
-            emu8008_update_irq(dev);
-        }
+    for (int i = 0; i < len; i++) {
+        const uint32_t pos    = dev->cap_input_write++ % EMU8008_CAP_INPUT_FRAMES;
+        dev->cap_input[pos][0] = buffer[i * 2];
+        dev->cap_input[pos][1] = buffer[i * 2 + 1];
+    }
+    if (dev->cap_input_write - dev->cap_input_read > EMU8008_CAP_INPUT_FRAMES) {
+        dev->cap_input_read  = dev->cap_input_write - rate / 25;
+        dev->cap_input_phase = 0;
     }
 }
+
+static void
+emu8008_record_host_frame(emu8008_t *dev, int *left, int *right)
+{
+    const uint32_t available = dev->cap_input_write - dev->cap_input_read;
+    const uint32_t phase     = dev->cap_input_phase + dev->cap_input_rate;
+    const uint32_t advance   = phase / dev->cap_rate;
+
+    *left = *right = 0;
+    /* Prime for two host blocks so capture continues between callbacks. */
+    if (available >= dev->cap_input_rate / 25)
+        dev->cap_input_ready = 1;
+    if (!dev->cap_input_ready || available < 2 || available < advance) {
+        dev->cap_input_ready = 0;
+        return;
+    }
+
+    const int16_t *a        = dev->cap_input[dev->cap_input_read % EMU8008_CAP_INPUT_FRAMES];
+    const int16_t *b        = dev->cap_input[(dev->cap_input_read + 1) % EMU8008_CAP_INPUT_FRAMES];
+    const int64_t  fraction = dev->cap_input_phase;
+
+    *left  = a[0] + (int) ((b[0] - a[0]) * fraction / dev->cap_rate);
+    *right = a[1] + (int) ((b[1] - a[1]) * fraction / dev->cap_rate);
+    dev->cap_input_read += advance;
+    dev->cap_input_phase = phase % dev->cap_rate;
+}
+
+static uint16_t
+emu8008_codec_read(emu8008_t *dev, uint8_t index)
+{
+    if (dev->ac97_codec)
+        return ac97_codec_readw(dev->ac97_codec, index);
+    return dev->ac97_regs[index & 0x7fu];
+}
+
+static void
+emu8008_update_record_gain(emu8008_t *dev)
+{
+    const uint16_t select = emu8008_codec_read(dev, 0x1a);
+    const uint16_t gain   = emu8008_codec_read(dev, 0x1c);
+    const int      muted  = (gain & AC97_MUTE) || (emu8008_codec_read(dev, 0x26) & 0x0100);
+
+    dev->cap_source[0] = (select >> 8) & 7;
+    dev->cap_source[1] = select & 7;
+    /* The record gain register uses 1.5 dB steps. */
+    dev->cap_gain[0]   = muted ? 0.0 : pow(10.0, ((gain >> 8) & 15) * (1.5 / 20.0));
+    dev->cap_gain[1]   = muted ? 0.0 : pow(10.0, (gain & 15) * (1.5 / 20.0));
+    dev->cap_mic_boost = (emu8008_codec_read(dev, 0x0e) & 0x0040) ? 10 : 1;
+}
+
+static void
+emu8008_capture_frame(emu8008_t *dev)
+{
+    const unsigned channels = dev->cap_channels;
+    uint8_t        frame[4];
+    int            input[2];
+
+    emu8008_record_host_frame(dev, &input[0], &input[1]);
+    const int mic = (input[0] + input[1]) * dev->cap_mic_boost / 2;
+    for (unsigned c = 0; c < channels; c++) {
+        int sample = 0;
+        if (dev->cap_source[c] == 0)      /* Microphone */
+            sample = mic;
+        else if (dev->cap_source[c] == 4) /* Line In */
+            sample = input[c];
+        sample = (int) (sample * dev->cap_gain[c]);
+        if (sample < INT16_MIN)
+            sample = INT16_MIN;
+        else if (sample > INT16_MAX)
+            sample = INT16_MAX;
+        const uint16_t pcm = (uint16_t) sample;
+        frame[c * 2]     = (uint8_t) pcm;
+        frame[c * 2 + 1] = pcm >> 8;
+    }
+
+    const uint32_t addr = dev->bank0_regs[EMU8008_CAP_CONTROL] & EMU8008_CAP_PAGE_MASK;
+    dma_bm_write(addr + dev->cap_buf_pos, frame, channels * 2, 2);
+    dev->cap_buf_pos += channels * 2;
+
+    if (dev->cap_buf_pos == dev->cap_size) {
+        dev->cap_buf_pos = 0;
+        dev->int_status |= EMU8008_INT_ADC_FULL;
+        emu8008_update_irq(dev);
+    } else if (dev->cap_buf_pos == dev->cap_size / 2) {
+        dev->int_status |= EMU8008_INT_ADC_HALF;
+        emu8008_update_irq(dev);
+    }
+}
+
+static void
+emu8008_capture_enable(emu8008_t *dev, int enable)
+{
+    if (enable && !dev->cap_active) {
+        dev->cap_active      = 1;
+        dev->cap_buf_pos     = 0;
+        dev->cap_phase       = 0;
+        dev->cap_input_read  = dev->cap_input_write;
+        dev->cap_input_phase = 0;
+        dev->cap_input_ready = 0;
+        sound_in_start_input();
+    } else if (!enable && dev->cap_active) {
+        dev->cap_active = 0;
+        sound_in_stop_input();
+    }
+}
+
+static void
+emu8008_capture_update(emu8008_t *dev)
+{
+    const uint32_t mode = dev->bank0_regs[EMU8008_CAP_CONTROL] & EMU8008_CAP_MODE_MASK;
+    emu8008_capture_enable(dev, (mode == EMU8008_CAP_MONO || mode == EMU8008_CAP_STEREO)
+                                && (dev->pci_conf[0x04] & PCI_COMMAND_L_BM));
+}
+
+static void
+emu8008_capture_control(emu8008_t *dev, uint32_t val)
+{
+    /* The VxD programs the ring length per channel. Codes 1–4 select
+       384, 448, 512 and 640 bytes. Every four codes double those lengths. */
+    static const uint16_t sizes[] = { 320, 384, 448, 512 };
+    const unsigned size    = val & EMU8008_CAP_SIZE_MASK;
+    const uint32_t changed  = dev->bank0_regs[EMU8008_CAP_CONTROL] ^ val;
+
+    dev->bank0_regs[EMU8008_CAP_CONTROL] = val;
+    dev->cap_channels = ((val & EMU8008_CAP_MODE_MASK) == EMU8008_CAP_STEREO) ? 2 : 1;
+    dev->cap_size     = (sizes[size & 3] << (size >> 2)) * dev->cap_channels;
+    dev->cap_rate     = emu8008_cap_rates[(val & EMU8008_CAP_RATE_MASK) >> EMU8008_CAP_RATE_SHIFT];
+    if (changed & (EMU8008_CAP_PAGE_MASK | EMU8008_CAP_SIZE_MASK | EMU8008_CAP_MODE_MASK))
+        dev->cap_buf_pos = 0;
+    if (changed & EMU8008_CAP_RATE_MASK) {
+        dev->cap_phase       = 0;
+        dev->cap_input_phase = 0;
+    }
+    emu8008_capture_update(dev);
+}
+
+static inline int32_t
+emu8008_scale_playback(int32_t sample, int gain)
+{
+    return (int32_t) (((int64_t) sample * gain) >> 15);
+}
+
+static void
+emu8008_playback_fill(emu8008_t *dev, int pos)
+{
+    for (; dev->playback_pos < pos; dev->playback_pos++) {
+        dev->playback_buffer[dev->playback_pos * 2]     = dev->playback_frame[0];
+        dev->playback_buffer[dev->playback_pos * 2 + 1] = dev->playback_frame[1];
+        dev->emu8k->reverb_in_buffer[dev->playback_pos]  = dev->effect_frame.reverb;
+        dev->emu8k->chorus_in_buffer[dev->playback_pos]  = dev->effect_frame.chorus;
+    }
+}
+
+/* Clock the shared effects at the wavetable rate. Flush the old sends and
+   returns before an indexed register write or a codec gain change. */
+static void
+emu8008_update_audio(emu8008_t *dev)
+{
+    const int pos = dev->emu8k->pos;
+    emu8008_playback_fill(dev, wavetable_pos_global);
+    emu8k_update(dev->emu8k);
+    for (int i = pos * 2; i < dev->emu8k->pos * 2; i++)
+        dev->playback_buffer[i] += emu8008_scale_playback(dev->emu8k->buffer[i],
+                                                       dev->playback_gain[i & 1]);
+}
+
+static void
+emu8008_voice_enable(emu8008_t *dev, unsigned voice)
+{
+    const emu8k_voice_t *v = &dev->emu8k->voice[voice];
+    if (v->cpf_curr_pitch && DCYSUSV_GENERATOR_ENGINE_ON(v->dcysusv))
+        dev->active_voices |= 1u << voice;
+    else
+        dev->active_voices &= ~(1u << voice);
+}
+
+static void
+emu8008_playback_irq(emu8008_t *dev)
+{
+    if ((dev->int_status & EMU8008_INT_VOICE_LOOP) || !dev->loop_irq_queue)
+        return;
+
+    unsigned voice = 0;
+    while (!(dev->loop_irq_queue & (1u << voice)))
+        voice++;
+
+    dev->loop_irq_queue &= ~(1u << voice);
+    dev->int_status |= EMU8008_INT_VOICE_LOOP | voice;
+    emu8008_update_irq(dev);
+}
+
+static int16_t
+emu8008_playback_sample(const void *context, uint32_t addr)
+{
+    const uint32_t table = *(const uint32_t *) context;
+    uint32_t page = (addr & EMU8K_MEM_ADDRESS_MASK) >> 11;
+    uint32_t entry;
+    int16_t  sample;
+
+    /* The 8K-entry PCI page table stores the physical page address shifted
+       left one bit, with the virtual page number in the low 13 bits. */
+    dma_bm_read(table + page * 4u, (uint8_t *) &entry, sizeof(entry), 4);
+    if ((entry & EMU8008_SAMPLE_PAGE_MASK) != page)
+        return 0;
+
+    dma_bm_read(((entry & ~EMU8008_SAMPLE_PAGE_MASK) >> 1) + (addr & 0x7FFu) * 2u,
+                (uint8_t *) &sample, sizeof(sample), 2);
+    return sample;
+}
+
+static void
+emu8008_playback_tick(emu8008_t *dev)
+{
+    int32_t mix[2] = { 0, 0 };
+    emu8k_effect_sends_t sends = { 0 };
+    const uint32_t table = dev->bank0_regs[EMU8008_PAGE_TABLE] & ~0xFFFu;
+
+    emu8008_playback_fill(dev, wavetable_pos_global);
+    if (dev->active_voices && table && (dev->pci_conf[0x04] & PCI_COMMAND_L_BM)) {
+        for (unsigned i = 0; i < EMU8K_VOICE_COUNT; i++) {
+            const uint32_t bit = 1u << i;
+            if (!(dev->active_voices & bit))
+                continue;
+
+            const unsigned crossed = emu8k_pci_voice_tick(&dev->emu8k->voice[i],
+                                                          emu8008_playback_sample, &table, mix, &sends);
+            if ((dev->bank0_regs[EMU8008_LOOP_IRQ_ENABLE] & bit) &&
+                (((crossed & EMU8K_LOOP_START) && !(dev->bank0_regs[EMU8008_LOOP_START_MASK] & bit)) ||
+                 ((crossed & EMU8K_LOOP_END) && !(dev->bank0_regs[EMU8008_LOOP_END_MASK] & bit)))) {
+                dev->bank0_regs[EMU8008_LOOP_PENDING] |= bit;
+                dev->loop_irq_queue |= bit;
+            }
+        }
+    }
+    dev->effect_frame = sends;
+    for (unsigned channel = 0; channel < 2; channel++)
+        dev->playback_frame[channel] = emu8008_scale_playback(mix[channel], dev->playback_gain[channel]);
+    emu8008_playback_irq(dev);
+}
+
+static void
+emu8008_clock_tick(void *priv)
+{
+    emu8008_t *dev = (emu8008_t *) priv;
+
+    dev->sample_clock++;
+    emu8008_playback_tick(dev);
+    if (dev->cap_active) {
+        dev->cap_phase += dev->cap_rate;
+        if (dev->cap_phase >= SOUND_FREQ) {
+            dev->cap_phase -= SOUND_FREQ;
+            emu8008_capture_frame(dev);
+        }
+    }
+    timer_advance_u64(&dev->clock_timer, (1000000 * TIMER_USEC) / SOUND_FREQ);
+}
+
+/* --- EMU8008 Banked Data Port Helpers --- */
 
 static void
 emu8008_get_wt_buffer(int32_t *buffer, uint16_t len, void *priv)
 {
     emu8008_t *dev = (emu8008_t *) priv;
-    if (!dev || !dev->emu8k || !buffer || !len)
-        return;
-    emu8k_update(dev->emu8k);
-    for (uint32_t c = 0; c < (uint32_t) len * 2; c++)
-        buffer[c] += dev->emu8k->buffer[c];
+    emu8008_update_audio(dev);
+    for (unsigned i = 0; i < len * 2u; i++)
+        buffer[i] += dev->playback_buffer[i];
+    dev->playback_pos = 0;
+
     emu8k_reset_buffer(dev->emu8k);
 }
 
+
+/* The native 16-bit voice and INIT banks use the EMU8000 index layout.
+   Bank 4 also has a separate 32-bit map for CCCA and PCI control. */
+static const uint16_t emu8008_voice_ports[3] = { 0x0A20, 0x0A22, 0x0E20 };
+
+static int
+emu8008_is_core_word(uint8_t bank, uint8_t idx)
+{
+    return ((bank == 4 || bank == 5) && idx >= 0x40) ||
+           (bank == 6 && idx < 0xC0);
+}
 
 static uint32_t
 emu8008_read_reg32(emu8008_t *dev, uint8_t bank, uint8_t idx)
@@ -276,23 +554,27 @@ emu8008_read_reg32(emu8008_t *dev, uint8_t bank, uint8_t idx)
 
     static const uint16_t emu8k_bank_ports[4] = { 0x0620, 0x0A20, 0x0A22, 0x0E20 };
 
-    if (bank == 0 && idx == 0x01 && dev->cap_phys_addr) {
-        return (dev->cap_phys_addr & 0xFFFFF000u) |
-               ((uint32_t) (dev->cap_mode & 0x3u) << EMU8008_CAP_MODE_SHIFT) |
-               ((uint32_t) (dev->cap_rate_idx & 0x7u) << EMU8008_CAP_RATE_SHIFT) |
-               (dev->cap_frames & EMU8008_CAP_FRAMES_MASK);
-    }
+    if (bank == 0)
+        return dev->bank0_regs[idx];
 
-    if (bank == 4)
+    if (emu8008_is_core_word(bank, idx))
+        return emu8k_inw(emu8008_voice_ports[bank - 4], dev->emu8k);
+
+    if (bank == 5 && idx == 0x3B)
+        return dev->sample_clock;
+
+    if (bank == 4) {
+        /* EMU8008.VXD checks bit 6 of 3Eh after sending 26h to 3Fh
+           at the end of chip initialization. */
+        if (idx == 0x3E && (dev->bank4_regs[0x3F] & 0xFF) == 0x26)
+            return dev->bank4_regs[idx] | 0x40;
         return dev->bank4_regs[idx];
+    }
     if (bank == 5)
         return dev->bank5_regs[idx];
 
     if (dev->emu8k && bank < 4)
         return emu8k_inl(emu8k_bank_ports[bank], dev->emu8k);
-
-    if (bank == 0)
-        return dev->bank0_regs[idx];
 
     return 0xFFFFFFFFu;
 }
@@ -307,26 +589,24 @@ emu8008_write_reg32(emu8008_t *dev, uint8_t bank, uint8_t idx, uint32_t val)
 
     static const uint16_t emu8k_bank_ports[4] = { 0x0620, 0x0A20, 0x0A22, 0x0E20 };
 
+    if (bank == 0 && idx == EMU8008_CAP_CONTROL) {
+        emu8008_capture_control(dev, val);
+        return;
+    }
+
     if (bank == 0) {
         dev->bank0_regs[idx] = val;
-        if (idx == 0x01) {
-            dev->cap_phys_addr = val & 0xFFFFF000u;
-            dev->cap_mode      = (uint8_t) ((val & EMU8008_CAP_MODE_MASK) >> EMU8008_CAP_MODE_SHIFT);
-            dev->cap_rate_idx  = (uint8_t) ((val & EMU8008_CAP_RATE_MASK) >> EMU8008_CAP_RATE_SHIFT);
-            dev->cap_frames    = (uint8_t) (val & EMU8008_CAP_FRAMES_MASK);
-            if (dev->cap_mode && !dev->cap_active) {
-                dev->cap_buf_pos = 0;
-                dev->cap_active  = 1;
-                sound_in_start_input();
-            } else if (!dev->cap_mode && dev->cap_active) {
-                dev->cap_active = 0;
-                sound_in_stop_input();
-            }
-            emu8008_log(dev->log, "EMU8008: Wave Capture page=%08X mode=%u rate=%uHz frames=%u\n",
-                        dev->cap_phys_addr, dev->cap_mode, emu8008_cap_rates[dev->cap_rate_idx], dev->cap_frames);
-        }
-        if (dev->emu8k)
-            emu8k_outl(0x0620, val, dev->emu8k);
+        return;
+    }
+
+    if (emu8008_is_core_word(bank, idx)) {
+        const unsigned voice = idx & (EMU8K_VOICE_COUNT - 1);
+        if (bank == 6 || idx >= 0x80)
+            dev->emu8k->pci_voices |= 1u << voice;
+        emu8008_update_audio(dev);
+        emu8k_outw(emu8008_voice_ports[bank - 4], (uint16_t) val, dev->emu8k);
+        if (bank == 4 && idx >= 0xA0 && idx < 0xC0)
+            emu8008_voice_enable(dev, voice);
         return;
     }
 
@@ -340,8 +620,12 @@ emu8008_write_reg32(emu8008_t *dev, uint8_t bank, uint8_t idx, uint32_t val)
         return;
     }
 
-    if (dev->emu8k && bank < 4)
+    /* The remaining compatibility aliases share the ISA pointer. A voice
+       already claimed by the native register map belongs to the PCI clock. */
+    if (bank < 4 && !(dev->emu8k->pci_voices & (1u << (idx & (EMU8K_VOICE_COUNT - 1))))) {
+        emu8008_update_audio(dev);
         emu8k_outl(emu8k_bank_ports[bank], val, dev->emu8k);
+    }
 }
 
 /* --- BAR0 I/O Handlers --- */
@@ -392,9 +676,7 @@ emu8008_inw(uint16_t port, void *priv)
         case 0x1C:
             if (dev->ac97_index >= 0xEB && dev->ac97_index <= 0xED)
                 return dev->codec_ext_regs[dev->ac97_index - 0xEB];
-            if (dev->ac97_codec)
-                return ac97_codec_readw(dev->ac97_codec, dev->ac97_index);
-            return dev->ac97_regs[dev->ac97_index & 0x7Fu];
+            return emu8008_codec_read(dev, dev->ac97_index);
         default:
             return 0xFFFF;
     }
@@ -408,6 +690,17 @@ emu8008_inl(uint16_t port, void *priv)
 
     if (off <= 0x0D) {
         uint8_t bank = (uint8_t) (off >> 1);
+        switch (bank) {
+            case 0: return dev->bank0_regs[dev->ptr_reg];
+            case 2:
+                return emu8k_voice_read(&dev->emu8k->voice[dev->ptr_reg & (EMU8K_VOICE_COUNT - 1)],
+                                        dev->ptr_reg >> 5);
+            case 4:
+                if (dev->ptr_reg < EMU8K_VOICE_COUNT)
+                    return emu8k_voice_read(&dev->emu8k->voice[dev->ptr_reg], EMU8K_VOICE_CCCA);
+                return dev->bank4_dwords[dev->ptr_reg - EMU8K_VOICE_COUNT];
+            default: break;
+        }
         return emu8008_read_reg32(dev, bank, dev->ptr_reg);
     }
 
@@ -430,8 +723,8 @@ emu8008_outb(uint16_t port, uint8_t val, void *priv)
     switch (off) {
         case 0x0E:
             dev->ptr_reg = val;
-            if (dev->emu8k)
-                emu8k_outw(0x0E22, val, dev->emu8k);
+            emu8008_update_audio(dev);
+            emu8k_outw(0x0E22, val, dev->emu8k);
             break;
         case 0x14:
         case 0x15:
@@ -464,7 +757,10 @@ emu8008_outw(uint16_t port, uint16_t val, void *priv)
 
     if (off <= 0x0D) {
         uint8_t bank = (uint8_t) (off >> 1);
-        emu8008_write_reg32(dev, bank, dev->ptr_reg, val);
+        uint32_t data = val;
+        if (bank == 0 && dev->ptr_reg == EMU8008_CAP_CONTROL)
+            data |= dev->bank0_regs[EMU8008_CAP_CONTROL] & 0xFFFF0000u;
+        emu8008_write_reg32(dev, bank, dev->ptr_reg, data);
         return;
     }
 
@@ -486,6 +782,31 @@ emu8008_outw(uint16_t port, uint16_t val, void *priv)
                 dev->ac97_regs[dev->ac97_index & 0x7Fu] = val;
                 if (dev->ac97_codec)
                     ac97_codec_writew(dev->ac97_codec, dev->ac97_index, val);
+                switch (dev->ac97_index) {
+                    case 0x00:
+                        emu8008_update_record_gain(dev);
+                        /* Codec reset also resets master and PCM volume. */
+                        /* fall through */
+                    case 0x02:
+                    case 0x18:
+                        if (dev->ac97_codec) {
+                            int master_l, master_r, pcm_l, pcm_r;
+                            emu8008_update_audio(dev);
+                            ac97_codec_getattn(dev->ac97_codec, 0x02, &master_l, &master_r);
+                            ac97_codec_getattn(dev->ac97_codec, 0x18, &pcm_l, &pcm_r);
+                            dev->playback_gain[0] = (int) (((int64_t) master_l * pcm_l) >> 15);
+                            dev->playback_gain[1] = (int) (((int64_t) master_r * pcm_r) >> 15);
+                        }
+                        break;
+                    case 0x0E:
+                    case 0x1A:
+                    case 0x1C:
+                    case 0x26:
+                        emu8008_update_record_gain(dev);
+                        break;
+                    default:
+                        break;
+                }
             }
             break;
         default:
@@ -501,6 +822,43 @@ emu8008_outl(uint16_t port, uint32_t val, void *priv)
 
     if (off <= 0x0D) {
         uint8_t bank = (uint8_t) (off >> 1);
+        const uint8_t index = dev->ptr_reg;
+        switch (bank) {
+            case 0:
+                if (index == EMU8008_CAP_CONTROL)
+                    emu8008_capture_control(dev, val);
+                else if (index == EMU8008_LOOP_PENDING || index == EMU8008_LOOP_END_PENDING)
+                    dev->bank0_regs[index] &= ~val;
+                else
+                    dev->bank0_regs[index] = val;
+                return;
+            case 2: {
+                const unsigned voice = index & (EMU8K_VOICE_COUNT - 1);
+                const unsigned reg = index >> 5;
+                dev->emu8k->pci_voices |= 1u << voice;
+                emu8k_voice_write(&dev->emu8k->voice[voice], reg, val);
+                if (reg == EMU8K_VOICE_CPF)
+                    emu8008_voice_enable(dev, voice);
+                return;
+            }
+            case 4:
+                if (index < EMU8K_VOICE_COUNT) {
+                    emu8k_voice_t *voice = &dev->emu8k->voice[index];
+                    dev->emu8k->pci_voices |= 1u << index;
+                    voice->addr.addr = 0;
+                    emu8k_voice_write(voice, EMU8K_VOICE_CCCA, val);
+                } else {
+                    dev->bank4_dwords[index - EMU8K_VOICE_COUNT] = val;
+                    /* HWCF4/5 are the chorus right delay offset and LFO rate. */
+                    if (index == 0x29 || index == 0x2A) {
+                        emu8008_update_audio(dev);
+                        emu8k_outl(0x0A20, val, dev->emu8k);
+                    }
+                }
+                return;
+            default:
+                break;
+        }
         emu8008_write_reg32(dev, bank, dev->ptr_reg, val);
         return;
     }
@@ -508,7 +866,10 @@ emu8008_outl(uint16_t port, uint32_t val, void *priv)
     switch (off) {
         case 0x10:
             /* W1C interrupt acknowledge */
+            if (val & EMU8008_INT_VOICE_LOOP)
+                val |= EMU8008_INT_WAV_MASK;
             dev->int_status &= ~val;
+            emu8008_playback_irq(dev);
             emu8008_update_irq(dev);
             break;
         default:
@@ -562,6 +923,7 @@ emu8008_pci_write(int func, int addr, UNUSED(int len), uint8_t val, void *priv)
         case 0x04:
             dev->pci_conf[0x04] = val & (PCI_COMMAND_IO | PCI_COMMAND_L_BM);
             emu8008_io_remap(dev, dev->io_base);
+            emu8008_capture_update(dev);
             break;
         case 0x10:
             dev->pci_conf[0x10] = (val & 0xE0u) | 0x01u;
@@ -588,14 +950,24 @@ emu8008_reset(void *priv)
 {
     emu8008_t *dev = (emu8008_t *) priv;
 
-    dev->int_status  = 0;
-    dev->int_enable  = 0;
-    dev->ptr_reg     = 0;
-    dev->chip_id_reg = 0x0C;
-    dev->cap_mode    = 0;
+    dev->int_status   = 0;
+    dev->int_enable   = 0;
+    dev->ptr_reg      = 0;
+    dev->chip_id_reg  = 0x0C;
+    dev->sample_clock = 0;
+    emu8008_capture_enable(dev, 0);
     memset(dev->bank0_regs, 0, sizeof(dev->bank0_regs));
     memset(dev->bank4_regs, 0, sizeof(dev->bank4_regs));
     memset(dev->bank5_regs, 0, sizeof(dev->bank5_regs));
+    memset(dev->bank4_dwords, 0, sizeof(dev->bank4_dwords));
+    emu8k_reset_pci_voices(dev->emu8k);
+    dev->active_voices = 0;
+    dev->loop_irq_queue = 0;
+    dev->playback_pos = 0;
+    dev->playback_frame[0] = dev->playback_frame[1] = 0;
+    dev->effect_frame = (emu8k_effect_sends_t) { 0 };
+    dev->playback_gain[0] = dev->playback_gain[1] = 0;
+    emu8008_update_record_gain(dev);
     emu8008_update_irq(dev);
 }
 
@@ -605,6 +977,11 @@ emu8008_init(const device_t *info)
     emu8008_t *dev = calloc(1, sizeof(emu8008_t));
     if (!dev)
         return NULL;
+    dev->emu8k = calloc(1, sizeof(emu8k_t));
+    if (!dev->emu8k) {
+        free(dev);
+        return NULL;
+    }
 
     dev->subsys_id = (uint16_t) info->local;
 
@@ -631,7 +1008,10 @@ emu8008_init(const device_t *info)
     pci_add_card(PCI_ADD_NORMAL, emu8008_pci_read, emu8008_pci_write, dev, &dev->pci_slot);
 
     /* Attach AC97 codec, MPU-401 UART, and legacy SB16 emulation */
-    dev->ac97_codec = device_add(ac97_codec_get(AC97_CODEC_STAC9708));
+    ac97_codec       = &dev->ac97_codec;
+    ac97_codec_count = 1;
+    ac97_codec_id    = 0;
+    device_add(&stac9708_device);
     dev->mpu = (mpu_t *) calloc(1, sizeof(mpu_t));
     if (dev->mpu)
         mpu401_init(dev->mpu, 0, 0, M_UART, 1);
@@ -640,12 +1020,9 @@ emu8008_init(const device_t *info)
         mpu401_irq_attach(dev->mpu, emu8008_mpu_irq, NULL, dev);
 
     /* EMU8000 wavetable core (ROM-less PCI mode) */
-    dev->emu8k = (emu8k_t *) calloc(1, sizeof(emu8k_t));
-    if (dev->emu8k)
-        emu8k_init(dev->emu8k, 0, device_get_config_int("onboard_ram"));
+    emu8k_init(dev->emu8k, 0, device_get_config_int("onboard_ram"));
 
-    if (dev->emu8k)
-        wavetable_add_handler(emu8008_get_wt_buffer, dev);
+    wavetable_add_handler(emu8008_get_wt_buffer, dev);
     sound_in_add_handler(emu8008_put_buffer, dev);
 
     /* Creative Gameport Joystick (VIRTUAL\*CTL7009) */
@@ -667,10 +1044,8 @@ emu8008_close(void *priv)
     if (!dev)
         return;
 
-    if (dev->cap_active) {
-        dev->cap_active = 0;
-        sound_in_stop_input();
-    }
+    timer_disable(&dev->clock_timer);
+    emu8008_capture_enable(dev, 0);
     sound_in_remove_handler(emu8008_put_buffer, dev);
     emu8008_io_remap(dev, 0);
     if (dev->log != NULL) {

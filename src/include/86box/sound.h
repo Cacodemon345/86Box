@@ -337,12 +337,18 @@ extern const device_t ess_solo1_onboard_device;
 
 /* Ensoniq AudioPCI */
 extern const device_t es1370_device;
+/* Aureal Vortex 2 */
+extern const device_t vortex2_device;
+
 extern const device_t es1371_device;
 extern const device_t es1371_onboard_device;
 extern const device_t es1373_device;
 extern const device_t es1373_onboard_device;
 extern const device_t ct5880_device;
 extern const device_t ct5880_onboard_device;
+
+/* Ensoniq Soundscape */
+extern const device_t sscape_device;
 
 /* Gravis UltraSound family */
 extern const device_t gus_device;
@@ -356,6 +362,12 @@ extern const device_t gus_pnp_device;
 extern const device_t gus_pnp_new_device;
 extern const device_t gus_pnp_nocd_device;
 extern const device_t gus_pnp_compaq_device;
+
+/* IBM M-ACPA/A (Audio Capture & Playback Adapter) */
+extern const device_t acpa_mca_device;
+
+/* IBM PS/2 Speech Adapter */
+extern const device_t ibm_speech_device;
 
 /* IBM Music Feature Card */
 extern const device_t imfc_device;

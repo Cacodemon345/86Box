@@ -170,6 +170,7 @@ static const SOUND_CARD sound_cards[] = {
     { &ess_488_device               },
     { &ess_1488_device              },
     { &imfc_device                  },
+    { &ibm_speech_device            },
     { &ssi2001_device               },
     { &thunderboard_device          },
     { &mmb_device                   },
@@ -205,6 +206,7 @@ static const SOUND_CARD sound_cards[] = {
     { &cs4232_device                },
     { &cs4235_device                },
     { &cs4236b_device               },
+    { &sscape_device                },
     { &ess_688_device               },
     { &ess_ess0100_pnp_device       },
     { &ess_ess0968_pnp_688_device   },
@@ -255,6 +257,7 @@ static const SOUND_CARD sound_cards[] = {
     /* MCA */
     { &adlib_mca_device             },
     { &ess_chipchat_16_mca_device   },
+    { &acpa_mca_device              },
     { &ncr_business_audio_device    },
     { &sb_mcv_device                },
     { &sb_pro_mcv_device            },
@@ -262,6 +265,7 @@ static const SOUND_CARD sound_cards[] = {
     { &ess_soundpiper_16_mca_device },
     { &ess_soundpiper_32_mca_device },
     /* PCI */
+    { &vortex2_device               },
     { &cmi8338_device               },
     { &cmi8738_device               },
     { &es1370_device                },

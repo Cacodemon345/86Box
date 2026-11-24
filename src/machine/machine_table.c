@@ -13269,7 +13269,7 @@ const machine_t machines[] = {
             .max_multi   = 0
         },
         .bus_flags = MACHINE_PS2_PCI,
-        .flags     = MACHINE_SUPER_IO | MACHINE_IDE_DUAL,
+        .flags     = MACHINE_SUPER_IO | MACHINE_IDE,
         .ram       = {
             .min  = 1024,
             .max  = 131072,
@@ -22827,7 +22827,7 @@ const machine_t machines[] = {
             .max_bus     = 100000000,
             .min_voltage = 1300,
             .max_voltage = 3500,
-            .min_multi   = 2.0,
+            .min_multi   = 1.5,
             .max_multi   = 6.0
         },
         .bus_flags = MACHINE_PS2_AGP | MACHINE_BUS_USB,
@@ -24445,7 +24445,7 @@ const machine_t machines[] = {
     /* Has a National Semiconductor PC87307 Super I/O with on-chip KBC, which has one of these
        firmwares: AMI '5' MegaKey, Phoenix MultiKey/42 1.37, or Phoenix MultiKey/42i 4.16. */
     {
-        .name              = "[i440LX] AST Bravo MS-T 6233",
+        .name              = "[i440LX] AST Bravo MS 6xxx",
         .internal_name     = "bravomst6233",
         .type              = MACHINE_TYPE_SLOT1,
         .chipset           = MACHINE_CHIPSET_INTEL_440LX,
@@ -24489,7 +24489,7 @@ const machine_t machines[] = {
         .vid_device               = &mach64gtb_onboard_device,
         .snd_device               = &ess_1869_onboard_device,
         .net_device               = &i82557b_onboard_device,
-        .aliases                  = { "AST Bravo MS-T 6300", "AST 440LX", "" }
+        .aliases                  = { "AST Bravo MS 6233", "AST Bravo MS 6266", "AST Bravo MS 6300", "AST Bravo MS 6333", "Samsung BA41-10019V", "" }
     },
     /* Has a National Semiconductor PC87307 Super I/O with on-chip KBC, which has one of these
        firmwares: AMI '5' MegaKey, Phoenix MultiKey/42 1.37, or Phoenix MultiKey/42i 4.16. */
@@ -25306,7 +25306,7 @@ const machine_t machines[] = {
         },
         .bus_flags = MACHINE_PS2_AGP | MACHINE_BUS_USB,
 #ifdef USE_AIC7890
-        .flags     = MACHINE_IDE_DUAL | MACHINE_APM | MACHINE_ACPI | MACHINE_NIC | MACHINE_USB | MACHINE_SCSI, /* Machine has internal SCSI: Adaptec AIC-7890AB */
+        .flags     = MACHINE_IDE_DUAL | MACHINE_APM | MACHINE_ACPI | MACHINE_NIC | MACHINE_USB | MACHINE_SCSI,
 #else
         .flags     = MACHINE_IDE_DUAL | MACHINE_APM | MACHINE_ACPI | MACHINE_NIC | MACHINE_USB,
 #endif

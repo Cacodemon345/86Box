@@ -59,7 +59,6 @@ extern "C" {
 #include <86box/timer.h>
 #include <86box/apm.h>
 #include <86box/nvr.h>
-#include <86box/acpi.h>
 #include <86box/renderdefs.h>
 #include <86box/midi.h>
 #include <86box/midi_lcd.h>
@@ -590,6 +589,10 @@ MainWindow::MainWindow(QWidget *parent)
 
 #ifdef Q_OS_MACOS
     ui->actionApply_fullscreen_stretch_mode_when_maximized->setVisible(false);
+#else
+    /* Hard power off is the same as exiting. Only macOS needs it, since Qt
+       moves Exit out of the Action menu into the application menu there. */
+    ui->actionPower_off->setVisible(false);
 #endif
 
     if ((QApplication::platformName().contains("eglfs") || QApplication::platformName() == "haiku")) {
@@ -1423,7 +1426,7 @@ MainWindow::on_actionNon_maskable_interrupt_triggered()
 void
 MainWindow::on_actionPause_triggered()
 {
-    runctl_pause_user_toggle();
+    runctl_toggle_pause();
 }
 
 void
@@ -1970,19 +1973,21 @@ MainWindow::hasKanaLock()
     return machine_has_bus(machine, MACHINE_BUS_PS2_PORTS | MACHINE_BUS_AT_KBD) && (keyboard_type == KEYBOARD_TYPE_AX);
 }
 
-/* Labels the power off action, which only asks for confirmation without ACPI. */
+/* Labels the soft power off action after the machine's power button: an ACPI
+   power button event, or the PC Convertible's suspend. Machines without one
+   can only be powered off hard. */
 void
 MainWindow::updatePowerOffAction()
 {
-    const bool has_power_button = device_has_power_button();
-    if (acpi_enabled || has_power_button) {
-        ui->actionACPI_Shutdown->setText(tr("Power &off (soft)"));
-        ui->actionACPI_Shutdown->setToolTip(tr("Power off (soft)"));
+    const int type = machine_power_button_type();
+    if (type == POWER_BUTTON_CONVERTIBLE_SUSPEND) {
+        ui->actionACPI_Shutdown->setText(tr("Suspen&d"));
+        ui->actionACPI_Shutdown->setToolTip(tr("Suspend"));
     } else {
-        ui->actionACPI_Shutdown->setText((confirm_exit && confirm_exit_cmdl) ? tr("Power &off…") : tr("Power &off"));
-        ui->actionACPI_Shutdown->setToolTip(tr("Power off"));
+        ui->actionACPI_Shutdown->setText(tr("&ACPI shutdown"));
+        ui->actionACPI_Shutdown->setToolTip(tr("ACPI shutdown"));
     }
-    ui->actionACPI_Shutdown->setEnabled(true);
+    ui->actionACPI_Shutdown->setEnabled(type >= 0);
 }
 
 void
@@ -2100,7 +2105,7 @@ MainWindow::keyReleaseEvent(QKeyEvent *event)
         return;
     if (event->key() == Qt::Key_Pause) {
         if (keyboard_recv_ui(0x38) && keyboard_recv_ui(0x138)) {
-            runctl_pause_user_toggle();
+            runctl_toggle_pause();
         }
     }
 
@@ -2457,7 +2462,7 @@ MainWindow::on_actionUpdate_mouse_every_CPU_frame_triggered()
 void
 MainWindow::on_actionFast_forward_triggered()
 {
-    runctl_fast_forward_toggle();
+    runctl_toggle_fast_forward();
 }
 
 void
@@ -2797,6 +2802,10 @@ void
 MainWindow::updateUiPauseState()
 {
     updateMenuKeyboardState();
+    run_status_t st;
+    runctl_status(&st);
+    /* Locked while automation has the controls or a blocking reason (debugger, sync, fatal) is set. */
+    ui->actionPause->setEnabled(runctl_can_toggle_pause(&st));
     const auto pause_icon   = dopause ? QIcon(":/menuicons/qt/icons/run.ico") : QIcon(":/menuicons/qt/icons/pause.ico");
     const auto tooltip_text = dopause ? QString(tr("Resume execution")) : QString(tr("Pause execution"));
     const auto menu_text    = dopause ? QString(tr("Re&sume")) : QString(tr("&Pause"));
@@ -2807,11 +2816,14 @@ MainWindow::updateUiPauseState()
 }
 
 /* Fast forward can be set from the menu, the accelerator or automation;
-   the check and the muted sound icon follow runctl. */
+   the check, the lock and the muted sound icon follow runctl. */
 void
 MainWindow::updateUiFastForwardState()
 {
-    ui->actionFast_forward->setChecked(runctl_mode() == RUN_MODE_FAST);
+    run_status_t st;
+    runctl_status(&st);
+    ui->actionFast_forward->setEnabled(runctl_can_toggle_fast_forward(&st));
+    ui->actionFast_forward->setChecked(st.mode == RUN_MODE_FAST);
     if (status)
         status->updateSoundIcon();
 }
@@ -2857,12 +2869,12 @@ MainWindow::on_actionPreferences_triggered()
 void
 MainWindow::applyGlobalPreferences()
 {
-#ifdef Q_OS_WINDOWS
-    extern void selectDarkMode();
-    selectDarkMode();
+    const auto size = centralWidget()->size();
+#ifdef HAS_COLOR_SCHEME_HINT
+    util::applyColorScheme();
 #endif
-
-    auto size = centralWidget()->size();
+    /* After the color scheme, which the default style may depend on */
+    util::applyStyle();
 
     Preferences::loadTranslators(QCoreApplication::instance());
     Preferences::reloadStrings();
@@ -2880,10 +2892,24 @@ MainWindow::applyGlobalPreferences()
 
     /* Keep the size of the screen while the menus and the status bar change. */
     QTimer::singleShot(200, this, [this, size] () {
+        if (video_fullscreen || isMaximized())
+            return;
         centralWidget()->setFixedSize(size);
         QApplication::processEvents();
-        if (vid_resize == 1) {
-            centralWidget()->setFixedSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        /* Only preserve the viewport while relaying out the translated UI.
+           The outer window constrains fixed modes; the viewport must still
+           be able to follow the guest's next resolution change. */
+        centralWidget()->setFixedSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        /* A style can change the menu and tool bar heights. Resize the
+           outer window to keep the display size unchanged. */
+        if (vid_resize != 1) {
+            emit resizeContents(vid_resize == 2 ? fixed_size_x : monitors[0].mon_scrnsz_x,
+                                vid_resize == 2 ? fixed_size_y : monitors[0].mon_scrnsz_y);
+        } else {
+            const int barsHeight = menuBar()->height()
+                + (statusBar()->height() * !hide_status_bar)
+                + (ui->toolBar->height() * !hide_tool_bar);
+            resize(size.width(), size.height() + barsHeight);
         }
     });
 
@@ -2918,9 +2944,9 @@ MainWindow::changeEvent(QEvent *event)
         auto size = this->centralWidget()->size();
         QApplication::setFont(Preferences::getUIFont());
         processEventsOnlyWhenPausedOrModal();
-        main_window->centralWidget()->setFixedSize(size);
-        processEventsOnlyWhenPausedOrModal();
-        if (vid_resize == 1) {
+        if (!isFullScreen() && !isMaximized()) {
+            main_window->centralWidget()->setFixedSize(size);
+            processEventsOnlyWhenPausedOrModal();
             main_window->centralWidget()->setFixedSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
         }
     }
@@ -3110,18 +3136,13 @@ MainWindow::on_actionPen_triggered()
 void
 MainWindow::on_actionACPI_Shutdown_triggered()
 {
-    if (acpi_enabled) {
-        acpi_pwrbut_press();
-        return;
-    }
+    runctl_call_wait([](void *) { machine_power_button_press(); }, nullptr);
+}
 
-    if (device_has_power_button()) {
-        runctl_call_wait([](void *) { device_power_button(); }, nullptr);
-        return;
-    }
-
-    /* Without a soft-power method the only way to power the machine off is to
-     * stop the emulator: a hard power off is equivalent to exiting 86Box. */
+/* A hard power off is equivalent to exiting 86Box. */
+void
+MainWindow::on_actionPower_off_triggered()
+{
     if (confirm_exit && confirm_exit_cmdl) {
         QMessageBox questionbox(QMessageBox::Icon::Warning, EMU_NAME, tr("Powering off the emulated machine may cause data loss. Are you sure you want to continue?"), QMessageBox::Yes | QMessageBox::No, this);
         questionbox.setDefaultButton(QMessageBox::No);
