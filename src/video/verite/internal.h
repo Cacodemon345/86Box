@@ -169,6 +169,8 @@ typedef struct {
 
 typedef struct {
     bool     busy;
+    /* At the end of its list but still busy, until verite_core_finish_dma. */
+    bool     parked;
     uint32_t ptr, addr, left;
     uint8_t  swap;
 } verite_dma;
@@ -187,6 +189,7 @@ struct verite_core {
     uint8_t       regs[0x80];
     uint16_t      intr;
     verite_dma    dma;
+    bool          defer_dma_end;
     uint8_t       rom[ROM_SIZE];
     uint64_t      last_ns;
     int64_t       credit;

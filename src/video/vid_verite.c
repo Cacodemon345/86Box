@@ -100,7 +100,7 @@ typedef struct {
     thread_t    *thread;
     event_t     *wake, *done;
     atomic_int   owner, cpu_want, stop, sleeping;
-    atomic_int   irq, drew;
+    atomic_int   irq, drew, dma_parked;
     atomic_uint  head, tail;
     atomic_ullong now_ns;
     atomic_uint  refresh;
@@ -761,6 +761,7 @@ verite_publish(verite_t *v)
     atomic_store_explicit(&w->mirror_seq, seq + 1, memory_order_relaxed);
     atomic_thread_fence(memory_order_release);
     memcpy(w->mirror, regs, sizeof(regs));
+    atomic_store_explicit(&w->dma_parked, verite_core_dma_parked(v->core), memory_order_relaxed);
     atomic_store_explicit(&w->mirror_seq, seq + 2, memory_order_release);
 }
 
@@ -997,6 +998,14 @@ verite_timer(void *priv)
         if (!atomic_load_explicit(&w->wait_input, memory_order_relaxed))
             verite_wake(w);
         verite_serve(v);
+        /* A DMA the worker ran to the end of its list ends here, in step with
+           the guest, unless the guest has extended the list meanwhile. */
+        if (atomic_load_explicit(&w->dma_parked, memory_order_relaxed)) {
+            verite_take(v);
+            verite_core_finish_dma(v->core, &board, v);
+            verite_settle(v);
+            verite_give(v);
+        }
         verite_settle_async(v);
     } else
         verite_run(v);
@@ -1410,6 +1419,7 @@ verite_init(const device_t *info)
             w->done = thread_create_event();
             atomic_store(&w->now_ns, v->time_ns);
             v->w      = w;
+            verite_core_defer_dma_end(v->core, 1);
             w->thread = thread_create_named(verite_worker_thread, v, "Verite RISC");
         }
     }

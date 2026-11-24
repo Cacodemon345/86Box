@@ -40,6 +40,15 @@ int          verite_core_waiting(const verite_core *core);
 /* The last run stopped after the RISC polled the board for too long. */
 int          verite_core_polling(const verite_core *core);
 int          verite_core_input_full(const verite_core *core);
+/* The host appends to a running DMA by patching the end of its list once it
+   reads the DMA busy. A RISC run apart from the guest's time could reach the
+   end before the guest's patch and stop, losing it. With defer set, a DMA at
+   the end of its list stays busy there until verite_core_finish_dma, called
+   in step with the guest, rereads the end and stops it unless the list was
+   extended. */
+void         verite_core_defer_dma_end(verite_core *core, int defer);
+int          verite_core_dma_parked(const verite_core *core);
+void         verite_core_finish_dma(verite_core *core, const verite_board *board, void *opaque);
 void         verite_core_retrace(verite_core *core);
 void         verite_core_set_precharge(verite_core *core, int slow);
 void         verite_core_refresh(verite_core *core, unsigned cycles);

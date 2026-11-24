@@ -276,8 +276,13 @@ dma_command(verite_core *c, verite_bus bus)
     for (unsigned i = 0; i < 0x10000; i++) {
         uint32_t addr = bus.ops->dma_read(bus.opaque, dma->ptr);
         uint32_t len  = bus.ops->dma_read(bus.opaque, dma->ptr + 4);
-        if (!addr)
+        if (!addr) {
+            if (c->defer_dma_end) {
+                dma->parked = true;
+                return;
+            }
             break;
+        }
         if (len & 0x80000000) {
             dma->ptr = addr & ~3U;
             continue;
@@ -298,6 +303,8 @@ dma_pump(verite_core *c, verite_bus bus)
 {
     verite_dma *dma = &c->dma;
     while (dma->busy && c->in_count < IN_FIFO) {
+        if (dma->parked)
+            break;
         unsigned count = IN_FIFO - c->in_count;
         if (count > dma->left / 4)
             count = dma->left / 4;
@@ -451,7 +458,31 @@ verite_core_run(verite_core *c, uint64_t now_ns, uint8_t *vram, size_t size,
 int
 verite_core_waiting(const verite_core *c)
 {
-    return !runnable(c) && !c->dma.busy;
+    return !runnable(c) && (!c->dma.busy || c->dma.parked);
+}
+
+void
+verite_core_defer_dma_end(verite_core *c, int defer)
+{
+    c->defer_dma_end = !!defer;
+}
+
+int
+verite_core_dma_parked(const verite_core *c)
+{
+    return c->dma.busy && c->dma.parked;
+}
+
+void
+verite_core_finish_dma(verite_core *c, const verite_board *ops, void *opaque)
+{
+    if (!verite_core_dma_parked(c))
+        return;
+    bool defer       = c->defer_dma_end;
+    c->defer_dma_end = false;
+    c->dma.parked    = false;
+    dma_command(c, (verite_bus) { ops, opaque });
+    c->defer_dma_end = defer;
 }
 
 int
