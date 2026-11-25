@@ -32,10 +32,10 @@ when executable memory is unavailable.
 
 The **Run the RISC on its own thread** option, on by default, runs the RISC
 and pixel engine on a worker thread. The worker may run up to 1 ms of RISC
-time ahead of the guest, or while a DMA runs only as far as the RISC does in
-step. The guest's data-FIFO writes queue in front of it, DMA reads guest RAM
-directly, and status register reads come from the state the worker last
-published; reads of a running DMA first wait for the worker to reach the
-guest's time, and other register accesses bring the RISC up to the guest's
-time first. The RISC's board writes are applied on the emulation
+time ahead of the guest. The guest's data-FIFO writes queue in front of it,
+DMA reads guest RAM directly, and status register reads come from the state
+the worker last published. The worker records each change of a running
+DMA's registers with its time, and the guest reads them as of its own time;
+a read of a running DMA the worker has not reached yet waits for it. Other
+register accesses bring the RISC up to the guest's time first. The RISC's board writes are applied on the emulation
 thread. Turn the option off to run the RISC in step with the guest CPU.

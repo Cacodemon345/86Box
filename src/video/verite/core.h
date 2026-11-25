@@ -17,6 +17,9 @@ typedef struct verite_board {
     uint32_t (*dma_read)(void *opaque, uint32_t address);
     /* Optional: reads count consecutive dwords for a DMA transfer. */
     void (*dma_read_block)(void *opaque, uint32_t address, uint32_t *words, unsigned count);
+    /* Optional: the DMA registers at 50h-5Bh changed to regs, as of ns in
+       the guest's time. Times only go back for a change the guest made. */
+    void (*dma_moved)(void *opaque, uint64_t ns, const uint32_t regs[3]);
 } verite_board;
 
 verite_core *verite_core_new(void);

@@ -279,6 +279,24 @@ risc_now_ns(const verite_core *c)
 }
 
 static void
+dma_regs(const verite_core *c, uint32_t regs[3])
+{
+    regs[0] = (c->dma.ptr & ~3U) | c->dma.busy;
+    regs[1] = c->dma.addr;
+    regs[2] = c->dma.left | c->dma.swap;
+}
+
+static void
+dma_moved(const verite_core *c, verite_bus bus, uint64_t ns)
+{
+    if (bus.ops->dma_moved) {
+        uint32_t regs[3];
+        dma_regs(c, regs);
+        bus.ops->dma_moved(bus.opaque, ns, regs);
+    }
+}
+
+static void
 dma_command(verite_core *c, verite_bus bus)
 {
     verite_dma *dma = &c->dma;
@@ -311,10 +329,12 @@ dma_command(verite_core *c, verite_bus bus)
 static void
 dma_pump(verite_core *c, verite_bus bus)
 {
-    verite_dma *dma = &c->dma;
+    verite_dma *dma   = &c->dma;
+    bool        moved = false;
     while (dma->busy && c->in_count < IN_FIFO) {
         if (dma->parked)
             break;
+        moved          = true;
         unsigned count = IN_FIFO - c->in_count;
         if (count > dma->left / 4)
             count = dma->left / 4;
@@ -334,6 +354,8 @@ dma_pump(verite_core *c, verite_bus bus)
             dma_command(c, bus);
         }
     }
+    if (moved)
+        dma_moved(c, bus, risc_now_ns(c));
 }
 
 static int64_t
@@ -411,6 +433,8 @@ verite_core_write(verite_core *c, uint8_t reg, uint32_t value, uint8_t len,
         }
         return;
     }
+    uint32_t before[3], after[3];
+    dma_regs(c, before);
     for (unsigned i = 0; i < len; i++) {
         uint8_t r = reg + i, byte = value >> (8 * i);
         if (r == VIO_INTR || r == VIO_INTR + 1) {
@@ -435,6 +459,10 @@ verite_core_write(verite_core *c, uint8_t reg, uint32_t value, uint8_t len,
     }
     if (covers(reg, len, VIO_MODE) && !(verite_core_mode(c) & VMODE_DMA))
         c->dma.busy = false;
+    /* The guest's write happens at the time the RISC was last brought to. */
+    dma_regs(c, after);
+    if (memcmp(before, after, sizeof(after)))
+        dma_moved(c, bus, c->last_ns);
 }
 
 int64_t
@@ -521,6 +549,8 @@ verite_core_finish_dma(verite_core *c, uint64_t now_ns, const verite_board *ops,
     c->dma.parked    = false;
     dma_command(c, (verite_bus) { ops, opaque });
     c->defer_dma_end = defer;
+    /* The guest sees the end from now on, even if the RISC got there later. */
+    dma_moved(c, (verite_bus) { ops, opaque }, c->dma.end_ns < now_ns ? c->dma.end_ns : now_ns);
 }
 
 int
