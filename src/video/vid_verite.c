@@ -85,6 +85,9 @@ enum {
 #define SYNC_AHEAD  2000  /* the same for a catch-up to a queued entry */
 #define SLICE       4000  /* RISC cycles the worker runs per hold of the core */
 #define SYNC_FREE   64    /* queue space left before FIFO space reads sync */
+#define VIO_MEM_ENDIAN_REG 0x43 /* its top bit reads the DMA busy */
+#define DMA_REGS           0x50 /* DMA command pointer, address and length */
+#define DMA_REGS_END       0x5c
 
 enum { OWN_NONE, OWN_WORKER, OWN_CPU };
 enum { REQ_IDLE, REQ_READ, REQ_FLUSH, REQ_DMA, REQ_DONE };
@@ -122,6 +125,7 @@ typedef struct {
     atomic_uint  mirror_seq;
     uint8_t      mirror[32];
     unsigned     mirror_head; /* the queue head the mirror reflects */
+    uint64_t     mirror_ns;   /* the RISC's time when it was published */
     verite_entry queue[QUEUE_SIZE];
 } verite_worker;
 
@@ -763,6 +767,7 @@ verite_publish(verite_t *v)
     atomic_thread_fence(memory_order_release);
     memcpy(w->mirror, regs, sizeof(regs));
     w->mirror_head = atomic_load_explicit(&w->head, memory_order_relaxed);
+    w->mirror_ns   = verite_core_time_ns(v->core);
     atomic_store_explicit(&w->dma_end_ns, verite_core_dma_end_ns(v->core), memory_order_relaxed);
     atomic_store_explicit(&w->dma_parked, verite_core_dma_parked(v->core), memory_order_relaxed);
     atomic_store_explicit(&w->mirror_seq, seq + 2, memory_order_release);
@@ -773,17 +778,26 @@ verite_publish(verite_t *v)
    any queued the FIFO is not empty and the RISC is not waiting for input. A
    guest that waits for an empty FIFO before reusing VRAM the RISC reads
    from, as Speedy3D does without DMA, would otherwise race the worker. */
+static void
+verite_mirror_snapshot(verite_worker *w, uint8_t *regs, unsigned *head, uint64_t *ns)
+{
+    unsigned seq;
+    do {
+        seq = atomic_load_explicit(&w->mirror_seq, memory_order_acquire);
+        memcpy(regs, w->mirror, sizeof(w->mirror));
+        *head = w->mirror_head;
+        *ns   = w->mirror_ns;
+        atomic_thread_fence(memory_order_acquire);
+    } while ((seq & 1) || seq != atomic_load_explicit(&w->mirror_seq, memory_order_relaxed));
+}
+
 static uint32_t
 verite_mirror_read(verite_worker *w, uint8_t reg, uint8_t len)
 {
     uint8_t  regs[32];
-    unsigned seq, head;
-    do {
-        seq = atomic_load_explicit(&w->mirror_seq, memory_order_acquire);
-        memcpy(regs, w->mirror, sizeof(regs));
-        head = w->mirror_head;
-        atomic_thread_fence(memory_order_acquire);
-    } while ((seq & 1) || seq != atomic_load_explicit(&w->mirror_seq, memory_order_relaxed));
+    unsigned head;
+    uint64_t ns;
+    verite_mirror_snapshot(w, regs, &head, &ns);
     unsigned queued = atomic_load_explicit(&w->tail, memory_order_acquire) - head;
     if (queued) {
         /* The queue takes writes while it has room, though never all 32. */
@@ -806,6 +820,18 @@ verite_wake(verite_worker *w)
 {
     if (atomic_load(&w->sleeping))
         thread_set_event(w->wake);
+}
+
+/* How far the worker may run past the guest. A running DMA's position is the
+   guest's to see, and games decide from it whether to wait for a DMA or
+   append to it: Rebel Moon appended to a DMA it found at the end of its
+   list, which in step it would still have found moving, and lost a list to
+   the end being reread halfway through its patch. So while a DMA runs, the
+   worker stays as close to the guest as the RISC does in step. */
+static int64_t
+verite_run_ahead(const verite_core *c)
+{
+    return verite_core_dma_busy(c) ? SYNC_AHEAD : RUN_AHEAD;
 }
 
 /* Applies queued entries and runs the RISC. The worker stops at the end of
@@ -837,7 +863,7 @@ verite_drain(verite_t *v, const verite_board *ops, int worker)
         if (head == tail) {
             if (!worker)
                 break;
-            int64_t used = verite_core_advance(c, now, RUN_AHEAD, budget, vram, VRAM_SIZE, ops, v);
+            int64_t used = verite_core_advance(c, now, verite_run_ahead(c), budget, vram, VRAM_SIZE, ops, v);
             budget -= used;
             more = used > 0 && budget <= 0;
             break;
@@ -852,7 +878,7 @@ verite_drain(verite_t *v, const verite_board *ops, int worker)
         }
         if (worker && e->kind == Q_WRITE && e->reg < 0x10 && verite_core_input_full(c) && !verite_core_waiting(c)) {
             /* Let the RISC make room, as far as it may run ahead. */
-            used = verite_core_advance(c, now, RUN_AHEAD, budget, vram, VRAM_SIZE, ops, v);
+            used = verite_core_advance(c, now, verite_run_ahead(c), budget, vram, VRAM_SIZE, ops, v);
             budget -= used;
             more = used > 0 && !verite_core_polling(c);
             if (!more || verite_core_input_full(c))
@@ -924,6 +950,10 @@ verite_take(verite_t *v)
         verite_pause();
     }
     atomic_store(&w->cpu_want, 0);
+    /* The RISC's board writes from here on land directly, so the ones the
+       worker posted before must land first. A flip or CRTC write applied
+       after a newer one undoes it. */
+    verite_serve(v);
 }
 
 static void
@@ -963,6 +993,42 @@ verite_finish_parked(verite_t *v)
     verite_core_finish_dma(v->core, v->time_ns, &board, v);
     verite_settle(v);
     verite_give(v);
+}
+
+/* A guest reading the DMA's state sees where a DMA running in step would be
+   by now. The worker can fall behind the guest, and what the guest reuses
+   follows the DMA's position: Rebel Moon refills whichever of its two lists
+   the DMA pointer is not in, and a pointer left behind in the older list let
+   it overwrite the newer one before the DMA had read it, losing a frame's
+   commands. So a read of a running DMA waits for the worker to reach the
+   guest's time, answering its board requests meanwhile. While a DMA runs
+   the worker gets no further ahead than the RISC in step, and a DMA
+   published idle needs no wait, since only the guest starts one. */
+static void
+verite_dma_catch_up(verite_t *v, uint8_t reg, uint8_t len)
+{
+    if (!(reg <= VIO_MEM_ENDIAN_REG && reg + len > VIO_MEM_ENDIAN_REG) && !(reg < DMA_REGS_END && reg + len > DMA_REGS))
+        return;
+    verite_worker *w = v->w;
+    for (unsigned spin = 0;; spin++) {
+        uint8_t  regs[32];
+        unsigned head;
+        uint64_t ns;
+        verite_mirror_snapshot(w, regs, &head, &ns);
+        if (!(regs[DMA_REGS - 0x40] & 1) || ns >= v->time_ns)
+            return;
+        if (!spin)
+            verite_wake(w);
+        else if (spin >= (1U << 24)) {
+            /* The worker is not getting there; run the RISC here. */
+            verite_sync(v);
+            verite_settle(v);
+            verite_give(v);
+            return;
+        }
+        verite_serve(v);
+        verite_pause();
+    }
 }
 
 static void
@@ -1081,6 +1147,7 @@ verite_port_read(uint16_t port, uint8_t len, verite_t *v)
            RISC; the host's own registers come from the core directly. */
         if (reg >= 0x40 && reg + len <= 0x60) {
             verite_finish_parked(v);
+            verite_dma_catch_up(v, reg, len);
             verite_settle_async(v);
             return verite_mirror_read(w, reg, len);
         }

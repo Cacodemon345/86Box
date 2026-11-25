@@ -480,9 +480,21 @@ verite_core_defer_dma_end(verite_core *c, int defer)
 }
 
 int
+verite_core_dma_busy(const verite_core *c)
+{
+    return c->dma.busy;
+}
+
+int
 verite_core_dma_parked(const verite_core *c)
 {
     return c->dma.busy && c->dma.parked;
+}
+
+uint64_t
+verite_core_time_ns(const verite_core *c)
+{
+    return risc_now_ns(c);
 }
 
 uint64_t

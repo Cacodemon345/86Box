@@ -49,7 +49,10 @@ int          verite_core_input_full(const verite_core *core);
    Until then the guest reads the DMA busy, as it would in step. */
 void         verite_core_defer_dma_end(verite_core *core, int defer);
 int          verite_core_dma_parked(const verite_core *core);
+int          verite_core_dma_busy(const verite_core *core);
 uint64_t     verite_core_dma_end_ns(const verite_core *core);
+/* How far the RISC has run, in the guest's time. */
+uint64_t     verite_core_time_ns(const verite_core *core);
 int          verite_core_dma_end_due(uint64_t end_ns, uint64_t now_ns);
 void         verite_core_finish_dma(verite_core *core, uint64_t now_ns, const verite_board *board, void *opaque);
 void         verite_core_retrace(verite_core *core);
