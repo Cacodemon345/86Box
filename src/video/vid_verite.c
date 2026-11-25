@@ -1225,6 +1225,13 @@ verite_port_read(uint16_t port, uint8_t len, verite_t *v)
             verite_settle_async(v);
             return verite_core_read(v->core, reg, len, v->vga.svga.vram, VRAM_SIZE);
         }
+        /* The beam registers follow the guest's own CRTC timing, not the
+           RISC's. Drivers spin on them waiting for retrace, so taking the
+           core for each read would hand it to and from the worker per poll. */
+        if ((reg >= CRTC_STATUS && reg + len <= CRTC_STATUS + 4) || (reg >= CRTC_TEST && reg + len <= CRTC_TEST + 4)) {
+            verite_settle_async(v);
+            return verite_ext_read(v, reg, len);
+        }
         verite_sync(v);
         uint32_t value = reg >= 0x80 ? verite_ext_read(v, reg, len)
                                      : verite_core_read(v->core, reg, len, v->vga.svga.vram, VRAM_SIZE);
