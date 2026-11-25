@@ -24,9 +24,6 @@ typedef struct verite_board {
     uint32_t (*dma_read)(void *opaque, uint32_t address);
     /* Optional: reads count consecutive dwords for a DMA transfer. */
     void (*dma_read_block)(void *opaque, uint32_t address, uint32_t *words, unsigned count);
-    /* Optional: the DMA registers at 50h-5Bh changed to regs, as of ns in
-       the guest's time. Times only go back for a change the guest made. */
-    void (*dma_moved)(void *opaque, uint64_t ns, const uint32_t regs[3]);
 } verite_board;
 
 verite_core *verite_core_new(void);
@@ -50,21 +47,9 @@ int          verite_core_waiting(const verite_core *core);
 /* The last run stopped after the RISC polled the board for too long. */
 int          verite_core_polling(const verite_core *core);
 int          verite_core_input_full(const verite_core *core);
-/* The host appends to a running DMA by patching the end of its list once it
-   reads the DMA busy. A RISC run apart from the guest's time could reach the
-   end before the guest's patch and stop, losing it. With defer set, a DMA at
-   the end of its list stays busy there, as of the RISC's time then. Once the
-   guest's time reaches it, verite_core_finish_dma, called in step with the
-   guest, rereads the end and stops the DMA unless the list was extended.
-   Until then the guest reads the DMA busy, as it would in step. */
-void         verite_core_defer_dma_end(verite_core *core, int defer);
-int          verite_core_dma_parked(const verite_core *core);
-int          verite_core_dma_busy(const verite_core *core);
-uint64_t     verite_core_dma_end_ns(const verite_core *core);
-/* How far the RISC has run, in the guest's time. */
-uint64_t     verite_core_time_ns(const verite_core *core);
-int          verite_core_dma_end_due(uint64_t end_ns, uint64_t now_ns);
-void         verite_core_finish_dma(verite_core *core, uint64_t now_ns, const verite_board *board, void *opaque);
+/* Raises interrupt status bits, as the device's own DMA engine does at the
+   end of a list when it feeds the RISC through the data FIFO. */
+void         verite_core_raise(verite_core *core, unsigned bits);
 void         verite_core_retrace(verite_core *core);
 void         verite_core_set_precharge(verite_core *core, int slow);
 void         verite_core_refresh(verite_core *core, unsigned cycles);
