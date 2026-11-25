@@ -1575,7 +1575,7 @@ verite_init(const device_t *info)
         free(v);
         return NULL;
     }
-#ifdef VERITE_JIT_X64
+#ifdef VERITE_JIT
     verite_core_set_jit(v->core, device_get_config_int("recompiler"));
 #endif
     if (rom_init(&v->bios, VERITE_ROM, 0xc0000, ROM_SIZE, ROM_SIZE - 1, 0, MEM_MAPPING_EXTERNAL)) {
@@ -1654,7 +1654,7 @@ verite_close(void *priv)
 }
 
 static const device_config_t verite_config[] = {
-#ifdef VERITE_JIT_X64
+#ifdef VERITE_JIT
     {
         .name        = "recompiler",
         .description = "Dynamic recompiler",

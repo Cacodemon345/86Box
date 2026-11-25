@@ -11,11 +11,17 @@
 #include "../../src/video/verite/risc.c"
 #include "../../src/video/verite/pixel.c"
 #include "../../src/video/verite/pixel_jit_x64.c"
+#include "../../src/video/verite/pixel_jit_arm64.c"
 
 #define HALT               0x6d000000U
 #define INS(op, d, s2, s1) (((uint32_t) (op) << 24) | ((uint32_t) (d) << 16) | ((uint32_t) (s2) << 8) | (uint8_t) (s1))
 #define IMM(op, d, n)      (INS(op, d, 0, 0) | (uint16_t) (n))
 #define COUNT(a)           (sizeof(a) / sizeof((a)[0]))
+#ifdef VERITE_JIT_ARM64
+#    define JIT_NAME "AArch64"
+#else
+#    define JIT_NAME "x86-64"
+#endif
 
 typedef struct {
     verite_core  *core;
@@ -904,7 +910,7 @@ bilinear_matches_nearest_taps(void)
     }
 }
 
-#ifdef VERITE_JIT_X64
+#ifdef VERITE_JIT
 static void
 jit_option(void)
 {
@@ -1062,7 +1068,7 @@ jit_differential(void)
     assert(jit_compare(&a, &b, 5) == 0);
     done(&a);
     done(&b);
-    puts("Vérité x86-64 JIT differential cases passed");
+    puts("Vérité " JIT_NAME " JIT differential cases passed");
 }
 
 /* The native perspective division gives the exact truncating quotient,
@@ -1070,6 +1076,22 @@ jit_differential(void)
 static void
 jit_perspective_division(void)
 {
+#    ifdef VERITE_JIT_ARM64
+    uint8_t *code = a64_alloc_code(4096);
+    assert(code);
+    as  emitter = { code };
+    as *a       = &emitter;
+    /* void fn(pixel_engine *pe, int32_t uv[2]) */
+    a64_write_begin();
+    a64_mov(a, true, PE, 0);
+    LD(UR, 1, 0);
+    LD(VR, 1, 4);
+    emit_divide_uv(a);
+    ST(UR, 1, 0);
+    ST(VR, 1, 4);
+    a64_ret(a);
+    a64_write_end(code, a->p - code);
+#    else
     uint8_t *code = alloc_code();
     assert(code);
     /* The divide reads 2^24 from the span constants before the code. */
@@ -1093,6 +1115,7 @@ jit_perspective_division(void)
     rm(&a, 0x89, R11, R9, NO_INDEX, 4, false, false);
     b8(&a, 0x41), b8(&a, 0x5c); /* pop r12 */
     b8(&a, 0xc3);
+#    endif
     void (*divide)(pixel_engine *, int32_t *) = (void (*)(pixel_engine *, int32_t *)) (void *) code;
 
     static const int32_t edge[] = { INT32_MIN, INT32_MIN + 1, -(1 << 24), -1, 0, 1, 1 << 24, INT32_MAX - 1, INT32_MAX };
@@ -1121,7 +1144,7 @@ jit_perspective_division(void)
             abort();
         }
     }
-    puts("Vérité x86-64 JIT perspective division cases passed");
+    puts("Vérité " JIT_NAME " JIT perspective division cases passed");
 }
 
 static void
@@ -1210,7 +1233,7 @@ jit_pixel_ops(void)
     assert(jit_compare(&a, &b, 64) == 0);
     done(&a);
     done(&b);
-    puts("Vérité x86-64 JIT pixel-engine cases passed");
+    puts("Vérité " JIT_NAME " JIT pixel-engine cases passed");
 }
 
 /* Run both cores for at most steps blocks or instructions, stopping at end_pc. */
@@ -1398,7 +1421,7 @@ main(void)
     bilinear_unpadded_565();
     bilinear_matches_nearest_taps();
     puts("Vérité regression cases passed");
-#ifdef VERITE_JIT_X64
+#ifdef VERITE_JIT
     jit_option();
     jit_differential();
     jit_perspective_division();

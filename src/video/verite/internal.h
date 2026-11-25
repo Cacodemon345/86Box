@@ -201,7 +201,7 @@ struct verite_core {
     bool          slow_precharge;
     unsigned      dram_wait;
     unsigned      polls;
-#ifdef VERITE_JIT_X64
+#ifdef VERITE_JIT
     struct verite_jit       *jit;
     struct verite_pixel_jit *pixel_jit;
     const verite_jit_memory *jit_mem;    /* while native code runs */
@@ -300,7 +300,7 @@ verite_line_stride(uint32_t code)
     return high[(code >> 4) & 7] + low[code & 7];
 }
 
-#ifdef VERITE_JIT_X64
+#ifdef VERITE_JIT
 unsigned risc_jit_run(verite_core *core, verite_memory mem, unsigned budget);
 void     risc_jit_free(verite_core *core);
 bool     pixel_jit_span(verite_core *core, uint8_t op, const uint32_t values[], const uint32_t deltas[],

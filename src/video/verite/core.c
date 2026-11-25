@@ -88,7 +88,7 @@ verite_core_reset(verite_core *c)
     core_reset(c, true);
 }
 
-#ifdef VERITE_JIT_X64
+#ifdef VERITE_JIT
 void
 verite_core_set_jit(verite_core *c, int enabled)
 {

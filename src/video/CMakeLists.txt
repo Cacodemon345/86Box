@@ -23,6 +23,8 @@ add_library(vid OBJECT
     verite/risc.c
     verite/risc_jit_x64.c
     verite/pixel_jit_x64.c
+    verite/risc_jit_arm64.c
+    verite/pixel_jit_arm64.c
 
     # Video Core
     agpgart.c
