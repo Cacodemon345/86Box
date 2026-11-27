@@ -1340,6 +1340,75 @@ verite_vga_out(uint16_t port, uint8_t value, void *priv)
         verite_update_bank(v);
 }
 
+static inline uint16_t
+verite_swap16(uint16_t val)
+{
+    return (uint16_t) ((val >> 8) | (val << 8));
+}
+
+static inline uint32_t
+verite_swap32(uint32_t val, uint8_t endian)
+{
+    switch (endian) {
+        case 0:
+            return val;
+        case 1:
+            return ((val & 0xff00ff00U) >> 8) | ((val & 0x00ff00ffU) << 8);
+        case 2:
+            return (val << 16) | (val >> 16);
+        default:
+            return (val << 24) | ((val & 0x0000ff00U) << 8) | ((val & 0x00ff0000U) >> 8) | (val >> 24);
+    }
+}
+
+static inline uint16_t
+verite_load_le16(const uint8_t *p)
+{
+#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_WIN32)
+    uint16_t val;
+    memcpy(&val, p, sizeof(val));
+    return val;
+#else
+    return (uint16_t) p[0] | ((uint16_t) p[1] << 8);
+#endif
+}
+
+static inline void
+verite_store_le16(uint8_t *p, uint16_t val)
+{
+#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_WIN32)
+    memcpy(p, &val, sizeof(val));
+#else
+    p[0] = (uint8_t) val;
+    p[1] = (uint8_t) (val >> 8);
+#endif
+}
+
+static inline uint32_t
+verite_load_le32(const uint8_t *p)
+{
+#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_WIN32)
+    uint32_t val;
+    memcpy(&val, p, sizeof(val));
+    return val;
+#else
+    return (uint32_t) p[0] | ((uint32_t) p[1] << 8) | ((uint32_t) p[2] << 16) | ((uint32_t) p[3] << 24);
+#endif
+}
+
+static inline void
+verite_store_le32(uint8_t *p, uint32_t val)
+{
+#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_WIN32)
+    memcpy(p, &val, sizeof(val));
+#else
+    p[0] = (uint8_t) val;
+    p[1] = (uint8_t) (val >> 8);
+    p[2] = (uint8_t) (val >> 16);
+    p[3] = (uint8_t) (val >> 24);
+#endif
+}
+
 static uint8_t
 verite_vram_read(verite_t *v, uint32_t addr)
 {
@@ -1354,15 +1423,134 @@ verite_vram_write(verite_t *v, uint32_t addr, uint8_t value)
     v->vga.svga.changedvram[addr >> 12] = changeframecount;
 }
 
+static uint16_t
+verite_vram_readw_aligned(verite_t *v, uint32_t addr)
+{
+    uint32_t base = (addr ^ (v->endian & 2U)) & (VRAM_SIZE - 1);
+    uint16_t val  = verite_load_le16(v->vga.svga.vram + base);
+    return (v->endian & 1U) ? verite_swap16(val) : val;
+}
+
+static void
+verite_vram_writew_aligned(verite_t *v, uint32_t addr, uint16_t val)
+{
+    uint32_t base = (addr ^ (v->endian & 2U)) & (VRAM_SIZE - 1);
+    if (v->endian & 1U)
+        val = verite_swap16(val);
+    verite_store_le16(v->vga.svga.vram + base, val);
+    v->vga.svga.changedvram[base >> 12] = changeframecount;
+}
+
+static uint32_t
+verite_vram_readl_aligned(verite_t *v, uint32_t addr)
+{
+    uint32_t base = addr & (VRAM_SIZE - 1);
+    return verite_swap32(verite_load_le32(v->vga.svga.vram + base), v->endian);
+}
+
+static void
+verite_vram_writel_aligned(verite_t *v, uint32_t addr, uint32_t val)
+{
+    uint32_t base = addr & (VRAM_SIZE - 1);
+    verite_store_le32(v->vga.svga.vram + base, verite_swap32(val, v->endian));
+    v->vga.svga.changedvram[base >> 12] = changeframecount;
+}
+
+static void
+verite_vram_write_l_run_chunk(verite_t *v, uint32_t off, const uint32_t *src, uint32_t count)
+{
+    uint8_t *dst = v->vga.svga.vram + off;
+    switch (v->endian) {
+        case 0:
+#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_WIN32)
+            memcpy(dst, src, (size_t) count << 2);
+#else
+            for (uint32_t i = 0; i < count; i++)
+                verite_store_le32(dst + 4 * i, src[i]);
+#endif
+            break;
+        case 1:
+            for (uint32_t i = 0; i < count; i++)
+                verite_store_le32(dst + 4 * i, verite_swap32(src[i], 1));
+            break;
+        case 2:
+            for (uint32_t i = 0; i < count; i++)
+                verite_store_le32(dst + 4 * i, verite_swap32(src[i], 2));
+            break;
+        default:
+            for (uint32_t i = 0; i < count; i++)
+                verite_store_le32(dst + 4 * i, verite_swap32(src[i], 3));
+            break;
+    }
+    uint32_t first_page = off >> 12;
+    uint32_t last_page  = (off + (count << 2) - 1) >> 12;
+    for (uint32_t page = first_page; page <= last_page; page++)
+        v->vga.svga.changedvram[page] = changeframecount;
+}
+
 static uint8_t
 linear_read(uint32_t addr, void *priv)
 {
     return verite_vram_read(priv, addr & (BAR_SIZE - 1));
 }
+static uint16_t
+linear_readw(uint32_t addr, void *priv)
+{
+    if (!(addr & 1))
+        return verite_vram_readw_aligned(priv, addr & (BAR_SIZE - 1));
+    return linear_read(addr, priv) | ((uint16_t) linear_read(addr + 1, priv) << 8);
+}
+static uint32_t
+linear_readl(uint32_t addr, void *priv)
+{
+    if (!(addr & 3))
+        return verite_vram_readl_aligned(priv, addr & (BAR_SIZE - 1));
+    return linear_read(addr, priv) | ((uint32_t) linear_read(addr + 1, priv) << 8)
+         | ((uint32_t) linear_read(addr + 2, priv) << 16) | ((uint32_t) linear_read(addr + 3, priv) << 24);
+}
 static void
 linear_write(uint32_t addr, uint8_t val, void *priv)
 {
     verite_vram_write(priv, addr & (BAR_SIZE - 1), val);
+}
+static void
+linear_writew(uint32_t addr, uint16_t val, void *priv)
+{
+    if (!(addr & 1)) {
+        verite_vram_writew_aligned(priv, addr & (BAR_SIZE - 1), val);
+        return;
+    }
+    linear_write(addr, (uint8_t) val, priv);
+    linear_write(addr + 1, (uint8_t) (val >> 8), priv);
+}
+static void
+linear_writel(uint32_t addr, uint32_t val, void *priv)
+{
+    if (!(addr & 3)) {
+        verite_vram_writel_aligned(priv, addr & (BAR_SIZE - 1), val);
+        return;
+    }
+    linear_write(addr, (uint8_t) val, priv);
+    linear_write(addr + 1, (uint8_t) (val >> 8), priv);
+    linear_write(addr + 2, (uint8_t) (val >> 16), priv);
+    linear_write(addr + 3, (uint8_t) (val >> 24), priv);
+}
+static uint32_t
+linear_write_l_run(uint32_t addr, const uint32_t *src, uint32_t n, void *priv)
+{
+    verite_t *v    = priv;
+    uint32_t  done = 0;
+    if ((addr & 3) || !n)
+        return 0;
+    while (done < n) {
+        uint32_t off   = (addr + (done << 2)) & (VRAM_SIZE - 1);
+        uint32_t chunk = (VRAM_SIZE - off) >> 2;
+        if (chunk > n - done)
+            chunk = n - done;
+        verite_vram_write_l_run_chunk(v, off, src + done, chunk);
+        done += chunk;
+    }
+    return n;
 }
 
 static uint8_t
@@ -1371,12 +1559,73 @@ banked_read(uint32_t addr, void *priv)
     verite_t *v = priv;
     return verite_vram_read(v, v->bank + (addr & 0xffff));
 }
-
+static uint16_t
+banked_readw(uint32_t addr, void *priv)
+{
+    verite_t *v = priv;
+    if (!(addr & 1))
+        return verite_vram_readw_aligned(v, v->bank + (addr & 0xffff));
+    return banked_read(addr, priv) | ((uint16_t) banked_read(addr + 1, priv) << 8);
+}
+static uint32_t
+banked_readl(uint32_t addr, void *priv)
+{
+    verite_t *v = priv;
+    if (!(addr & 3))
+        return verite_vram_readl_aligned(v, v->bank + (addr & 0xffff));
+    return banked_read(addr, priv) | ((uint32_t) banked_read(addr + 1, priv) << 8)
+         | ((uint32_t) banked_read(addr + 2, priv) << 16) | ((uint32_t) banked_read(addr + 3, priv) << 24);
+}
 static void
 banked_write(uint32_t addr, uint8_t val, void *priv)
 {
     verite_t *v = priv;
     verite_vram_write(v, v->bank + (addr & 0xffff), val);
+}
+static void
+banked_writew(uint32_t addr, uint16_t val, void *priv)
+{
+    verite_t *v = priv;
+    if (!(addr & 1)) {
+        verite_vram_writew_aligned(v, v->bank + (addr & 0xffff), val);
+        return;
+    }
+    banked_write(addr, (uint8_t) val, priv);
+    banked_write(addr + 1, (uint8_t) (val >> 8), priv);
+}
+static void
+banked_writel(uint32_t addr, uint32_t val, void *priv)
+{
+    verite_t *v = priv;
+    if (!(addr & 3)) {
+        verite_vram_writel_aligned(v, v->bank + (addr & 0xffff), val);
+        return;
+    }
+    banked_write(addr, (uint8_t) val, priv);
+    banked_write(addr + 1, (uint8_t) (val >> 8), priv);
+    banked_write(addr + 2, (uint8_t) (val >> 16), priv);
+    banked_write(addr + 3, (uint8_t) (val >> 24), priv);
+}
+static uint32_t
+banked_write_l_run(uint32_t addr, const uint32_t *src, uint32_t n, void *priv)
+{
+    verite_t *v    = priv;
+    uint32_t  done = 0;
+    if ((addr & 3) || !n)
+        return 0;
+    while (done < n) {
+        uint32_t bank_off = (addr + (done << 2)) & 0xffff;
+        uint32_t off      = (v->bank + bank_off) & (VRAM_SIZE - 1);
+        uint32_t chunk    = (0x10000 - bank_off) >> 2;
+        uint32_t vram_rem = (VRAM_SIZE - off) >> 2;
+        if (chunk > vram_rem)
+            chunk = vram_rem;
+        if (chunk > n - done)
+            chunk = n - done;
+        verite_vram_write_l_run_chunk(v, off, src + done, chunk);
+        done += chunk;
+    }
+    return n;
 }
 
 static void
@@ -1585,10 +1834,12 @@ verite_init(const device_t *info)
               verite_vga_in, verite_vga_out, NULL, NULL);
     v->vga.svga.ramdac            = v->ramdac;
     v->vga.svga.vsync_callback    = verite_vsync;
-    mem_mapping_add(&v->linear, 0, 0, linear_read, NULL, NULL, linear_write, NULL, NULL,
-                    NULL, MEM_MAPPING_EXTERNAL, v);
-    mem_mapping_add(&v->banked, 0xa0000, 0x10000, banked_read, NULL, NULL, banked_write, NULL, NULL,
-                    NULL, MEM_MAPPING_EXTERNAL, v);
+    mem_mapping_add(&v->linear, 0, 0, linear_read, linear_readw, linear_readl,
+                    linear_write, linear_writew, linear_writel, NULL, MEM_MAPPING_EXTERNAL, v);
+    mem_mapping_set_write_l_run(&v->linear, linear_write_l_run);
+    mem_mapping_add(&v->banked, 0xa0000, 0x10000, banked_read, banked_readw, banked_readl,
+                    banked_write, banked_writew, banked_writel, NULL, MEM_MAPPING_EXTERNAL, v);
+    mem_mapping_set_write_l_run(&v->banked, banked_write_l_run);
     pci_add_card(PCI_ADD_NORMAL, verite_pci_read, verite_pci_write, v, &v->pci_slot);
     verite_reset(v);
     if (device_get_config_int("risc_thread")) {
