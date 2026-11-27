@@ -531,6 +531,15 @@ pixel_formats(void)
                   0, true)
            == 0x04030201);
     check_color(decode(1, 0xe3, false, false), 255, 0, 255, 255);
+    static const unsigned bits_list[] = { 2, 3, 4, 5, 6 };
+    for (unsigned bi = 0; bi < COUNT(bits_list); bi++) {
+        unsigned bits = bits_list[bi];
+        unsigned max  = (1U << bits) - 1;
+        for (unsigned v = 0; v <= max; v++) {
+            assert(widen(v, bits, false) == (int32_t) ((v * 255U + max / 2) / max));
+            assert(widen(v, bits, true) == (int32_t) (v << (8 - bits)));
+        }
+    }
 }
 
 static void
@@ -602,6 +611,148 @@ parallel_copy_matches(void)
     f.core->pe.dst_mode = 6;
     assert(!pixel_parallel_copy(f.core, 1, 0x10000, f.mem));
     done(&f);
+}
+
+static uint8_t *span_image(void);
+
+static void
+parallel_copy_check(fixture *a, fixture *b, const pixel_engine *pe, unsigned n)
+{
+    uint32_t step = pe->x_dir ? 0U - 0x10000 : 0x10000;
+    a->core->pe = b->core->pe = *pe;
+    a->core->drew = b->core->drew = false;
+    assert(pixel_parallel_copy(a->core, n, step, a->mem));
+    for (unsigned i = 0; i < n; i++) {
+        pixel_engine *q = &b->core->pe;
+        pixel_parallel(b->core, q->x_shadow >> 16, q->y >> 16, q->u >> 16, q->v >> 16, b->mem);
+        q->x_shadow = (int32_t) ((uint32_t) q->x_shadow + step);
+        q->u        = (int32_t) ((uint32_t) q->u + step);
+    }
+    assert(!memcmp(a->mem.data, b->mem.data, a->mem.mask + 1));
+    assert(a->core->pe.x_shadow == b->core->pe.x_shadow && a->core->pe.u == b->core->pe.u);
+    assert(a->core->pe.pick_hit == b->core->pe.pick_hit && a->core->drew == b->core->drew);
+}
+
+/* Exercises long fills/blits, all alignments, same-row overlaps, and wrap edge cases. */
+static void
+parallel_copy_word_paths(void)
+{
+    static const uint32_t fmts[]     = { 1, 2, 4, 6, 12 };
+    static const int32_t  offsets[]  = { -8, -4, -3, -2, -1, 0, 1, 2, 3, 4, 8 };
+    static const unsigned lengths[]  = { 0, 1, 3, 17, 64, 257 };
+    uint8_t              *image      = span_image();
+
+    fixture a = machine(NULL, 0, 0), b = machine(NULL, 0, 0);
+    for (unsigned fi = 0; fi < COUNT(fmts); fi++) {
+        uint32_t fmt   = fmts[fi];
+        unsigned bytes = fmt_bytes(fmt);
+        for (unsigned dir = 0; dir < 2; dir++) {
+            for (unsigned align = 0; align < 4; align++) {
+                for (unsigned li = 0; li < COUNT(lengths); li++) {
+                    unsigned n = lengths[li];
+                    /* Solid fill (both clipped and unclipped). */
+                    for (unsigned clip = 0; clip < 3; clip++) {
+                        memcpy(a.mem.data, image, a.mem.mask + 1);
+                        memcpy(b.mem.data, image, b.mem.mask + 1);
+                        pixel_engine pe;
+                        pixel_reset(&pe);
+                        pe.dst_fmt   = fmt;
+                        pe.dst_mode  = 12;
+                        pe.src_mode  = 0;
+                        pe.stride    = 0x0303;
+                        pe.dst_base  = 0x10000 + align;
+                        pe.scissor_x = clip == 1 ? (10 << 16) | 120 : clip == 2 ? (500 << 16) | 600
+                                                                               : (0 << 16) | 512;
+                        pe.scissor_y = clip == 2 ? (100 << 16) | 200 : (0 << 16) | 512;
+                        pe.x_dir     = dir != 0;
+                        pe.x_shadow  = (int32_t) ((dir ? 280 : 4) << 16);
+                        pe.y         = 5 << 16;
+                        pe.fg        = 0x11223344U + fi * 0x01010101U;
+                        parallel_copy_check(&a, &b, &pe, n);
+                    }
+
+                    /* Disjoint blit across all alignments. */
+                    for (unsigned s_align = 0; s_align < 4; s_align++) {
+                        memcpy(a.mem.data, image, a.mem.mask + 1);
+                        memcpy(b.mem.data, image, b.mem.mask + 1);
+                        pixel_engine pe;
+                        pixel_reset(&pe);
+                        pe.dst_fmt   = fmt;
+                        pe.dst_mode  = 12;
+                        pe.src_mode  = 0x10;
+                        pe.stride    = 0x0303;
+                        pe.dst_base  = 0x20000 + align;
+                        pe.src_base  = 0x40000 + s_align;
+                        pe.scissor_x = (10 << 16) | 300;
+                        pe.scissor_y = (0 << 16) | 512;
+                        pe.u_mask    = 0x3ff;
+                        pe.v_mask    = 0x3ff;
+                        pe.x_dir     = dir != 0;
+                        pe.x_shadow  = (int32_t) ((dir ? 280 : 4) << 16);
+                        pe.y         = 2 << 16;
+                        pe.u         = (dir ? 290 : 3) << 16;
+                        pe.v         = 1 << 16;
+                        parallel_copy_check(&a, &b, &pe, n);
+                    }
+                }
+            }
+
+            /* Same-row overlapping blits. */
+            for (unsigned oi = 0; oi < COUNT(offsets); oi++) {
+                int32_t off = offsets[oi];
+                memcpy(a.mem.data, image, a.mem.mask + 1);
+                memcpy(b.mem.data, image, b.mem.mask + 1);
+                pixel_engine pe;
+                pixel_reset(&pe);
+                pe.dst_fmt   = fmt;
+                pe.dst_mode  = 12;
+                pe.src_mode  = 0x10;
+                pe.stride    = 0x0303;
+                pe.dst_base  = 0x20000;
+                pe.src_base  = 0x20000;
+                pe.scissor_x = (0 << 16) | 512;
+                pe.scissor_y = (0 << 16) | 512;
+                pe.u_mask    = 0x3ff;
+                pe.v_mask    = 0x3ff;
+                pe.x_dir     = dir != 0;
+                int32_t x0   = dir ? 120 : 20;
+                pe.x_shadow  = x0 << 16;
+                pe.y         = 4 << 16;
+                pe.u         = (x0 + off) << 16;
+                pe.v         = 4 << 16;
+                parallel_copy_check(&a, &b, &pe, 64);
+
+                /* Also test non-PoT u_mask and u_mask wraparound mid-span. */
+                memcpy(a.mem.data, image, a.mem.mask + 1);
+                memcpy(b.mem.data, image, b.mem.mask + 1);
+                pe.u_mask = 13;
+                pe.u      = 10 << 16;
+                parallel_copy_check(&a, &b, &pe, 30);
+
+                /* Also test VRAM wraparound and x_shadow wraparound across 32767 -> -32768. */
+                memcpy(a.mem.data, image, a.mem.mask + 1);
+                memcpy(b.mem.data, image, b.mem.mask + 1);
+                pe.src_base = (uint32_t) (a.mem.mask + 1 - 16 * bytes);
+                pe.dst_base = (uint32_t) (a.mem.mask + 1 - 16 * bytes);
+                pe.u_mask   = 0x3ff;
+                pe.x_shadow = 0;
+                pe.y        = 0;
+                pe.u        = 0;
+                pe.v        = 0;
+                parallel_copy_check(&a, &b, &pe, 32);
+
+                memcpy(a.mem.data, image, a.mem.mask + 1);
+                memcpy(b.mem.data, image, b.mem.mask + 1);
+                pe.dst_base = 0x20000;
+                pe.src_base = 0x40000;
+                pe.x_shadow = dir ? -(32766 << 16) : (32766 << 16);
+                parallel_copy_check(&a, &b, &pe, 8);
+            }
+        }
+    }
+    done(&a);
+    done(&b);
+    free(image);
 }
 
 static uint32_t span_seed = 0x2545f491;
@@ -1417,6 +1568,7 @@ main(void)
     dither_before_quantizing();
     copy_unpadded_565();
     parallel_copy_matches();
+    parallel_copy_word_paths();
     param_span_matches();
     bilinear_unpadded_565();
     bilinear_matches_nearest_taps();

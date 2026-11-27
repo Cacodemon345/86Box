@@ -161,7 +161,7 @@ write_pixel(verite_memory mem, uint32_t addr, unsigned bytes, uint32_t v)
         mem_write32(mem, addr, v);
 }
 
-static uint32_t
+static inline uint32_t
 rop(uint32_t code, uint32_t s, uint32_t d)
 {
     return (~s & ~d & (0U - (code & 1))) | (~s & d & (0U - ((code >> 1) & 1))) | (s & ~d & (0U - ((code >> 2) & 1))) | (s & d & (0U - ((code >> 3) & 1)));
@@ -173,12 +173,44 @@ rop_reads(uint32_t code)
     return ((code >> 1) ^ code) & 5;
 }
 
-static int32_t
+static inline int32_t
 widen(uint32_t value, unsigned bits, bool no_pad)
 {
+    static const uint8_t widen3[8]  = { 0, 36, 73, 109, 146, 182, 219, 255 };
+    static const uint8_t widen5[32] = {
+        0, 8, 16, 25, 33, 41, 49, 58, 66, 74, 82, 90, 99, 107, 115, 123,
+        132, 140, 148, 156, 165, 173, 181, 189, 197, 206, 214, 222, 230, 239, 247, 255
+    };
+    static const uint8_t widen6[64] = {
+        0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 45, 49, 53, 57, 61,
+        65, 69, 73, 77, 81, 85, 89, 93, 97, 101, 105, 109, 113, 117, 121, 125,
+        130, 134, 138, 142, 146, 150, 154, 158, 162, 166, 170, 174, 178, 182, 186, 190,
+        194, 198, 202, 206, 210, 215, 219, 223, 227, 231, 235, 239, 243, 247, 251, 255
+    };
     unsigned max = (1U << bits) - 1;
-    value &= max;
-    return no_pad ? value << (8 - bits) : (value * 255 + max / 2) / max;
+    uint32_t v   = value & max;
+    if (no_pad)
+        return (int32_t) (v << (8 - bits));
+    switch (bits) {
+        case 2:
+            return (int32_t) (v * 85U);
+        case 3:
+            return widen3[v];
+        case 4:
+            return (int32_t) (v * 17U);
+        case 5:
+            return widen5[v];
+        case 6:
+            return widen6[v];
+        default:
+            return (int32_t) ((v * 255U + max / 2) / max);
+    }
+}
+
+static inline int32_t
+div255(int32_t x)
+{
+    return (int32_t) (((uint32_t) x * 0x8081U) >> 23);
 }
 
 static color
@@ -246,7 +278,7 @@ quantize(int32_t value, unsigned n, unsigned dither)
     return (v < 255 ? v : 255) >> (8 - n);
 }
 
-static uint32_t
+static inline uint32_t
 encode(unsigned fmt, color c, unsigned dither, bool bgr)
 {
     int32_t r = c.channel[bgr ? 2 : 0], g = c.channel[1], b = c.channel[bgr ? 0 : 2], a = c.channel[3];
@@ -469,23 +501,75 @@ src_fmt(const pixel_engine *pe)
     return fmt ? fmt : pe->dst_fmt & 15;
 }
 
-static bool
-keyed(const pixel_engine *pe, uint32_t raw, unsigned bytes)
+typedef struct {
+    uint32_t src_base;
+    uint32_t src_stride;
+    uint32_t chroma_color;
+    uint32_t chroma_mask;
+    unsigned fmt;
+    unsigned bytes;
+    bool     filter;
+    bool     u_clamp;
+    bool     v_clamp;
+    bool     bgr;
+    bool     no_pad;
+    bool     chroma;
+    bool     chroma_black_yuv;
+} tex_sampler;
+
+static tex_sampler
+tex_sampler_init(const pixel_engine *pe)
 {
+    uint32_t mode = pe->src_mode;
+    unsigned fmt  = src_fmt(pe);
+    return (tex_sampler) {
+        .src_base         = pe->src_base,
+        .src_stride       = line_stride(pe->stride),
+        .chroma_color     = pe->chroma_color,
+        .chroma_mask      = pe->chroma_mask,
+        .fmt              = fmt,
+        .bytes            = fmt_bytes(fmt),
+        .filter           = !!(mode & SRC_FILTER),
+        .u_clamp          = !!(mode & SRC_U_CLAMP),
+        .v_clamp          = !!(mode & SRC_V_CLAMP),
+        .bgr              = !!(mode & SRC_BGR),
+        .no_pad           = !!(mode & SRC_NO_PAD),
+        .chroma           = !!(mode & SRC_CHROMA),
+        .chroma_black_yuv = !!(mode & SRC_CHROMA_BLACK_YUV),
+    };
+}
+
+static bool
+keyed_with(const tex_sampler *s, uint32_t raw, unsigned bytes)
+{
+    if (!s->chroma)
+        return false;
     if (bytes == 1)
         raw *= 0x01010101;
     else if (bytes == 2)
         raw *= 0x00010001;
-    return (pe->src_mode & SRC_CHROMA) && ((raw ^ pe->chroma_color) & pe->chroma_mask) == 0;
+    return ((raw ^ s->chroma_color) & s->chroma_mask) == 0;
 }
 
 static color
-key_color(const pixel_engine *pe)
+key_color_with(bool chroma_black_yuv)
 {
-    return pe->src_mode & SRC_CHROMA_BLACK_YUV ? (color) {
+    return chroma_black_yuv ? (color) {
         { 128, 16, 128, 0 }
     }
-                                               : (color) { 0 };
+                            : (color) { 0 };
+}
+
+static bool
+keyed(const pixel_engine *pe, uint32_t raw, unsigned bytes)
+{
+    if (!(pe->src_mode & SRC_CHROMA))
+        return false;
+    if (bytes == 1)
+        raw *= 0x01010101;
+    else if (bytes == 2)
+        raw *= 0x00010001;
+    return ((raw ^ pe->chroma_color) & pe->chroma_mask) == 0;
 }
 
 static uint32_t
@@ -495,27 +579,25 @@ texture_coord(int32_t coord, uint32_t mask, bool clamped)
 }
 
 static color
-texel(const pixel_engine *pe, unsigned fmt, uint32_t row, uint32_t tx, verite_memory mem)
+texel_with(const pixel_engine *pe, const tex_sampler *s, uint32_t row, uint32_t tx, verite_memory mem)
 {
-    bool     bgr = !!(pe->src_mode & SRC_BGR), no_pad = !!(pe->src_mode & SRC_NO_PAD);
-    if (fmt >= 8 && fmt <= 10) {
+    if (s->fmt >= 8 && s->fmt <= 10) {
         uint32_t byte  = mem_read8(mem, row + tx / 2);
         unsigned index = tx & 1 ? byte & 15 : byte >> 4;
         uint32_t entry = (pe->tex4pal[index / 2] >> (index & 1 ? 0 : 16)) & 0xffff;
-        return decode(fmt - 4, entry, bgr, no_pad);
+        return decode(s->fmt - 4, entry, s->bgr, s->no_pad);
     }
-    if (fmt == 13) {
+    if (s->fmt == 13) {
         uint32_t word = mem_read32(mem, row + tx / 2 * 4);
-        if (keyed(pe, word, 4))
-            return key_color(pe);
+        if (keyed_with(s, word, 4))
+            return key_color_with(s->chroma_black_yuv);
         return (color) {
-            { (word >> (bgr ? 0 : 16)) & 255, (word >> (tx & 1 ? 8 : 24)) & 255,
-             (word >> (bgr ? 16 : 0)) & 255, 255 }
+            { (word >> (s->bgr ? 0 : 16)) & 255, (word >> (tx & 1 ? 8 : 24)) & 255,
+             (word >> (s->bgr ? 16 : 0)) & 255, 255 }
         };
     }
-    unsigned bytes = fmt_bytes(fmt);
-    uint32_t raw   = read_pixel(mem, row + tx * bytes, bytes);
-    return keyed(pe, raw, bytes) ? key_color(pe) : decode(fmt, raw, bgr, no_pad);
+    uint32_t raw = read_pixel(mem, row + tx * s->bytes, s->bytes);
+    return keyed_with(s, raw, s->bytes) ? key_color_with(s->chroma_black_yuv) : decode(s->fmt, raw, s->bgr, s->no_pad);
 }
 
 static color
@@ -545,29 +627,26 @@ sample_bilinear_565(const uint32_t taps[4], const int32_t weights[4], bool no_pa
     return sum;
 }
 
-static color
-sample(const pixel_engine *pe, int32_t u, int32_t v, verite_memory mem)
+static inline color
+sample_with(const pixel_engine *pe, const tex_sampler *s, int32_t u, int32_t v, verite_memory mem)
 {
-    uint32_t mode = pe->src_mode;
-    unsigned fmt  = src_fmt(pe);
-    int32_t  tx = u >> 16, ty = v >> 16;
-    uint32_t stride = line_stride(pe->stride);
-    uint32_t x0     = texture_coord(tx, pe->u_mask, mode & SRC_U_CLAMP);
-    uint32_t row0   = pe->src_base + stride * texture_coord(ty, pe->v_mask, mode & SRC_V_CLAMP);
-    if (!(mode & SRC_FILTER))
-        return texel(pe, fmt, row0, x0, mem);
+    int32_t  tx   = u >> 16, ty = v >> 16;
+    uint32_t x0   = texture_coord(tx, pe->u_mask, s->u_clamp);
+    uint32_t row0 = s->src_base + s->src_stride * texture_coord(ty, pe->v_mask, s->v_clamp);
+    if (!s->filter)
+        return texel_with(pe, s, row0, x0, mem);
 
     /* Map each neighbor independently so a tap can wrap or clamp at an edge. */
-    uint32_t x1   = texture_coord(tx + 1, pe->u_mask, mode & SRC_U_CLAMP);
-    uint32_t row1 = pe->src_base + stride * texture_coord(ty + 1, pe->v_mask, mode & SRC_V_CLAMP);
-    int32_t fu = (u >> 8) & 255, fv = (v >> 8) & 255;
-    int32_t weights[] = { (256 - fu) * (256 - fv), fu * (256 - fv), (256 - fu) * fv, fu * fv };
-    if (fmt == 4 && !(mode & (SRC_BGR | SRC_CHROMA))) {
+    uint32_t x1        = texture_coord(tx + 1, pe->u_mask, s->u_clamp);
+    uint32_t row1      = s->src_base + s->src_stride * texture_coord(ty + 1, pe->v_mask, s->v_clamp);
+    int32_t  fu        = (u >> 8) & 255, fv = (v >> 8) & 255;
+    int32_t  weights[] = { (256 - fu) * (256 - fv), fu * (256 - fv), (256 - fu) * fv, fu * fv };
+    if (s->fmt == 4 && !s->bgr && !s->chroma) {
         uint32_t taps[] = { mem_read16(mem, row0 + 2 * x0), mem_read16(mem, row0 + 2 * x1),
                             mem_read16(mem, row1 + 2 * x0), mem_read16(mem, row1 + 2 * x1) };
-        return sample_bilinear_565(taps, weights, mode & SRC_NO_PAD);
+        return sample_bilinear_565(taps, weights, s->no_pad);
     }
-    if (fmt == 2 && !(mode & SRC_CHROMA)) {
+    if (s->fmt == 2 && !s->chroma) {
         int32_t intensity = mem_read8(mem, row0 + x0) * weights[0] + mem_read8(mem, row0 + x1) * weights[1]
                           + mem_read8(mem, row1 + x0) * weights[2] + mem_read8(mem, row1 + x1) * weights[3];
         intensity = (intensity + 32768) >> 16;
@@ -578,13 +657,23 @@ sample(const pixel_engine *pe, int32_t u, int32_t v, verite_memory mem)
     const uint32_t xs[]   = { x0, x1 };
     color          sum    = { 0 };
     for (unsigned tap = 0; tap < 4; tap++) {
-        color c = texel(pe, fmt, rows[tap >> 1], xs[tap & 1], mem);
+        color c = texel_with(pe, s, rows[tap >> 1], xs[tap & 1], mem);
         for (unsigned k = 0; k < 4; k++)
             sum.channel[k] += c.channel[k] * weights[tap];
     }
     for (unsigned k = 0; k < 4; k++)
         sum.channel[k] = (sum.channel[k] + 32768) >> 16;
     return sum;
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((unused))
+#endif
+static inline color
+sample(const pixel_engine *pe, int32_t u, int32_t v, verite_memory mem)
+{
+    tex_sampler s = tex_sampler_init(pe);
+    return sample_with(pe, &s, u, v, mem);
 }
 
 static int32_t
@@ -619,25 +708,23 @@ factor(uint32_t func, bool source, unsigned k, color s, color d)
     }
 }
 
-static color
-blend(const pixel_engine *pe, color s, color d)
+static inline color
+blend_with(unsigned sf, unsigned df, color s, color d)
 {
-    unsigned sf = (pe->dst_mode >> 4) & 15, df = (pe->dst_mode >> 8) & 15;
-    color    out;
+    color out;
     for (unsigned k = 0; k < 4; k++) {
-        int32_t a      = sf == 15 ? s.channel[k] - 128 : (s.channel[k] * factor(sf, true, k, s, d) + 127) / 255;
-        int32_t b      = df == 15 ? d.channel[k] - 128 : (d.channel[k] * factor(df, false, k, s, d) + 127) / 255;
+        int32_t a      = sf == 15 ? s.channel[k] - 128 : div255(s.channel[k] * factor(sf, true, k, s, d) + 127);
+        int32_t b      = df == 15 ? d.channel[k] - 128 : div255(d.channel[k] * factor(df, false, k, s, d) + 127);
         out.channel[k] = clamp(a + b, 255);
     }
     return out;
 }
 
 static color
-yuv_to_rgb(const pixel_engine *pe, color c)
+yuv_to_rgb_with(int32_t yuv_black, int32_t yuv_scale, color c)
 {
     int32_t cr = c.channel[0] - 128, cb = c.channel[2] - 128;
-    int32_t black = (pe->fog_color >> 8) & 255;
-    int32_t sy    = ((int32_t) (pe->yuv_contrast & 255) + 256) * (c.channel[1] - black) + 128;
+    int32_t sy = yuv_scale * (c.channel[1] - yuv_black) + 128;
     /* Euclidean and truncating division agree after clamping negative channels. */
     return (color) {
         { clamp((sy + 407 * cr) / 255, 255),
@@ -869,36 +956,226 @@ pixel_parallel_copy(verite_core *c, unsigned n, uint32_t step, verite_memory mem
         || (!filled && (pe->src_mode & SRC_CHROMA)))
         return false;
 
-    int32_t y = pe->y >> 16;
-    bool    row_inside = y >= (int32_t) ((pe->scissor_y >> 16) & 0xfff) && y < (int32_t) (pe->scissor_y & 0xfff) && y < 2048;
-    int32_t x_min = (int32_t) ((pe->scissor_x >> 16) & 0xfff);
-    int32_t x_end = (int32_t) (pe->scissor_x & 0xfff);
+    uint32_t final_x_shadow = (uint32_t) pe->x_shadow + step * n;
+    uint32_t final_u        = (uint32_t) pe->u + step * n;
+    int32_t  y              = pe->y >> 16;
+    bool     row_inside     = y >= (int32_t) ((pe->scissor_y >> 16) & 0xfff) && y < (int32_t) (pe->scissor_y & 0xfff) && y < 2048;
+    int32_t  x_min          = (int32_t) ((pe->scissor_x >> 16) & 0xfff);
+    int32_t  x_end          = (int32_t) (pe->scissor_x & 0xfff);
     if (x_end > 2048)
         x_end = 2048;
-    uint32_t line = pe->dst_base + line_stride(pe->stride >> 8) * (uint32_t) y;
+    if (n == 0 || !row_inside || x_min >= x_end) {
+        pe->x_shadow = (int32_t) final_x_shadow;
+        pe->u        = (int32_t) final_u;
+        return true;
+    }
+
+    uint32_t line  = pe->dst_base + line_stride(pe->stride >> 8) * (uint32_t) y;
     unsigned n_src = fmt_bytes(src_fmt(pe));
     if (!n_src)
         n_src = 1;
-    uint32_t row = pe->src_base + line_stride(pe->stride) * ((uint32_t) (pe->v >> 16) & pe->v_mask);
-    uint32_t x_shadow = (uint32_t) pe->x_shadow, u = (uint32_t) pe->u;
-    bool     drew = false;
-    for (unsigned i = 0; i < n; i++, x_shadow += step, u += step) {
-        int32_t x = (int32_t) x_shadow >> 16;
-        if (!row_inside || x < x_min || x >= x_end)
-            continue;
-        uint32_t addr = line + (uint32_t) x * bytes;
-        uint32_t source;
-        if (filled)
-            source = pe->fg >> (8 * (4 - bytes - (addr & 3 & ~(bytes - 1))));
-        else
-            source = read_pixel(mem, row + (((int32_t) u >> 16) & pe->u_mask) * n_src, n_src);
-        write_pixel(mem, addr, bytes, source & mask);
-        drew = true;
+    uint32_t row       = pe->src_base + line_stride(pe->stride) * ((uint32_t) (pe->v >> 16) & pe->v_mask);
+    int32_t  x0        = pe->x_shadow >> 16;
+    bool     forward   = step == 0x10000;
+    bool     backward  = step == (0U - 0x10000);
+    bool     monotonic = (forward && (int64_t) x0 + (int64_t) n <= 32768)
+                      || (backward && (int64_t) x0 - (int64_t) n >= -32769);
+    if (!monotonic) {
+        uint32_t x_shadow = (uint32_t) pe->x_shadow, u = (uint32_t) pe->u;
+        bool     drew = false;
+        for (unsigned i = 0; i < n; i++, x_shadow += step, u += step) {
+            int32_t x = (int32_t) x_shadow >> 16;
+            if (x < x_min || x >= x_end)
+                continue;
+            uint32_t addr = line + (uint32_t) x * bytes;
+            uint32_t source;
+            if (filled)
+                source = pe->fg >> (8 * (4 - bytes - (addr & 3 & ~(bytes - 1))));
+            else
+                source = read_pixel(mem, row + (((int32_t) u >> 16) & pe->u_mask) * n_src, n_src);
+            write_pixel(mem, addr, bytes, source & mask);
+            drew = true;
+        }
+        pe->x_shadow = (int32_t) final_x_shadow;
+        pe->u        = (int32_t) final_u;
+        if (drew)
+            pe->pick_hit = c->drew = true;
+        return true;
     }
-    pe->x_shadow = (int32_t) x_shadow;
-    pe->u        = (int32_t) u;
-    if (drew)
-        pe->pick_hit = c->drew = true;
+
+    int32_t  x_lo;
+    unsigned count;
+    uint32_t u_cur;
+    if (forward) {
+        int32_t start_x = x0 > x_min ? x0 : x_min;
+        int32_t stop_x  = (x0 + (int32_t) n) < x_end ? (x0 + (int32_t) n) : x_end;
+        if (start_x >= stop_x) {
+            pe->x_shadow = (int32_t) final_x_shadow;
+            pe->u        = (int32_t) final_u;
+            return true;
+        }
+        unsigned skip = (unsigned) (start_x - x0);
+        count         = (unsigned) (stop_x - start_x);
+        u_cur         = (uint32_t) pe->u + step * skip;
+        x_lo          = start_x;
+    } else {
+        int32_t hi_x = x0 < x_end - 1 ? x0 : x_end - 1;
+        int32_t lo_x = (x0 - (int32_t) n + 1) > x_min ? (x0 - (int32_t) n + 1) : x_min;
+        if (lo_x > hi_x) {
+            pe->x_shadow = (int32_t) final_x_shadow;
+            pe->u        = (int32_t) final_u;
+            return true;
+        }
+        unsigned skip = (unsigned) (x0 - hi_x);
+        count         = (unsigned) (hi_x - lo_x + 1);
+        u_cur         = (uint32_t) pe->u + step * skip;
+        x_lo          = lo_x;
+    }
+
+    if (filled) {
+        uint32_t addr = line + (uint32_t) x_lo * bytes;
+        unsigned rem  = count;
+        if ((mem.mask & 3) == 3) {
+            while (rem && (addr & 3 & ~(bytes - 1))) {
+                uint32_t source = pe->fg >> (8 * (4 - bytes - (addr & 3 & ~(bytes - 1))));
+                write_pixel(mem, addr, bytes, source & mask);
+                addr += bytes;
+                rem--;
+            }
+            unsigned ppb   = 4 / bytes;
+            unsigned words = rem / ppb;
+            if (words) {
+                uint32_t base = addr & ~3U;
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+                if ((size_t) (base & mem.mask) + (size_t) words * 4 <= mem.mask + 1) {
+                    uint8_t *dst = mem.data + (base & mem.mask);
+                    if (words >= 2) {
+                        uint64_t fg64  = (uint64_t) pe->fg | ((uint64_t) pe->fg << 32);
+                        unsigned pairs = words / 2;
+                        for (unsigned p = 0; p < pairs; p++, dst += 8)
+                            memcpy(dst, &fg64, sizeof(fg64));
+                    }
+                    if (words & 1)
+                        memcpy(dst, &pe->fg, sizeof(pe->fg));
+                } else
+#endif
+                {
+                    for (unsigned w = 0; w < words; w++)
+                        mem_write32(mem, base + 4 * w, pe->fg);
+                }
+                addr += words * 4;
+                rem -= words * ppb;
+            }
+        }
+        while (rem--) {
+            uint32_t source = pe->fg >> (8 * (4 - bytes - (addr & 3 & ~(bytes - 1))));
+            write_pixel(mem, addr, bytes, source & mask);
+            addr += bytes;
+        }
+    } else {
+        uint32_t u_at_lo   = forward ? u_cur : u_cur + step * (count - 1);
+        uint32_t u_start   = (uint32_t) ((int32_t) u_at_lo >> 16) & pe->u_mask;
+        bool     fast_blit = n_src == bytes
+                      && (mem.mask & 3) == 3 && (mem.mask & (mem.mask + 1)) == 0
+                      && (pe->u_mask & (pe->u_mask + 1)) == 0
+                      && (uint64_t) u_start + count <= (uint64_t) pe->u_mask + 1;
+        if (fast_blit) {
+            uint32_t dst_lo     = line + (uint32_t) x_lo * bytes;
+            uint32_t src_lo     = row + u_start * bytes;
+            uint32_t phase_mask = bytes == 4 ? 0 : (bytes == 2 ? 2 : 3);
+            if (((dst_lo ^ src_lo) & phase_mask) == 0) {
+                size_t dst_off      = dst_lo & mem.mask;
+                size_t src_off      = src_lo & mem.mask;
+                size_t dst_last_off = (dst_lo + (count - 1) * bytes) & mem.mask;
+                size_t src_last_off = (src_lo + (count - 1) * bytes) & mem.mask;
+                size_t dst_first    = dst_off & ~(size_t) 3;
+                size_t src_first    = src_off & ~(size_t) 3;
+                size_t dst_phys_hi  = (dst_last_off & ~(size_t) 3) + 4;
+                size_t src_phys_hi  = (src_last_off & ~(size_t) 3) + 4;
+                bool   no_vram_wrap = dst_off + (size_t) count * bytes <= mem.mask + 1
+                                   && src_off + (size_t) count * bytes <= mem.mask + 1
+                                   && dst_first <= dst_last_off && src_first <= src_last_off;
+                if (no_vram_wrap) {
+                    bool disjoint = (dst_phys_hi <= src_first) || (src_phys_hi <= dst_first);
+                    if (disjoint || (forward && dst_first < src_first)) {
+                        uint32_t d_addr = dst_lo;
+                        uint32_t s_addr = src_lo;
+                        unsigned rem    = count;
+                        while (rem && (d_addr & phase_mask)) {
+                            write_pixel(mem, d_addr, bytes, read_pixel(mem, s_addr, bytes) & mask);
+                            d_addr += bytes;
+                            s_addr += bytes;
+                            rem--;
+                        }
+                        unsigned ppb   = 4 / bytes;
+                        unsigned words = rem / ppb;
+                        if (words) {
+                            size_t d_phys = (d_addr & mem.mask) & ~(size_t) 3;
+                            size_t s_phys = (s_addr & mem.mask) & ~(size_t) 3;
+                            if (disjoint) {
+                                memcpy(mem.data + d_phys, mem.data + s_phys, (size_t) words * 4);
+                            } else {
+                                for (unsigned w = 0; w < words; w++)
+                                    mem_write32(mem, (uint32_t) (d_phys + 4 * w), mem_read32(mem, (uint32_t) (s_phys + 4 * w)));
+                            }
+                            d_addr += words * 4;
+                            s_addr += words * 4;
+                            rem -= words * ppb;
+                        }
+                        while (rem--) {
+                            write_pixel(mem, d_addr, bytes, read_pixel(mem, s_addr, bytes) & mask);
+                            d_addr += bytes;
+                            s_addr += bytes;
+                        }
+                        pe->x_shadow = (int32_t) final_x_shadow;
+                        pe->u        = (int32_t) final_u;
+                        pe->pick_hit = c->drew = true;
+                        return true;
+                    }
+                    if (backward && dst_first > src_first) {
+                        uint32_t d_addr = dst_lo + (count - 1) * bytes;
+                        uint32_t s_addr = src_lo + (count - 1) * bytes;
+                        unsigned rem    = count;
+                        while (rem && ((d_addr + bytes) & phase_mask)) {
+                            write_pixel(mem, d_addr, bytes, read_pixel(mem, s_addr, bytes) & mask);
+                            d_addr -= bytes;
+                            s_addr -= bytes;
+                            rem--;
+                        }
+                        unsigned ppb   = 4 / bytes;
+                        unsigned words = rem / ppb;
+                        if (words) {
+                            size_t d_phys = ((d_addr & mem.mask) & ~(size_t) 3) + 4;
+                            size_t s_phys = ((s_addr & mem.mask) & ~(size_t) 3) + 4;
+                            for (unsigned w = 1; w <= words; w++)
+                                mem_write32(mem, (uint32_t) (d_phys - 4 * w), mem_read32(mem, (uint32_t) (s_phys - 4 * w)));
+                            d_addr -= words * 4;
+                            s_addr -= words * 4;
+                            rem -= words * ppb;
+                        }
+                        while (rem--) {
+                            write_pixel(mem, d_addr, bytes, read_pixel(mem, s_addr, bytes) & mask);
+                            d_addr -= bytes;
+                            s_addr -= bytes;
+                        }
+                        pe->x_shadow = (int32_t) final_x_shadow;
+                        pe->u        = (int32_t) final_u;
+                        pe->pick_hit = c->drew = true;
+                        return true;
+                    }
+                }
+            }
+        }
+        uint32_t addr      = line + (uint32_t) (forward ? x_lo : x_lo + (int32_t) count - 1) * bytes;
+        int32_t  addr_step = forward ? (int32_t) bytes : -(int32_t) bytes;
+        for (unsigned i = 0; i < count; i++, addr += (uint32_t) addr_step, u_cur += step) {
+            uint32_t source = read_pixel(mem, row + (((int32_t) u_cur >> 16) & pe->u_mask) * n_src, n_src);
+            write_pixel(mem, addr, bytes, source & mask);
+        }
+    }
+    pe->x_shadow = (int32_t) final_x_shadow;
+    pe->u        = (int32_t) final_u;
+    pe->pick_hit = c->drew = true;
     return true;
 }
 
@@ -944,7 +1221,7 @@ pixel_draw_parallel(verite_core *c, uint8_t op, uint8_t d, uint8_t s2, uint8_t s
     }
 }
 
-static bool
+static inline bool
 depth_pass(unsigned mode, uint32_t z, verite_memory mem, uint32_t addr)
 {
     if (!mode)
@@ -969,10 +1246,79 @@ depth_pass(unsigned mode, uint32_t z, verite_memory mem, uint32_t addr)
 }
 
 typedef struct {
-    uint32_t dst_stride, z_stride, mask, pmask;
-    unsigned format, bytes, rop_code, texture_func, depth_mode;
-    bool     perspective, bgr, blend, read_disabled, read_dst, copy;
+    int32_t     x_min, y_min;
+    uint32_t    x_len, y_len;
+    uint32_t    dst_base, z_base, dst_stride, z_stride, mask, pmask, dst_mode, src_mode;
+    unsigned    format, bytes, rop_code, texture_func, depth_mode;
+    int32_t     alpha_thres, yuv_black, yuv_scale;
+    color       fog_color, dst_color;
+    tex_sampler tex;
+    bool        perspective, bgr, blend, read_disabled, read_dst, copy, pat_enabled;
 } pixel_span;
+
+static void
+pixel_span_init(pixel_span *span, const pixel_engine *pe, bool perspective)
+{
+    int32_t x_min = (int32_t) ((pe->scissor_x >> 16) & 0xfff);
+    int32_t x_end = (int32_t) (pe->scissor_x & 0xfff);
+    int32_t y_min = (int32_t) ((pe->scissor_y >> 16) & 0xfff);
+    int32_t y_end = (int32_t) (pe->scissor_y & 0xfff);
+    if (x_end > 2048)
+        x_end = 2048;
+    if (y_end > 2048)
+        y_end = 2048;
+
+    uint32_t dst_mode      = pe->dst_mode;
+    uint32_t src_mode      = pe->src_mode;
+    unsigned bytes         = dst_bytes(pe);
+    uint32_t mask          = pixel_mask(bytes);
+    uint32_t pmask         = pe->pmask & mask;
+    unsigned rop_code      = dst_mode & 15;
+    unsigned texture_func  = (src_mode >> 4) & 7;
+    unsigned depth_mode    = (dst_mode >> 12) & 7;
+    bool     blend         = !!(dst_mode & DST_BLEND);
+    bool     read_disabled = !!(dst_mode & DST_READ_DISABLE);
+
+    span->x_min         = x_min;
+    span->y_min         = y_min;
+    span->x_len         = x_end > x_min ? (uint32_t) (x_end - x_min) : 0;
+    span->y_len         = y_end > y_min ? (uint32_t) (y_end - y_min) : 0;
+    span->dst_base      = pe->dst_base;
+    span->dst_stride    = line_stride(pe->stride >> 8);
+    span->mask          = mask;
+    span->pmask         = pmask;
+    span->dst_mode      = dst_mode;
+    span->src_mode      = src_mode;
+    span->format        = pe->dst_fmt & 15;
+    span->bytes         = bytes;
+    span->rop_code      = rop_code;
+    span->texture_func  = texture_func;
+    span->depth_mode    = depth_mode;
+    span->perspective   = perspective;
+    span->bgr           = !!(dst_mode & DST_BGR);
+    span->blend         = blend;
+    span->read_disabled = read_disabled;
+    span->pat_enabled   = !!(pe->pat_mode & 0x10000);
+    span->copy          = rop_code == 12 && pmask == mask;
+    span->read_dst      = !read_disabled && (blend || rop_reads(rop_code) || pmask != mask);
+
+    if (depth_mode || (dst_mode & DST_ZBUF_WRITE)) {
+        span->z_base   = pe->z_base;
+        span->z_stride = line_stride(pe->stride >> 16);
+    }
+    if (texture_func)
+        span->tex = tex_sampler_init(pe);
+    if (dst_mode & DST_TRANSP_REJECT)
+        span->alpha_thres = (int32_t) (pe->alpha_thres & 255);
+    if (dst_mode & DST_FOG)
+        span->fog_color = argb(pe->fog_color);
+    if (blend && read_disabled)
+        span->dst_color = argb(pe->dst_color);
+    else if (!blend && (dst_mode & DST_YUV2RGB)) {
+        span->yuv_black = (int32_t) ((pe->fog_color >> 8) & 255);
+        span->yuv_scale = (int32_t) (pe->yuv_contrast & 255) + 256;
+    }
+}
 
 static int32_t
 perspective_coord(int32_t coord, int64_t q, double scale)
@@ -1012,51 +1358,63 @@ pixel_full(verite_core *core, int32_t x, int32_t y, const pixel_span *span, veri
         { 13, 1,  14, 2  },
         { 10, 6,  9,  5  }
     };
-    pixel_engine *pe = &core->pe;
-    bool          background;
-    if (!pattern_pixel(pe, &background) || !inside(pe, x, y) || (pe->z_ovf && (pe->src_mode & SRC_Z_SCISSOR)))
+    pixel_engine *pe         = &core->pe;
+    bool          background = false;
+    bool          rejected   = span->pat_enabled && !pattern_pixel(pe, &background);
+    bool          outside    = ((uint32_t) x - (uint32_t) span->x_min >= span->x_len)
+                             | ((uint32_t) y - (uint32_t) span->y_min >= span->y_len)
+                             | (pe->z_ovf && (span->src_mode & SRC_Z_SCISSOR));
+    if (rejected | outside)
         return;
-    uint32_t z_addr = pe->z_base + span->z_stride * (uint32_t) y + 2 * (uint32_t) x;
-    uint32_t z      = (uint32_t) (pe->z >> 11) & 0xffff;
+
+    uint32_t dst_mode = span->dst_mode;
+    uint32_t z_addr = 0, z = 0;
+    if (span->depth_mode || (dst_mode & DST_ZBUF_WRITE)) {
+        z_addr = span->z_base + span->z_stride * (uint32_t) y + 2 * (uint32_t) x;
+        z      = (uint32_t) (pe->z >> 11) & 0xffff;
+    }
     /* A rejected pixel cannot modify either buffer. Test depth before sampling. */
-    if (!depth_pass(span->depth_mode, z, mem, z_addr))
+    if (span->depth_mode && !depth_pass(span->depth_mode, z, mem, z_addr))
         return;
 
     /* The parameter setters already keep the saturated channels in FG. */
-    color    c    = argb(background ? pe->bg : pe->fg);
     unsigned func = span->texture_func;
+    color    c;
     if (func) {
         int32_t u = pe->u, v = pe->v;
         if (span->perspective && pe->q)
             perspective_uv(&u, &v, pe->q);
-        color t = sample(pe, u, v, mem);
+        color t = sample_with(pe, &span->tex, u, v, mem);
         if (func == 2) {
+            c = argb(background ? pe->bg : pe->fg);
             for (unsigned k = 0; k < 3; k++)
-                c.channel[k] = (c.channel[k] * (255 - t.channel[3]) + t.channel[k] * t.channel[3] + 127) / 255;
+                c.channel[k] = div255(c.channel[k] * (255 - t.channel[3]) + t.channel[k] * t.channel[3] + 127);
         } else if (func == 3) {
+            c = argb(background ? pe->bg : pe->fg);
             for (unsigned k = 0; k < 4; k++)
-                c.channel[k] = (c.channel[k] * t.channel[k] + 127) / 255;
+                c.channel[k] = div255(c.channel[k] * t.channel[k] + 127);
         } else
             c = t;
+    } else {
+        c = argb(background ? pe->bg : pe->fg);
     }
-    if ((pe->dst_mode & DST_TRANSP_REJECT) && c.channel[3] <= (int32_t) (pe->alpha_thres & 255))
+    if ((dst_mode & DST_TRANSP_REJECT) && c.channel[3] <= span->alpha_thres)
         return;
-    if (pe->dst_mode & DST_FOG) {
-        int32_t f   = sat(pe->f);
-        color   fog = argb(pe->fog_color);
+    if (dst_mode & DST_FOG) {
+        int32_t f = sat(pe->f);
         for (unsigned k = 0; k < 3; k++)
-            c.channel[k] = f * (c.channel[k] - fog.channel[k]) / 255 + fog.channel[k];
+            c.channel[k] = f * (c.channel[k] - span->fog_color.channel[k]) / 255 + span->fog_color.channel[k];
     }
-    uint32_t addr = pe->dst_base + span->dst_stride * (uint32_t) y + (uint32_t) x * span->bytes;
+    uint32_t addr = span->dst_base + span->dst_stride * (uint32_t) y + (uint32_t) x * span->bytes;
     uint32_t old  = span->read_dst ? read_pixel(mem, addr, span->bytes) : 0;
     if (span->blend) {
-        color d = span->read_disabled ? argb(pe->dst_color) : decode(span->format, old, span->bgr, !!(pe->dst_mode & DST_NO_PAD));
-        c       = blend(pe, c, d);
-    } else if (pe->dst_mode & DST_YUV2RGB)
-        c = yuv_to_rgb(pe, c);
+        color d = span->read_disabled ? span->dst_color : decode(span->format, old, span->bgr, !!(dst_mode & DST_NO_PAD));
+        c       = blend_with((dst_mode >> 4) & 15, (dst_mode >> 8) & 15, c, d);
+    } else if (dst_mode & DST_YUV2RGB)
+        c = yuv_to_rgb_with(span->yuv_black, span->yuv_scale, c);
 
     unsigned dither = 0;
-    if (pe->dst_mode & DST_DITHER) {
+    if (dst_mode & DST_DITHER) {
         unsigned dx = ((uint32_t) x + (pe->dither_offset & 3)) & 3;
         unsigned dy = ((uint32_t) y + ((pe->dither_offset >> 4) & 3)) & 3;
         dither      = dither_matrix[dy][dx];
@@ -1064,7 +1422,7 @@ pixel_full(verite_core *core, int32_t x, int32_t y, const pixel_span *span, veri
     uint32_t encoded = encode(span->format, c, dither, span->bgr);
     uint32_t out     = span->copy ? encoded : (rop(span->rop_code, encoded, old) & span->pmask) | (old & ~span->pmask);
     write_pixel(mem, addr, span->bytes, out & span->mask);
-    if (pe->dst_mode & DST_ZBUF_WRITE)
+    if (dst_mode & DST_ZBUF_WRITE)
         mem_write16(mem, z_addr, z);
     pe->pick_hit = core->drew = true;
 }
@@ -1207,23 +1565,8 @@ pixel_draw_param(verite_core *c, uint8_t op, uint8_t d, uint8_t s2, uint8_t s1, 
             shadow = false;
     }
 
-    pixel_span span = {
-        .dst_stride    = line_stride(pe->stride >> 8),
-        .z_stride      = line_stride(pe->stride >> 16),
-        .format        = pe->dst_fmt & 15,
-        .bytes         = dst_bytes(pe),
-        .rop_code      = pe->dst_mode & 15,
-        .texture_func  = (pe->src_mode >> 4) & 7,
-        .depth_mode    = (pe->dst_mode >> 12) & 7,
-        .perspective   = q_index >= 0,
-        .bgr           = !!(pe->dst_mode & DST_BGR),
-        .blend         = !!(pe->dst_mode & DST_BLEND),
-        .read_disabled = !!(pe->dst_mode & DST_READ_DISABLE),
-    };
-    span.mask     = pixel_mask(span.bytes);
-    span.pmask    = pe->pmask & span.mask;
-    span.copy     = span.rop_code == 12 && span.pmask == span.mask;
-    span.read_dst = !span.read_disabled && (span.blend || rop_reads(span.rop_code) || span.pmask != span.mask);
+    pixel_span span;
+    pixel_span_init(&span, pe, q_index >= 0);
 
     uint32_t step     = pe->x_dir ? 0U - 0x10000 : 0x10000;
     if (op == 0xf3 && params[0] == P_Q && params[1] == P_U && params[2] == P_Z && params[3] == P_V) {
