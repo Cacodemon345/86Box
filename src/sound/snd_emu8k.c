@@ -149,8 +149,6 @@ static float cubic_table[CUBIC_RESOLUTION * 4];
 
 /* conversion from current pitch to linear frequency change (in 32.32 fixed point). */
 static int64_t freqtable[65536];
-/* Conversion from initial attenuation to 16 bit unsigned lineal amplitude (currently only a way to update volume target register) */
-static int32_t attentable[256];
 /* Conversion from envelope dbs (once rigth shifted) (0 = 0dBFS, 65535 = -96dbFS and silence ) to 16 bit unsigned lineal amplitude,
  * to convert to current volume. (0 to 65536) */
 static int32_t env_vol_db_to_vol_target[65537];
@@ -288,8 +286,17 @@ emu8k_overshoot_q12(int32_t samples)
 /* Attack phase (value_amp_hz, 1 << 21 = end) -> index into
  * env_vol_amplitude_to_db (0..65536). */
 static inline int
-emu8k_attack_amp_index(int32_t phase)
+emu8k_attack_amp_index(const emu8k_voice_t *voice)
 {
+    const int32_t phase = voice->vol_envelope.value_amp_hz;
+
+    /* The measured curve covers attack rates up to 0x24. Its initial
+     * plateau keeps VTFT at zero for several samples even at fast rates,
+     * so software such as Tyrian can immediately reuse a newly keyed voice.
+     * Use the linear attack for faster rates. */
+    if (ATKHLDV_ATTACK(voice->atkhldv) > 0x24)
+        return phase >> 5;
+
     double pos = (double) phase / (double) (1 << 21) * 20.0;
     if (pos < 0.0)
         pos = 0.0;
@@ -813,6 +820,11 @@ static void
 emu8k_voice_sync(emu8k_voice_t *voice, unsigned reg, int high)
 {
     switch (reg) {
+        case EMU8K_VOICE_CVCF:
+            /* Keep the volume slew in sync with writes to the current volume. */
+            if (high)
+                voice->volumeslide.last = voice->cvcf_curr_volume;
+            break;
         case EMU8K_VOICE_PSST:
             voice->loop_start.int_address = voice->psst & EMU8K_MEM_ADDRESS_MASK;
             if (high) {
@@ -846,18 +858,19 @@ emu8k_voice_write(emu8k_voice_t *voice, unsigned reg, uint32_t val)
 static void
 emu8k_voice_set_ip(emu8k_voice_t *voice, uint16_t val)
 {
-    voice->ip              = val;
-    voice->ptrx_pit_target = freqtable[val] >> 18;
+    /* IP feeds the envelope/modulation engine; PTRX is only updated by the
+     * envelope tick when the engine is enabled, or by direct host writes. */
+    voice->ip = val;
 }
 
 static void
 emu8k_voice_set_ifatn(emu8k_voice_t *voice, uint16_t val)
 {
-    voice->ifatn              = val;
-    voice->initial_att        = ((int32_t) voice->ifatn_attenuation << 21) / 0xFF;
-    voice->vtft_vol_target    = attentable[voice->ifatn_attenuation];
-    voice->initial_filter     = ((int32_t) voice->ifatn_init_filter << 21) / 0xFF;
-    voice->vtft_filter_target = voice->ifatn_init_filter == 0xFF ? 0xFFFF : voice->initial_filter >> 5;
+    /* IFATN feeds the envelope engine; VTFT is only updated by the envelope
+     * tick when the engine is enabled, or by direct host writes. */
+    voice->ifatn          = val;
+    voice->initial_att    = ((int32_t) voice->ifatn_attenuation << 21) / 0xFF;
+    voice->initial_filter = ((int32_t) voice->ifatn_init_filter << 21) / 0xFF;
 }
 
 static inline void
@@ -1570,7 +1583,8 @@ emu8k_outw(uint16_t addr, uint16_t val, void *priv)
                             emu8k->hwcf2 = val;
                             return;
                         case 31:
-                            emu8k->hwcf3 = val;
+                            emu8k->hwcf3         = val;
+                            emu8k->hwcf3_written = 1;
                             return;
 
                         default:
@@ -1677,7 +1691,7 @@ emu8k_outw(uint16_t addr, uint16_t val, void *priv)
                         emu8k->voice[emu8k->cur_voice].env_engine_on = DCYSUSV_GENERATOR_ENGINE_ON(val);
 
                         if (emu8k->voice[emu8k->cur_voice].env_engine_on && old_on != emu8k->voice[emu8k->cur_voice].env_engine_on) {
-                            if (emu8k->hwcf3 != 0x04) {
+                            if (!emu8k->hwcf3_written && !DCYSUSV_IS_RELEASE(val) && emu8k->hwcf3 != 0x04) {
                                 /* This is a hack for some programs like Doom or cubic player 1.7 that don't initialize
                                    the hwcfg and init registers (doom does not init the card at all. only tests the cfg registers) */
                                 emu8k->hwcf3 = 0x04;
@@ -1735,7 +1749,7 @@ emu8k_outw(uint16_t addr, uint16_t val, void *priv)
                         vol_env->ramp_amount_db_oct   = env_decay_to_dbs_or_oct[DCYSUSV_DECAYRELEASE_GET(val)];
                         if (DCYSUSV_IS_RELEASE(val)) {
                             if (vol_env->state == ENV_DELAY || vol_env->state == ENV_ATTACK || vol_env->state == ENV_HOLD) {
-                                vol_env->value_db_oct = env_vol_amplitude_to_db[emu8k_attack_amp_index(vol_env->value_amp_hz)] << 5; /* AWE32Emu */
+                                vol_env->value_db_oct = env_vol_amplitude_to_db[emu8k_attack_amp_index(&emu8k->voice[emu8k->cur_voice])] << 5;
                                 if (vol_env->value_db_oct > (1 << 21))
                                     vol_env->value_db_oct = 1 << 21;
                             }
@@ -2565,8 +2579,7 @@ emu8k_voice_envelope_tick(emu8k_voice_t *emu_voice)
                     volenv->state = ENV_RAMP_UP;
                 }
             }
-            /* AWE32Emu: attack shape measured on the card. Upstream: value_amp_hz >> 5. */
-            attenuation += env_vol_amplitude_to_db[emu8k_attack_amp_index(volenv->value_amp_hz)] << 5;
+            attenuation += env_vol_amplitude_to_db[emu8k_attack_amp_index(emu_voice)] << 5;
             break;
 
         case ENV_HOLD:
@@ -3060,15 +3073,6 @@ emu8k_init(emu8k_t *emu8k, uint16_t emu_addr, int onboard_ram)
      * since some programs set the pitch to 0 for unused channels. */
     freqtable[0] = 0;
 
-    /* starting at 65535 because it is used for "volume target" register conversion. */
-    out = 65535.0;
-    for (c = 0; c < 256; c++) {
-        attentable[c] = (int32_t) out;
-        out /= sqrt(1.09018); /*0.375 dB steps*/
-    }
-    /* Shortcut: max attenuation is silent, not -96dB. */
-    attentable[255] = 0;
-
     /* Note: these two tables have "db" inverted: 0 dB is max volume, 65535 "db" (-96.32dBFS) is silence.
      * Important: Using 65535 as max output value because this is intended to be used with the volume target register! */
     out = 65535.0;
@@ -3241,7 +3245,8 @@ emu8k_init(emu8k_t *emu8k, uint16_t emu_addr, int onboard_ram)
     emu8k->hwcf1 = 0x59;
     emu8k->hwcf2 = 0x20;
     /* Initial state is muted. 0x04 is unmuted. */
-    emu8k->hwcf3 = 0x00;
+    emu8k->hwcf3         = 0x00;
+    emu8k->hwcf3_written = 0;
 }
 
 void
