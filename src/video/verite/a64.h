@@ -234,6 +234,12 @@ a64_madd(a64 *a, bool sf, unsigned rd, unsigned rn, unsigned rm, unsigned ra)
 }
 
 static inline void
+a64_msub(a64 *a, bool sf, unsigned rd, unsigned rn, unsigned rm, unsigned ra)
+{
+    a64_put(a, 0x1b008000 | (sf << 31) | (rm << 16) | (ra << 10) | (rn << 5) | rd);
+}
+
+static inline void
 a64_mul(a64 *a, bool sf, unsigned rd, unsigned rn, unsigned rm)
 {
     a64_madd(a, sf, rd, rn, rm, A64_ZR);
@@ -252,9 +258,33 @@ a64_sdiv(a64 *a, bool sf, unsigned rd, unsigned rn, unsigned rm)
 }
 
 static inline void
+a64_udiv(a64 *a, bool sf, unsigned rd, unsigned rn, unsigned rm)
+{
+    a64_put(a, 0x1ac00800 | (sf << 31) | (rm << 16) | (rn << 5) | rd);
+}
+
+static inline void
+a64_clz(a64 *a, bool sf, unsigned rd, unsigned rn)
+{
+    a64_put(a, 0x5ac01000 | (sf << 31) | (rn << 5) | rd);
+}
+
+static inline void
+a64_rev(a64 *a, bool sf, unsigned rd, unsigned rn)
+{
+    a64_put(a, 0x5ac00800 | (sf << 31) | (sf << 10) | (rn << 5) | rd);
+}
+
+static inline void
 a64_csel(a64 *a, bool sf, unsigned rd, unsigned rn, unsigned rm, unsigned cond)
 {
     a64_put(a, 0x1a800000 | (sf << 31) | (rm << 16) | (cond << 12) | (rn << 5) | rd);
+}
+
+static inline void
+a64_csinc(a64 *a, bool sf, unsigned rd, unsigned rn, unsigned rm, unsigned cond)
+{
+    a64_put(a, 0x1a800400 | (sf << 31) | (rm << 16) | (cond << 12) | (rn << 5) | rd);
 }
 
 static inline void
@@ -420,7 +450,10 @@ a64_v3(a64 *a, unsigned arr, bool u, unsigned opcode, unsigned rd, unsigned rn, 
 #define A64_VSUB(a, t, d, n, m)  a64_v3(a, t, true, 0x10, d, n, m)
 #define A64_VMUL(a, t, d, n, m)  a64_v3(a, t, false, 0x13, d, n, m)
 #define A64_VMLA(a, t, d, n, m)  a64_v3(a, t, false, 0x12, d, n, m)
+#define A64_VSMAX(a, t, d, n, m) a64_v3(a, t, false, 0x0c, d, n, m)
 #define A64_VSMIN(a, t, d, n, m) a64_v3(a, t, false, 0x0d, d, n, m)
+#define A64_VUABD(a, t, d, n, m) a64_v3(a, t, true, 0x0e, d, n, m)
+#define A64_VCMGT(a, t, d, n, m) a64_v3(a, t, false, 0x06, d, n, m)
 #define A64_VUSHL(a, t, d, n, m) a64_v3(a, t, true, 0x08, d, n, m)
 /* Bitwise operations take the size field as the operation. */
 #define A64_VAND(a, d, n, m) a64_v3(a, 4 | 0, false, 0x03, d, n, m)
@@ -521,6 +554,39 @@ static inline void
 a64_fmov_from(a64 *a, unsigned rd, unsigned rn)
 {
     a64_put(a, 0x1e270000 | (rn << 5) | rd);
+}
+
+/* FMOV Dd, Xn */
+static inline void
+a64_fmov_d_x(a64 *a, unsigned dd, unsigned xn)
+{
+    a64_put(a, 0x9e670000 | (xn << 5) | dd);
+}
+
+/* SCVTF Dd, Wn/Xn */
+static inline void
+a64_scvtf_d(a64 *a, bool sf, unsigned dd, unsigned rn)
+{
+    a64_put(a, 0x1e620000 | (sf << 31) | (rn << 5) | dd);
+}
+
+static inline void
+a64_fdiv_d(a64 *a, unsigned dd, unsigned dn, unsigned dm)
+{
+    a64_put(a, 0x1e601800 | (dm << 16) | (dn << 5) | dd);
+}
+
+static inline void
+a64_fmul_d(a64 *a, unsigned dd, unsigned dn, unsigned dm)
+{
+    a64_put(a, 0x1e600800 | (dm << 16) | (dn << 5) | dd);
+}
+
+/* FCVTZS Xd, Dn */
+static inline void
+a64_fcvtzs_x_d(a64 *a, unsigned xd, unsigned dn)
+{
+    a64_put(a, 0x9e780000 | (dn << 5) | xd);
 }
 
 /* ---- Executable memory --------------------------------------------------- */

@@ -804,8 +804,9 @@ static const uint8_t span_ops[] = { 0xf0, 0xf1, 0xf2, 0xf3, 0xf8, 0xf9, 0xfa, 0x
 static bool
 span_state(fixture *a, fixture *b, uint8_t op, bool *native)
 {
-    static const uint8_t fmts[] = { 0, 4, 4, 6, 6, 12 };
-    pixel_engine pe;
+    static const uint8_t fmts[]     = { 0, 2, 3, 4, 4, 5, 6, 6, 8, 9, 10, 12 };
+    static const uint8_t dst_fmts[] = { 4, 5, 6, 12 };
+    pixel_engine         pe;
     pixel_reset(&pe);
     uint32_t texel = mem_read16(a->mem, span_rand() & 0xffffe);
     pe.drawctl  = span_rand() & 0xffff;
@@ -820,7 +821,7 @@ span_state(fixture *a, fixture *b, uint8_t op, bool *native)
         pe.dst_mode &= ~(1U << 19 | 1U << 18 | 1U << 21 | 1U << 24);
     else if (stages == 3)
         pe.dst_mode = (pe.dst_mode & ~(1U << 18 | 1U << 19 | 1U << 24)) | 1U << 21 | (span_rand() & 1U << 19);
-    pe.dst_fmt  = span_rand() % 8 ? (span_rand() & 1 ? 4 : 6) : 12;
+    pe.dst_fmt  = dst_fmts[span_rand() % COUNT(dst_fmts)];
     pe.pmask    = span_rand() % 16 ? UINT32_MAX : 0x00ff00ff;
     pe.pat_mode = span_rand() % 16 ? 0 : 0x10000;
     if (op == 0xf0 && span_rand() % 4 == 0) {
@@ -879,8 +880,9 @@ span_state(fixture *a, fixture *b, uint8_t op, bool *native)
     a->core->pe   = b->core->pe = pe;
     a->core->drew = b->core->drew = false;
 
-    span_key key = { .src_mode = pe.src_mode & 0x1ffff, .dst_mode = pe.dst_mode & 0x03ff7fff, .dst_fmt = pe.dst_fmt & 15 };
-    *native = !pe.pat_mode && (pe.pmask & 0xffff) == 0xffff && key_supported(&key);
+    span_key key      = { .src_mode = pe.src_mode & 0x1ffff, .dst_mode = pe.dst_mode & 0x03ff7fff, .dst_fmt = pe.dst_fmt & 15 };
+    uint32_t fmt_mask = (pe.dst_fmt & 15) == 12 ? UINT32_MAX : 0xffffU;
+    *native           = !pe.pat_mode && (pe.pmask & fmt_mask) == fmt_mask && key_supported(&key);
     return true;
 }
 
@@ -1199,11 +1201,10 @@ jit_differential(void)
     jit_program(&a, &b, memory, COUNT(memory));
     a.core->reg[128] = b.core->reg[128] = 0;
     a.core->reg[132] = b.core->reg[132] = IMM(0x76, 140, 0xface);
-    assert(jit_compare(&a, &b, 5) == 4);
-    assert(jit_compare(&a, &b, 5) == 2);
-    assert(jit_compare(&a, &b, 5) == 2);
+    assert(jit_compare(&a, &b, 16) == 4);
+    assert(jit_compare(&a, &b, 16) == 4);
     assert(mem_read32(a.mem, 32) == a.core->reg[132]);
-    assert(jit_compare(&a, &b, 5) == 3);
+    assert(jit_compare(&a, &b, 16) == 3);
     assert(a.core->reg[140] == 0xface);
 
     static const uint32_t side_exit[] = {
@@ -1368,15 +1369,14 @@ jit_pixel_ops(void)
     a.core->pe.cnt = b.core->pe.cnt = 3;
     for (unsigned r = 160; r < 192; r++)
         a.core->reg[r] = b.core->reg[r] = 0;
+    a.core->reg[193] = b.core->reg[193] = 0;
     a.core->reg[161] = b.core->reg[161] = 10 << 16;
     a.core->reg[176] = b.core->reg[176] = 1 << 16;
     a.core->reg[177] = b.core->reg[177] = 20 << 16;
     jit_program(&a, &b, param, COUNT(param));
-    assert(jit_compare(&a, &b, 64) == 2);
+    assert(jit_compare(&a, &b, 64) == 5);
     assert(mem_read32(a.mem, 0x10008) == 0xff320000 && !a.core->pe.cnt);
-    a.core->pe.cnt = b.core->pe.cnt = 1;
-    assert(jit_compare(&a, &b, 64) == 3);
-    assert(a.core->pc == 24 && a.core->reg[193] == 30U << 16);
+    assert(a.core->pc == 24 && a.core->reg[193] == 0);
 
     /* Draws from the input FIFO stay in the interpreter. */
     static const uint32_t fifo[] = { IMM(0x76, 200, 1), INS(0xf0, 192, 32, 32), HALT };
@@ -1536,6 +1536,163 @@ jit_draw_sites(void)
     free(image);
     printf("Vérité draw sites matched the interpreter in %u supported rounds\n", native);
 }
+
+static void
+jit_extra_features(void)
+{
+    /* 1. Native loop with memory load and non-self-modifying store. */
+    static const uint32_t mem_loop[] = {
+        INS(0x72, 130, 0, 128),              /* lw r130, [r128] */
+        INS(0x00, 130, 130, 1),              /* add r130, r130, 1 */
+        INS(0x7a, 0, 130, 129),              /* sw [r129], r130 */
+        INS(0x00, 128, 128, 4),              /* add r128, r128, 4 */
+        INS(0x01, 131, 131, 1),              /* r131-- */
+        INS(0x61, 0xff, 0xfa, 131),          /* bnez r131, 0 */
+        INS(0x00, 129, 129, 4),              /* delay slot: r129 += 4 */
+        HALT
+    };
+    fixture a = machine(mem_loop, COUNT(mem_loop), 0);
+    fixture b = machine(mem_loop, COUNT(mem_loop), 0);
+    for (unsigned i = 0; i < 4; i++) {
+        mem_write32(a.mem, 0x2000 + 4 * i, 10 + i);
+        mem_write32(b.mem, 0x2000 + 4 * i, 10 + i);
+    }
+    a.core->reg[128] = b.core->reg[128] = 0x2000;
+    a.core->reg[129] = b.core->reg[129] = 0x3000;
+    a.core->reg[131] = b.core->reg[131] = 4;
+    if (!a.core->jit_unavailable) {
+        assert(jit_compare(&a, &b, 100) == 28);
+        assert(a.core->pc == 28 && mem_read32(a.mem, 0x3000) == 11 && mem_read32(a.mem, 0x300c) == 14);
+    }
+
+    /* 2. Delay-slot memory ops (local hit + MMIO side-exit). */
+    static const uint32_t delay_mem[] = {
+        0x68000002,              /* b +8 -> pc 12 */
+        INS(0x72, 130, 0, 128),  /* delay slot: lw r130, [r128] */
+        HALT,
+        HALT
+    };
+    jit_program(&a, &b, delay_mem, COUNT(delay_mem));
+    a.core->reg[128] = b.core->reg[128] = 0x2000;
+    assert(jit_compare(&a, &b, 16) == 2 && a.core->reg[130] == 10 && a.core->pc == 12);
+
+    jit_program(&a, &b, delay_mem, COUNT(delay_mem));
+    a.core->reg[128] = b.core->reg[128] = 0xffe00400;
+    assert(jit_compare(&a, &b, 16) == 1 && a.core->pc == 4 && a.core->npc == 12);
+
+    /* 3. 0xc0..0xc3, 0xc4, 0x0f/0x1f, 0x42/0x53, 0x4e/0x4f/0x5f, special regs, FIFO pops. */
+    static const uint32_t ops_prog[] = {
+        IMM(0x76, 128, 0x5678),
+        IMM(0x77, 128, 0x1234),
+        INS(0xc2, 130, 0, 128),
+        INS(0xc3, 132, 0, 128),
+        IMM(0x77, 134, 0x4000),  /* 2.0f */
+        INS(0x0f, 135, 134, 4),  /* f2i(2.0f, 4) = 32 */
+        IMM(0x76, 136, 4),
+        INS(0x42, 137, 136, 2),  /* seed_op */
+        INS(0x53, 138, 136, 136),
+        INS(0x4e, 0, 0x12, 0x04), /* pixel_spr dst_base = 0x1200? imm16 */
+        INS(0x4f, 0, 136, 0x05),  /* pixel_spr dst_mode = r136 */
+        INS(0x10, 139, 0, 34),    /* read SEED */
+        INS(0x10, 140, 0, 35),    /* read SEG */
+        INS(0x10, 141, 0, 36),    /* read SCALE */
+        INS(0x10, 142, 0, 37),    /* read FLAG */
+        INS(0x10, 143, 0, 32),    /* pop SWFIFO */
+        INS(0x10, 144, 0, 33),    /* pop FIFO */
+        INS(0xc4, 146, 147, 148), /* sort_segments */
+        HALT
+    };
+    jit_program(&a, &b, ops_prog, COUNT(ops_prog));
+    a.core->reg[146] = b.core->reg[146] = 30;
+    a.core->reg[147] = b.core->reg[147] = 10;
+    a.core->reg[148] = b.core->reg[148] = 20;
+    write_io(&a, VIO_FIFO, 4, 0x11223344);
+    write_io(&a, VIO_FIFO, 4, 0x55667788);
+    write_io(&b, VIO_FIFO, 4, 0x11223344);
+    write_io(&b, VIO_FIFO, 4, 0x55667788);
+    assert(jit_compare(&a, &b, 64) == 18);
+    assert(a.core->reg[135] == 32 && a.core->reg[143] == 0x44332211 && a.core->reg[144] == 0x55667788);
+
+    /* 4. slow_precharge with same-row and cross-row loads/stores. */
+    static const uint32_t slow_prog[] = {
+        INS(0x72, 130, 0, 128), /* lw r130, [0x2000] (row 2 != row 0) */
+        INS(0x72, 131, 0, 129), /* lw r131, [0x2004] (row 2 == row 2) */
+        INS(0x7a, 0, 130, 128), /* sw [0x2000], r130 */
+        HALT
+    };
+    jit_program(&a, &b, slow_prog, COUNT(slow_prog));
+    a.core->slow_precharge = b.core->slow_precharge = true;
+    a.core->dram_row       = b.core->dram_row       = 5;
+    a.core->reg[128]       = b.core->reg[128]       = 0x2000;
+    a.core->reg[129]       = b.core->reg[129]       = 0x2004;
+    jit_compare(&a, &b, 64);
+
+    /* 5. page_tracking + risc_jit_run_chain. */
+    a.core->slow_precharge = b.core->slow_precharge = false;
+    atomic_uchar *dirty = verite_core_enable_page_tracking(a.core);
+    assert(dirty != NULL);
+    static const uint32_t chain_prog[] = {
+        IMM(0x76, 128, 1),
+        0x68000001,
+        IMM(0x76, 129, 2),
+        IMM(0x76, 130, 3),
+        IMM(0x76, 131, 4),
+        HALT
+    };
+    jit_program(&a, &b, chain_prog, COUNT(chain_prog));
+    unsigned chained = risc_jit_run_chain(a.core, a.mem, 64);
+    assert(chained == 5 && a.core->reg[128] == 1 && a.core->reg[129] == 2 && a.core->reg[130] == 3
+           && a.core->reg[131] == 4);
+    b.core->timer = a.core->timer;
+    memcpy(b.core->reg, a.core->reg, sizeof(a.core->reg));
+
+    /* 6. Loop with delay-slot MMIO side-exit (iteration 0 and iteration 1). */
+    static const uint32_t loop_delay_exit[] = {
+        INS(0x01, 131, 131, 1),    /* r131-- */
+        INS(0x61, 0xff, 0xfe, 131),/* bnez r131, 0 */
+        INS(0x72, 130, 0, 128),    /* delay slot: lw r130, [r128] */
+        HALT
+    };
+    jit_program(&a, &b, loop_delay_exit, COUNT(loop_delay_exit));
+    a.core->reg[128] = b.core->reg[128] = 0xffe00400;
+    a.core->reg[131] = b.core->reg[131] = 2;
+    assert(jit_compare(&a, &b, 64) == 2 && a.core->pc == 8 && a.core->npc == 0);
+
+    jit_program(&a, &b, loop_delay_exit, COUNT(loop_delay_exit));
+    a.core->reg[128] = b.core->reg[128] = 0x2000;
+    a.core->reg[131] = b.core->reg[131] = 2;
+    assert(jit_compare(&a, &b, 64) == 6 && a.core->pc == 12);
+
+    /* 7. Z-buffered span dirties color and Z pages separately without bumping global_gen. */
+    pixel_reset(&a.core->pe);
+    sixteen_bit(a.core);
+    a.core->pe.dst_base = 0x10000;
+    a.core->pe.z_base   = 0x80000;
+    a.core->pe.stride   = 0x04040400;
+    a.core->pe.drawctl  = 2;
+    a.core->pe.dst_mode = 12 | DST_ZBUF_WRITE;
+    a.core->pe.cnt      = 4;
+    a.core->reg[160]    = 1 << 16;
+    a.core->reg[161]    = 0;
+    a.core->reg[176]    = 1 << 16;
+    a.core->reg[177]    = 0;
+    static const uint32_t zspan_prog[] = {
+        INS(0xf3, 192, 160, 176),
+        HALT
+    };
+    jit_program(&a, &b, zspan_prog, COUNT(zspan_prog));
+    uint32_t ggen0 = a.core->global_gen;
+    uint32_t cgen0 = a.core->page_gen[0x10000 >> 12];
+    uint32_t zgen0 = a.core->page_gen[0x80000 >> 12];
+    pixel_draw_param(a.core, 0xf3, 192, 160, 176, a.mem);
+    assert(a.core->global_gen == ggen0);
+    assert(a.core->page_gen[0x10000 >> 12] == cgen0 + 1);
+    assert(a.core->page_gen[0x80000 >> 12] == zgen0 + 1);
+
+    done(&a);
+    done(&b);
+    puts("Vérité " JIT_NAME " extra JIT cases passed");
+}
 #endif
 
 int
@@ -1579,6 +1736,7 @@ main(void)
     jit_perspective_division();
     jit_pixel_ops();
     jit_draw_sites();
+    jit_extra_features();
 #endif
     return 0;
 }

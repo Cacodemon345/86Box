@@ -160,6 +160,7 @@ typedef struct {
     uint32_t     *word_colors; /* 16-bit scanout word to output colour */
     uint32_t      word_colors_key;
     int           word_colors_valid;
+    atomic_uchar *vram_dirty;
     verite_worker *w;
     /* With the RISC on its own thread, the DMA engine runs here, in step
        with the guest, and feeds the RISC through the queue. */
@@ -625,6 +626,8 @@ verite_settle(verite_t *v)
     v->endian                         = endian_xor[(status >> 8) & 3];
     uint8_t mode                      = verite_core_mode(v->core);
     if ((v->mode ^ mode) & (MODE_VESA | MODE_VGA)) {
+        if ((v->mode ^ mode) & MODE_VGA)
+            verite_core_invalidate_vram(v->core);
         v->mode = mode;
         verite_update_bank(v);
         svga_recalctimings(&v->vga.svga);
@@ -1409,6 +1412,13 @@ verite_store_le32(uint8_t *p, uint32_t val)
 #endif
 }
 
+static inline void
+verite_mark_dirty_page(verite_t *v, uint32_t page)
+{
+    if (v->vram_dirty && !atomic_load_explicit(&v->vram_dirty[page], memory_order_relaxed))
+        atomic_store_explicit(&v->vram_dirty[page], 1, memory_order_release);
+}
+
 static uint8_t
 verite_vram_read(verite_t *v, uint32_t addr)
 {
@@ -1421,6 +1431,7 @@ verite_vram_write(verite_t *v, uint32_t addr, uint8_t value)
     addr                                = (addr ^ v->endian) & (VRAM_SIZE - 1);
     v->vga.svga.vram[addr]              = value;
     v->vga.svga.changedvram[addr >> 12] = changeframecount;
+    verite_mark_dirty_page(v, addr >> 12);
 }
 
 static uint16_t
@@ -1439,6 +1450,7 @@ verite_vram_writew_aligned(verite_t *v, uint32_t addr, uint16_t val)
         val = verite_swap16(val);
     verite_store_le16(v->vga.svga.vram + base, val);
     v->vga.svga.changedvram[base >> 12] = changeframecount;
+    verite_mark_dirty_page(v, base >> 12);
 }
 
 static uint32_t
@@ -1454,6 +1466,7 @@ verite_vram_writel_aligned(verite_t *v, uint32_t addr, uint32_t val)
     uint32_t base = addr & (VRAM_SIZE - 1);
     verite_store_le32(v->vga.svga.vram + base, verite_swap32(val, v->endian));
     v->vga.svga.changedvram[base >> 12] = changeframecount;
+    verite_mark_dirty_page(v, base >> 12);
 }
 
 static void
@@ -1484,8 +1497,10 @@ verite_vram_write_l_run_chunk(verite_t *v, uint32_t off, const uint32_t *src, ui
     }
     uint32_t first_page = off >> 12;
     uint32_t last_page  = (off + (count << 2) - 1) >> 12;
-    for (uint32_t page = first_page; page <= last_page; page++)
+    for (uint32_t page = first_page; page <= last_page; page++) {
         v->vga.svga.changedvram[page] = changeframecount;
+        verite_mark_dirty_page(v, page);
+    }
 }
 
 static uint8_t
@@ -1812,6 +1827,7 @@ verite_init(const device_t *info)
 #ifdef VERITE_JIT
     verite_core_set_jit(v->core, device_get_config_int("recompiler"));
 #endif
+    v->vram_dirty = verite_core_enable_page_tracking(v->core);
     if (rom_init(&v->bios, VERITE_ROM, 0xc0000, ROM_SIZE, ROM_SIZE - 1, 0, MEM_MAPPING_EXTERNAL)) {
         verite_core_free(v->core);
         free(v->word_colors);

@@ -2,6 +2,7 @@
 #ifndef VIDEO_VERITE_CORE_H
 #define VIDEO_VERITE_CORE_H
 
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -30,7 +31,21 @@ verite_core *verite_core_new(void);
 void         verite_core_free(verite_core *core);
 void         verite_core_reset(verite_core *core);
 #ifdef VERITE_JIT
-void         verite_core_set_jit(verite_core *core, int enabled);
+void          verite_core_set_jit(verite_core *core, int enabled);
+atomic_uchar *verite_core_enable_page_tracking(verite_core *core);
+void          verite_core_invalidate_vram(verite_core *core);
+#else
+static inline atomic_uchar *
+verite_core_enable_page_tracking(verite_core *core)
+{
+    (void) core;
+    return NULL;
+}
+static inline void
+verite_core_invalidate_vram(verite_core *core)
+{
+    (void) core;
+}
 #endif
 uint32_t     verite_core_read(verite_core *core, uint8_t reg, uint8_t len,
                               const uint8_t *vram, size_t size);

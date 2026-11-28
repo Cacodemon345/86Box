@@ -47,6 +47,9 @@ core_reset(verite_core *c, bool hard)
     c->partial_mask                                       = 0;
     c->has_forced                                         = false;
     c->dma                                                = (verite_dma) { 0 };
+#ifdef VERITE_JIT
+    verite_core_invalidate_vram(c);
+#endif
     if (hard) {
         memset(c->regs, 0, sizeof(c->regs));
         memset(c->reg, 0, sizeof(c->reg));
@@ -95,6 +98,24 @@ verite_core_set_jit(verite_core *c, int enabled)
     c->jit_disabled = !enabled;
     if (c->jit_disabled)
         risc_jit_free(c);
+}
+
+atomic_uchar *
+verite_core_enable_page_tracking(verite_core *c)
+{
+    c->page_tracking = true;
+    verite_core_invalidate_vram(c);
+    return c->page_dirty;
+}
+
+void
+verite_core_invalidate_vram(verite_core *c)
+{
+    c->global_gen++;
+    if (c->page_tracking) {
+        for (unsigned i = 0; i < 1024; i++)
+            atomic_store_explicit(&c->page_dirty[i], 1, memory_order_release);
+    }
 }
 #endif
 
@@ -335,7 +356,7 @@ run(verite_core *c, verite_memory mem, verite_bus bus, int64_t budget)
             dma_pump(c, bus);
         if (!runnable(c))
             break;
-        unsigned compiled = risc_jit_run(c, mem, (unsigned) (budget - used));
+        unsigned compiled = risc_jit_run_chain(c, mem, (unsigned) (budget - used));
         if (compiled) {
             used += compiled;
             continue;

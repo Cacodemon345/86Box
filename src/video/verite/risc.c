@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Vérité RISC instruction interpreter, ported from rust-dos. */
 
-#include <math.h>
 #include <string.h>
 #include "internal.h"
+#ifdef _MSC_VER
+#    include <intrin.h>
+#endif
 
 enum {
     SWFIFO = 32,
@@ -47,14 +49,26 @@ f2i(uint32_t bits, uint32_t shift)
 {
     float f;
     memcpy(&f, &bits, sizeof(f));
-    double v = (double) f * (UINT64_C(1) << (shift & 31));
     if ((bits & 0x7fffffff) > 0x7f800000)
         return bits & 0x80000000 ? 0x80000000 : 0x7fffffff;
-    if (v <= INT32_MIN)
+    uint64_t scale_bits = (uint64_t) (1023U + (shift & 31U)) << 52;
+    double   scale;
+    memcpy(&scale, &scale_bits, sizeof(scale));
+    double v = (double) f * scale;
+    if (v <= (double) INT32_MIN)
         return 0x80000000;
-    if (v >= INT32_MAX)
+    if (v >= (double) INT32_MAX)
         return 0x7fffffff;
-    return (uint32_t) (int32_t) floor(v);
+    int32_t t = (int32_t) v;
+    if ((double) t > v)
+        t--;
+    return (uint32_t) t;
+}
+
+uint32_t
+risc_f2i(uint32_t bits, uint32_t shift)
+{
+    return f2i(bits, shift);
 }
 
 static uint32_t
@@ -205,6 +219,25 @@ dst_pair(verite_core *c, uint8_t field, reg_pair p)
     risc_dst(c, field | 1, p.odd);
 }
 
+static inline unsigned
+clz32(uint32_t x)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    return (unsigned) __builtin_clz(x);
+#elif defined(_MSC_VER)
+    unsigned long idx;
+    _BitScanReverse(&idx, x);
+    return 31U - (unsigned) idx;
+#else
+    unsigned n = 0;
+    while (!(x & 0x80000000U)) {
+        x <<= 1;
+        n++;
+    }
+    return n;
+#endif
+}
+
 static void
 seed_op(verite_core *c, uint32_t x)
 {
@@ -213,11 +246,8 @@ seed_op(verite_core *c, uint32_t x)
         c->seed                  = UINT32_MAX;
         return;
     }
-    unsigned leading = 0;
-    while (!(x & 0x80000000)) {
-        x <<= 1;
-        leading++;
-    }
+    unsigned leading = clz32(x);
+    x <<= leading;
     c->scale      = 32 - leading;
     c->seed_index = x >> 19;
     c->seed       = (UINT64_C(1) << 62) / x;
@@ -321,6 +351,7 @@ store(verite_core *c, uint32_t addr, uint32_t value, unsigned size, verite_memor
                 break;
         }
         c->drew = true;
+        verite_dirty_vram_page(c, (addr & mem.mask) >> 12);
     } else if (addr >= BOARD_REGS && addr < PE_STATE) {
         unsigned io = 0x80 + ((addr - BOARD_REGS) >> 3);
         /* The RISC's writes to CRTC timing and control do not take effect. */
@@ -483,6 +514,29 @@ sort_segments(verite_core *c, uint8_t s3, uint8_t s2, uint8_t s1)
         bases |= ((risc_resolve(c, entries[i].field) >> 4) & 7) << (4 * i);
     c->seg  = (c->seg & ~0x777U) | bases;
     c->clip = ((c->clip << 4) & 0xfc) | ((int64_t) entries[2].value - 1 < entries[0].value ? 0x3c : 0);
+}
+
+void
+risc_sort_segments(verite_core *c, uint32_t ir)
+{
+    sort_segments(c, (uint8_t) (ir >> 16), (uint8_t) (ir >> 8), (uint8_t) ir);
+}
+
+void
+risc_pixel_spr_insn(verite_core *c, uint32_t ir)
+{
+    verite_memory mem = { c->jit_mem->vram, c->jit_mem->mask };
+    uint8_t       op  = ir >> 24;
+    uint8_t       s2  = ir >> 8;
+    uint8_t       s1  = ir;
+    if (op == 0x4e)
+        pixel_spr(&c->pe, s1, (ir >> 8) & 0xffff, mem);
+    else if (op == 0x4f)
+        pixel_spr(&c->pe, s1, risc_src(c, s2), mem);
+    else if (op == 0x5f) {
+        uint32_t value = risc_src(c, s2);
+        pixel_spr(&c->pe, risc_src(c, s1), value, mem);
+    }
 }
 
 static void

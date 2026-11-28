@@ -940,7 +940,23 @@ pixel_parallel(verite_core *c, int32_t x, int32_t y, int32_t sx, int32_t sy, ver
     uint32_t old    = rop_reads(code) || pmask != mask ? read_pixel(mem, addr, bytes) : 0;
     uint32_t result = (rop(code, source, old) & pmask) | (old & ~pmask);
     write_pixel(mem, addr, bytes, result & mask);
+    verite_dirty_vram_page(c, (addr & mem.mask) >> 12);
     pe->pick_hit = c->drew = true;
+}
+
+static inline void
+dirty_span_bytes(verite_core *c, verite_memory mem, uint32_t start, uint32_t len)
+{
+    if (!len)
+        return;
+    uint32_t lo = start & (uint32_t) mem.mask;
+    uint32_t hi = (start + len - 1) & (uint32_t) mem.mask;
+    if (lo <= hi)
+        verite_dirty_vram_range(c, lo, hi);
+    else {
+        verite_dirty_vram_range(c, lo, (uint32_t) mem.mask);
+        verite_dirty_vram_range(c, 0, hi);
+    }
 }
 
 /* Copies and fills with no pattern, chroma key, raster op or plane mask: the
@@ -994,6 +1010,7 @@ pixel_parallel_copy(verite_core *c, unsigned n, uint32_t step, verite_memory mem
             else
                 source = read_pixel(mem, row + (((int32_t) u >> 16) & pe->u_mask) * n_src, n_src);
             write_pixel(mem, addr, bytes, source & mask);
+            verite_dirty_vram_page(c, (addr & mem.mask) >> 12);
             drew = true;
         }
         pe->x_shadow = (int32_t) final_x_shadow;
@@ -1129,6 +1146,7 @@ pixel_parallel_copy(verite_core *c, unsigned n, uint32_t step, verite_memory mem
                         }
                         pe->x_shadow = (int32_t) final_x_shadow;
                         pe->u        = (int32_t) final_u;
+                        dirty_span_bytes(c, mem, dst_lo, count * bytes);
                         pe->pick_hit = c->drew = true;
                         return true;
                     }
@@ -1160,6 +1178,7 @@ pixel_parallel_copy(verite_core *c, unsigned n, uint32_t step, verite_memory mem
                         }
                         pe->x_shadow = (int32_t) final_x_shadow;
                         pe->u        = (int32_t) final_u;
+                        dirty_span_bytes(c, mem, dst_lo, count * bytes);
                         pe->pick_hit = c->drew = true;
                         return true;
                     }
@@ -1175,6 +1194,7 @@ pixel_parallel_copy(verite_core *c, unsigned n, uint32_t step, verite_memory mem
     }
     pe->x_shadow = (int32_t) final_x_shadow;
     pe->u        = (int32_t) final_u;
+    dirty_span_bytes(c, mem, line + (uint32_t) x_lo * bytes, count * bytes);
     pe->pick_hit = c->drew = true;
     return true;
 }
@@ -1422,8 +1442,11 @@ pixel_full(verite_core *core, int32_t x, int32_t y, const pixel_span *span, veri
     uint32_t encoded = encode(span->format, c, dither, span->bgr);
     uint32_t out     = span->copy ? encoded : (rop(span->rop_code, encoded, old) & span->pmask) | (old & ~span->pmask);
     write_pixel(mem, addr, span->bytes, out & span->mask);
-    if (dst_mode & DST_ZBUF_WRITE)
+    verite_dirty_vram_page(core, (addr & mem.mask) >> 12);
+    if (dst_mode & DST_ZBUF_WRITE) {
         mem_write16(mem, z_addr, z);
+        verite_dirty_vram_page(core, (z_addr & mem.mask) >> 12);
+    }
     pe->pick_hit = core->drew = true;
 }
 
@@ -1486,6 +1509,7 @@ pixel_copy_565(verite_core *c, uint8_t d, uint8_t s2, uint8_t s1, verite_memory 
         if (!(pe->dst_mode & DST_TRANSP_REJECT) || (!transparent && (pe->alpha_thres & 255) < 255)) {
             uint32_t addr = pe->dst_base + line_stride(pe->stride >> 8) * (uint32_t) py + 2 * (uint32_t) px;
             mem_write16(mem, addr, transparent ? 0 : texel);
+            verite_dirty_vram_page(c, (addr & mem.mask) >> 12);
             pe->pick_hit = c->drew = true;
         }
     }

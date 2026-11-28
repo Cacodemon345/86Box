@@ -3,6 +3,7 @@
 #ifndef VERITE_INTERNAL_H
 #define VERITE_INTERNAL_H
 
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -91,15 +92,10 @@ typedef enum {
 
 typedef struct {
     uint32_t src_base;
-    uint32_t src_mode;
     uint32_t src_mask;
     uint32_t stride;
     uint32_t dst_base;
-    uint32_t dst_mode;
-    uint32_t dst_fmt;
-    uint32_t pmask;
     uint32_t pattern;
-    uint32_t pat_mode;
     uint32_t pat_offset;
     uint32_t scissor_x;
     uint32_t scissor_y;
@@ -136,7 +132,13 @@ typedef struct {
     int32_t  a;
     int32_t  f;
     uint32_t cnt;
+    /* Keep the six draw-site key fields contiguous and in verite_draw_site order. */
     uint32_t drawctl;
+    uint32_t src_mode;
+    uint32_t dst_mode;
+    uint32_t dst_fmt;
+    uint32_t pmask;
+    uint32_t pat_mode;
 } pixel_engine;
 
 typedef struct {
@@ -161,6 +163,14 @@ typedef struct verite_draw_site {
     const uint32_t *values, *deltas;
     uint32_t       *dest; /* write-back for single draws, or NULL */
 } verite_draw_site;
+
+typedef char verite_site_key_layout[
+    offsetof(pixel_engine, src_mode) - offsetof(pixel_engine, drawctl) == offsetof(verite_draw_site, src_mode) - offsetof(verite_draw_site, drawctl) &&
+    offsetof(pixel_engine, dst_mode) - offsetof(pixel_engine, drawctl) == offsetof(verite_draw_site, dst_mode) - offsetof(verite_draw_site, drawctl) &&
+    offsetof(pixel_engine, dst_fmt)  - offsetof(pixel_engine, drawctl) == offsetof(verite_draw_site, dst_fmt)  - offsetof(verite_draw_site, drawctl) &&
+    offsetof(pixel_engine, pmask)    - offsetof(pixel_engine, drawctl) == offsetof(verite_draw_site, pmask)    - offsetof(verite_draw_site, drawctl) &&
+    offsetof(pixel_engine, pat_mode) - offsetof(pixel_engine, drawctl) == offsetof(verite_draw_site, pat_mode) - offsetof(verite_draw_site, drawctl)
+    ? 1 : -1];
 
 typedef struct {
     const verite_board *ops;
@@ -198,9 +208,15 @@ struct verite_core {
     struct verite_jit       *jit;
     struct verite_pixel_jit *pixel_jit;
     const verite_jit_memory *jit_mem;    /* while native code runs */
+    uint8_t                 *jit_vram;   /* cached for native memory ops */
+    uint32_t                 jit_mask;
     uint32_t                 jit_budget; /* a looping block's cycle budget */
-    bool               jit_disabled;
-    bool               jit_unavailable;
+    bool                     jit_disabled;
+    bool                     jit_unavailable;
+    bool                     page_tracking;
+    uint32_t                 global_gen;
+    uint32_t                 page_gen[1024];
+    atomic_uchar             page_dirty[1024];
 #endif
 };
 
@@ -295,12 +311,34 @@ verite_line_stride(uint32_t code)
 
 #ifdef VERITE_JIT
 unsigned risc_jit_run(verite_core *core, verite_memory mem, unsigned budget);
+unsigned risc_jit_run_chain(verite_core *core, verite_memory mem, unsigned budget);
 void     risc_jit_free(verite_core *core);
 bool     pixel_jit_span(verite_core *core, uint8_t op, const uint32_t values[], const uint32_t deltas[],
                         verite_memory mem);
 unsigned pixel_jit_site_miss(verite_core *core, verite_draw_site *site);
 void     pixel_jit_free(verite_core *core);
 void     risc_jit_reset_sites(verite_core *core);
+
+static inline void
+verite_dirty_vram_page(verite_core *c, uint32_t page)
+{
+    c->page_gen[page & 1023U]++;
+}
+
+static inline void
+verite_dirty_vram_range(verite_core *c, uint32_t lo, uint32_t hi)
+{
+    if (lo > hi)
+        return;
+    uint32_t first = lo >> 12;
+    uint32_t last  = hi >> 12;
+    if (last - first > 16)
+        c->global_gen++;
+    else {
+        for (uint32_t p = first; p <= last; p++)
+            c->page_gen[p & 1023U]++;
+    }
+}
 #else
 static inline bool
 pixel_jit_span(verite_core *core, uint8_t op, const uint32_t values[], const uint32_t deltas[],
@@ -323,10 +361,34 @@ risc_jit_run(verite_core *core, verite_memory mem, unsigned budget)
     return 0;
 }
 
+static inline unsigned
+risc_jit_run_chain(verite_core *core, verite_memory mem, unsigned budget)
+{
+    (void) core;
+    (void) mem;
+    (void) budget;
+    return 0;
+}
+
 static inline void
 risc_jit_free(verite_core *core)
 {
     (void) core;
+}
+
+static inline void
+verite_dirty_vram_page(verite_core *c, uint32_t page)
+{
+    (void) c;
+    (void) page;
+}
+
+static inline void
+verite_dirty_vram_range(verite_core *c, uint32_t lo, uint32_t hi)
+{
+    (void) c;
+    (void) lo;
+    (void) hi;
 }
 #endif
 
@@ -366,6 +428,9 @@ risc_dst(verite_core *c, uint8_t field, uint32_t value)
 }
 
 void     risc_seed_q(verite_core *core, uint32_t value);
+uint32_t risc_f2i(uint32_t bits, uint32_t shift);
+void     risc_sort_segments(verite_core *core, uint32_t ir);
+void     risc_pixel_spr_insn(verite_core *core, uint32_t ir);
 void     pixel_reset(pixel_engine *pe);
 void     pixel_set(pixel_engine *pe, pixel_param param, uint32_t value);
 uint32_t pixel_state(const pixel_engine *pe, uint8_t index);
