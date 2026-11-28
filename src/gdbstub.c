@@ -2000,7 +2000,7 @@ gdbstub_server_thread(void *priv)
         gdbstub_break();
 
         /* Start client thread. */
-        thread_create(gdbstub_client_thread, client);
+        thread_detach(thread_create(gdbstub_client_thread, client));
     }
 
     /* Deallocate the redundant client structure. */
@@ -2187,7 +2187,7 @@ gdbstub_init(void)
 
     /* Start server thread. */
     pclog("GDB Stub: Listening on port %d\n", port);
-    thread_create(gdbstub_server_thread, NULL);
+    thread_detach(thread_create(gdbstub_server_thread, NULL));
 
     /* Start the CPU paused. */
     gdbstub_step = GDBSTUB_BREAK;

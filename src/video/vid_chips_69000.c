@@ -84,6 +84,7 @@ typedef struct chips_69000_bitblt_t
 #pragma pack(pop)
 
 typedef struct chips_69000_t {
+    struct chips_69000_t *reset_state;
     svga_t        svga;
     uint8_t       pci_conf_status;
     uint8_t       slot, irq_state;
@@ -170,8 +171,6 @@ typedef struct chips_69000_t {
         uint8_t  cur_buffer;
     } overlay;
 } chips_69000_t;
-
-static chips_69000_t *reset_state = NULL;
 
 /* TODO: Probe timings on real hardware. */
 static video_timings_t timing_chips = { .type = VIDEO_PCI, .write_b = 2, .write_w = 2, .write_l = 1, .read_b = 10, .read_w = 10, .read_l = 10 };
@@ -3179,14 +3178,14 @@ chips_69000_disable_handlers(chips_69000_t *chips)
     chips->linear_mapping.base = 0;
 
     /* Save all the mappings and the timers because they are part of linked lists. */
-    reset_state->linear_mapping   = chips->linear_mapping;
-    reset_state->svga.mapping     = chips->svga.mapping;
-    reset_state->bios_rom.mapping = chips->bios_rom.mapping;
+    chips->reset_state->linear_mapping   = chips->linear_mapping;
+    chips->reset_state->svga.mapping     = chips->svga.mapping;
+    chips->reset_state->bios_rom.mapping = chips->bios_rom.mapping;
 
-    reset_state->decrement_timer  = chips->decrement_timer;
-    reset_state->svga.timer       = chips->svga.timer;
-    reset_state->svga.timer_8514  = chips->svga.timer_8514;
-    reset_state->svga.timer_xga   = chips->svga.timer_xga;
+    chips->reset_state->decrement_timer  = chips->decrement_timer;
+    chips->reset_state->svga.timer       = chips->svga.timer;
+    chips->reset_state->svga.timer_8514  = chips->svga.timer_8514;
+    chips->reset_state->svga.timer_xga   = chips->svga.timer_xga;
 }
 
 static void
@@ -3194,11 +3193,11 @@ chips_69000_reset(void *priv)
 {
     chips_69000_t *chips = (chips_69000_t *) priv;
 
-    if (reset_state != NULL) {
+    if (chips->reset_state != NULL) {
         chips_69000_disable_handlers(chips);
-        reset_state->slot = chips->slot;
+        chips->reset_state->slot = chips->slot;
 
-        *chips = *reset_state;
+        *chips = *chips->reset_state;
     }
 }
 
@@ -3206,7 +3205,6 @@ static void *
 chips_69000_init(const device_t *info)
 {
     chips_69000_t *chips = calloc(1, sizeof(chips_69000_t));
-    reset_state = calloc(1, sizeof(chips_69000_t));
 
     /* Appears to have an odd VBIOS size. */
     if (!info->local) {
@@ -3261,7 +3259,8 @@ chips_69000_init(const device_t *info)
     if (!chips->on_board)
         mem_mapping_disable(&chips->bios_rom.mapping);
 
-    *reset_state = *chips;
+    chips->reset_state = malloc(sizeof(*chips->reset_state));
+    *chips->reset_state = *chips;
 
     return chips;
 }
@@ -3284,8 +3283,7 @@ chips_69000_close(void *priv)
     i2c_gpio_close(chips->i2c);
     svga_close(&chips->svga);
 
-    free(reset_state);
-    reset_state = NULL;
+    free(chips->reset_state);
 
     free(chips);
 }

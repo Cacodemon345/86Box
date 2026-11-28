@@ -1990,7 +1990,8 @@ svga_init(const device_t *info, svga_t *svga, void *priv, int memsize,
 
     timer_add(&svga->timer, svga_poll, svga, 1);
 
-    svga_pri = svga;
+    if (svga->monitor == video_primary_monitor)
+        svga_pri = svga;
 
     svga->ramdac_type = RAMDAC_6BIT;
 
@@ -2008,7 +2009,8 @@ svga_close(svga_t *svga)
     if ((svga->monitor != NULL) && (svga->monitor->mon_dpms))
         svga->monitor->mon_dpms = 0;
 
-    svga_pri = NULL;
+    if (svga_pri == svga)
+        svga_pri = NULL;
 }
 
 uint32_t

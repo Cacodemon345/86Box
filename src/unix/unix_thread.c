@@ -54,6 +54,13 @@ thread_wait(thread_t *arg)
     return ret;
 }
 
+void
+thread_detach(thread_t *arg)
+{
+    if (arg && !pthread_detach(*(pthread_t *) arg))
+        free(arg);
+}
+
 event_t *
 thread_create_event(void)
 {

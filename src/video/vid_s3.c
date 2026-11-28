@@ -247,6 +247,7 @@ typedef struct {
 } fifo_entry_t;
 
 typedef struct s3_t {
+    struct s3_t *reset_state;
     mem_mapping_t linear_mapping;
     mem_mapping_t mmio_mapping;
     mem_mapping_t new_mmio_mapping;
@@ -434,8 +435,6 @@ typedef struct s3_t {
 
     void (*accel_start)(int count, int cpu_input, uint32_t mix_dat, uint32_t cpu_dat, void *priv);
 } s3_t;
-
-static s3_t             *reset_state = NULL;
 
 #define INT_VSY         (1 << 0)
 #define INT_GE_BSY      (1 << 1)
@@ -10467,13 +10466,13 @@ s3_disable_handlers(s3_t *s3)
         mem_mapping_disable(&s3->bios_rom.mapping);
 
     /* Save all the mappings and the timers because they are part of linked lists. */
-    reset_state->linear_mapping   = s3->linear_mapping;
-    reset_state->mmio_mapping     = s3->mmio_mapping;
-    reset_state->new_mmio_mapping = s3->new_mmio_mapping;
-    reset_state->svga.mapping     = s3->svga.mapping;
-    reset_state->bios_rom.mapping = s3->bios_rom.mapping;
+    s3->reset_state->linear_mapping   = s3->linear_mapping;
+    s3->reset_state->mmio_mapping     = s3->mmio_mapping;
+    s3->reset_state->new_mmio_mapping = s3->new_mmio_mapping;
+    s3->reset_state->svga.mapping     = s3->svga.mapping;
+    s3->reset_state->bios_rom.mapping = s3->bios_rom.mapping;
 
-    reset_state->svga.timer       = s3->svga.timer;
+    s3->reset_state->svga.timer       = s3->svga.timer;
 
     memset(s3->svga.vram, 0x00, s3->svga.vram_max + 8);
     memset(s3->svga.changedvram, 0x00, (s3->svga.vram_max >> 12) + 1);
@@ -10484,7 +10483,7 @@ s3_reset(void *priv)
 {
     s3_t *s3 = (s3_t *) priv;
 
-    if (reset_state != NULL) {
+    if (s3->reset_state != NULL) {
         s3_disable_handlers(s3);
         s3->accel.multifunc[0xd] = 0x000;
         s3->accel.multifunc[0xe] = 0x000;
@@ -10494,9 +10493,9 @@ s3_reset(void *priv)
         s3->fifo_read_idx = 0;
         s3->fifo_write_idx = 0;
         if (s3->pci)
-            reset_state->pci_slot = s3->pci_slot;
+            s3->reset_state->pci_slot = s3->pci_slot;
 
-        *s3 = *reset_state;
+        *s3 = *s3->reset_state;
     } else
         s3_log("NULL reset.\n");
 }
@@ -10521,7 +10520,6 @@ static void *
 s3_init(const device_t *info)
 {
     s3_t *       s3          = calloc(1, sizeof(s3_t));
-                 reset_state = calloc(1, sizeof(s3_t));
     svga_t *     svga        = &s3->svga;
     char         fn[1024]    = { 0 };
     const char * bios_fn;
@@ -11619,7 +11617,8 @@ s3_init(const device_t *info)
     s3->fifo_thread_run     = 1;
     s3->fifo_thread         = thread_create(mach64_fifo_thread, s3);
 
-    *reset_state = *s3;
+    s3->reset_state = malloc(sizeof(*s3->reset_state));
+    *s3->reset_state = *s3;
 
     return s3;
 }
@@ -11640,8 +11639,7 @@ s3_close(void *priv)
     ddc_close(s3->ddc);
     i2c_gpio_close(s3->i2c);
 
-    free(reset_state);
-    reset_state = NULL;
+    free(s3->reset_state);
 
     free(s3);
 }

@@ -23,6 +23,7 @@ typedef enum {
 } mach_ramdac_type;
 
 typedef struct mach_t {
+    struct mach_t *reset_state;
     ati_eeprom_t eeprom;
     svga_t       svga;
 

@@ -232,6 +232,12 @@
     </widget>
     <addaction name="actionHide_tool_bar"/>
     <addaction name="actionHide_status_bar"/>
+    <widget class="QMenu" name="menuMain_monitor">
+     <property name="title">
+      <string>Main window monitor</string>
+     </property>
+    </widget>
+    <addaction name="menuMain_monitor"/>
     <addaction name="actionShow_non_primary_monitors"/>
     <addaction name="separator"/>
     <addaction name="actionResizable_window"/>

@@ -722,19 +722,16 @@ VMManagerSystem::setupVars()
             display_table[VMManager::Display::Name::Video].append(QString(" (%1)").arg(DeviceConfig::DeviceName(internal_device, internal_device->internal_name, 0)));
     }
 
-    // Secondary video
-    if (video_config.contains("gfxcard_2")) {
-        const device_t *video2_dev = video_get_video_from_old_internal_name(video_config["gfxcard_2"].toUtf8().data()); // Check for migrations first
-        const char *video2_internal_name;
-        int         video2_int;
-        if (video2_dev == nullptr) {
-            video2_int = video_get_video_from_internal_name(video_config["gfxcard_2"].toUtf8().data());
-            video2_dev = video_card_getdevice(video2_int);
-            video2_internal_name = video_get_internal_name(video2_int);
-        } else
-            video2_internal_name = video2_dev->internal_name;
+    for (int slot = 1; slot < GFXCARD_MAX; slot++) {
+        QByteArray name = video_config.value(QStringLiteral("gfxcard_%1").arg(slot + 1)).toUtf8();
+        if (name.isEmpty() || name == "none")
+            continue;
 
-        display_table[VMManager::Display::Name::Video].append(DeviceConfig::DeviceName(video2_dev, video2_internal_name, 1).prepend(VMManagerDetailSection::sectionSeparator));
+        const device_t *device = video_get_video_from_old_internal_name(name.data());
+        if (!device)
+            device = video_card_getdevice(video_get_video_from_internal_name(name.data()));
+        display_table[VMManager::Display::Name::Video].append(
+            DeviceConfig::DeviceName(device, device->internal_name, 1).prepend(VMManagerDetailSection::sectionSeparator));
     }
 
     // Add-on video that's not Voodoo

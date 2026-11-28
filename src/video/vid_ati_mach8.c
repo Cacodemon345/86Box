@@ -82,8 +82,6 @@ static __inline void mach32_writew_linear(uint32_t addr, uint16_t val, mach_t *m
 static __inline void mach32_write_common(uint32_t addr, uint8_t val, mach_t *mach, svga_t *svga);
 static int mach_crt_pointer(mach_t *mach);
 
-static mach_t *reset_state = NULL;
-
 #ifdef ENABLE_MACH_LOG
 int mach_do_log = ENABLE_MACH_LOG;
 
@@ -8187,11 +8185,11 @@ mach_disable_handlers(mach_t *mach)
         mem_mapping_disable(&mach->bios_rom.mapping);
 
     /* Save all the mappings and the timers because they are part of linked lists. */
-    reset_state->mmio_linear_mapping = mach->mmio_linear_mapping;
-    reset_state->svga.mapping        = mach->svga.mapping;
-    reset_state->bios_rom.mapping    = mach->bios_rom.mapping;
+    mach->reset_state->mmio_linear_mapping = mach->mmio_linear_mapping;
+    mach->reset_state->svga.mapping        = mach->svga.mapping;
+    mach->reset_state->bios_rom.mapping    = mach->bios_rom.mapping;
 
-    reset_state->svga.timer          = mach->svga.timer;
+    mach->reset_state->svga.timer          = mach->svga.timer;
 }
 
 static void
@@ -8201,7 +8199,7 @@ mach_reset(void *priv)
     svga_t *svga = &mach->svga;
     ibm8514_t *dev = (ibm8514_t *) svga->dev8514;
 
-    if (reset_state != NULL) {
+    if (mach->reset_state != NULL) {
         dev->on = 0;
         mach_disable_handlers(mach);
         mach->force_busy      = 0;
@@ -8214,9 +8212,9 @@ mach_reset(void *priv)
         mach->accel.src_reload = 1;
         mach->accel.clock_sel = 0x1c;
         if (mach->pci_bus)
-            reset_state->pci_slot = mach->pci_slot;
+            mach->reset_state->pci_slot = mach->pci_slot;
 
-        *mach = *reset_state;
+        *mach = *mach->reset_state;
     }
 }
 
@@ -8274,7 +8272,6 @@ mach8_init(const device_t *info)
     ibm8514_t *dev;
 
     mach             = calloc(1, sizeof(mach_t));
-    reset_state      = calloc(1, sizeof(mach_t));
 
     svga             = &mach->svga;
     dev              = (ibm8514_t *) calloc(1, sizeof(ibm8514_t));
@@ -8492,7 +8489,8 @@ mach8_init(const device_t *info)
     for (int i = 0; i < 9; i++)
         mach->crt_valid[0][i] = 1;
 
-    *reset_state = *mach;
+    mach->reset_state = malloc(sizeof(*mach->reset_state));
+    *mach->reset_state = *mach;
 
     return mach;
 }
@@ -8590,8 +8588,7 @@ mach_close(void *priv)
 
     svga_close(svga);
 
-    free(reset_state);
-    reset_state = NULL;
+    free(mach->reset_state);
 
     free(mach);
 }

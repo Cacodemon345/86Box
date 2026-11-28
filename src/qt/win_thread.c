@@ -35,12 +35,37 @@ typedef struct {
     HANDLE handle;
 } win_event_t;
 
+typedef struct {
+    void (*func)(void *);
+    void *param;
+} win_thread_start_t;
+
+static unsigned __stdcall
+win_thread_start(void *arg)
+{
+    const win_thread_start_t start = *(win_thread_start_t *) arg;
+    free(arg);
+    start.func(start.param);
+    return 0;
+}
+
 thread_t *
 thread_create_named(void (*func)(void *param), void *param, const char *name)
 {
-    uintptr_t bt = _beginthread(func, 0, param);
-    plat_set_thread_name((void *) bt, name);
-    return ((thread_t *) bt);
+    win_thread_start_t *start = malloc(sizeof(*start));
+    if (!start)
+        return NULL;
+    start->func  = func;
+    start->param = param;
+
+    /* Keep the handle valid for joining even when the worker exits first. */
+    HANDLE handle = (HANDLE) _beginthreadex(NULL, 0, win_thread_start, start, 0, NULL);
+    if (!handle) {
+        free(start);
+        return NULL;
+    }
+    plat_set_thread_name(handle, name);
+    return handle;
 }
 
 int
@@ -58,10 +83,17 @@ thread_wait(thread_t *arg)
     if (arg == NULL)
         return (0);
 
-    if (WaitForSingleObject(arg, INFINITE))
-        return (1);
-
+    if (WaitForSingleObject(arg, INFINITE) != WAIT_OBJECT_0)
+        return 1;
+    CloseHandle(arg);
     return (0);
+}
+
+void
+thread_detach(thread_t *arg)
+{
+    if (arg)
+        CloseHandle(arg);
 }
 
 event_t *

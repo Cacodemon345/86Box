@@ -39,6 +39,7 @@ public:
     explicit RendererStack(QWidget *parent = nullptr, monitor_t *monitor = nullptr);
     ~RendererStack();
     void stopRenderer();
+    void bindMonitor(monitor_t *monitor);
 
     monitor_t *monitor() const { return m_monitor; }
     bool acceptsGuestInput() const;
@@ -161,6 +162,7 @@ private:
 
     std::atomic_bool rendererTakesScreenshots;
     std::atomic_bool switchInProgress { false };
+    unsigned rendererGeneration = 0;
 
     char auto_mouse_type[16];
 };

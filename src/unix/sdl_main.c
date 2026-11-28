@@ -217,8 +217,6 @@ main_thread(UNUSED(void *param))
     runctl_thread_run_loop(main_thread_pass);
 }
 
-thread_t *thMain = NULL;
-
 void
 do_start(void)
 {
@@ -230,7 +228,7 @@ do_start(void)
 
     /* Start the emulator, really. */
     runctl_thread_starting();
-    thMain = thread_create(main_thread, NULL);
+    thread_detach(thread_create(main_thread, NULL));
 }
 
 void
@@ -260,9 +258,7 @@ do_stop(void)
     is_quit = 1;
     sdl_close();
 
-    pc_close(thMain);
-
-    thMain = NULL;
+    pc_close(NULL);
 }
 
 
@@ -364,7 +360,7 @@ main(int argc, char **argv)
     do_start();
 
 #ifndef USE_CLI
-    thread_create(monitor_thread, NULL);
+    thread_detach(thread_create(monitor_thread, NULL));
 #endif
 
     SDL_AddTimer(1000, timer_onesec, NULL);

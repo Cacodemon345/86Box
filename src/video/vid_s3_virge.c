@@ -247,6 +247,7 @@ typedef struct s3d_thread_arg_t {
 } s3d_thread_arg_t;
 
 typedef struct virge_t {
+    struct virge_t *reset_state;
     mem_mapping_t linear_mapping;
     mem_mapping_t mmio_mapping;
     mem_mapping_t new_mmio_mapping;
@@ -502,8 +503,6 @@ s3d_engine_busy(virge_t *virge)
        of rest if nothing got queued meanwhile. */
     return atomic_load(&render->write_idx) != write_idx;
 }
-
-static virge_t *reset_state = NULL;
 
 static video_timings_t timing_diamond_stealth3d_2000_pci = { .type = VIDEO_PCI, .write_b = 2, .write_w = 2, .write_l = 3, .read_b = 28, .read_w = 28, .read_l = 45 };
 static video_timings_t timing_diamond_stealth3d_3000_pci = { .type = VIDEO_PCI, .write_b = 2, .write_w = 2, .write_l = 4, .read_b = 26, .read_w = 26, .read_l = 42 };
@@ -6286,16 +6285,16 @@ s3_virge_disable_handlers(virge_t *dev)
     mem_mapping_disable(&dev->bios_rom.mapping);
 
     /* Save all the mappings and the timers because they are part of linked lists. */
-    reset_state->linear_mapping   = dev->linear_mapping;
-    reset_state->mmio_mapping     = dev->mmio_mapping;
-    reset_state->new_mmio_mapping = dev->new_mmio_mapping;
-    reset_state->svga.mapping     = dev->svga.mapping;
-    reset_state->bios_rom.mapping = dev->bios_rom.mapping;
+    dev->reset_state->linear_mapping   = dev->linear_mapping;
+    dev->reset_state->mmio_mapping     = dev->mmio_mapping;
+    dev->reset_state->new_mmio_mapping = dev->new_mmio_mapping;
+    dev->reset_state->svga.mapping     = dev->svga.mapping;
+    dev->reset_state->bios_rom.mapping = dev->bios_rom.mapping;
 
-    reset_state->svga.timer     = dev->svga.timer;
-    reset_state->svga.timer_8514 = dev->svga.timer_8514;
-    reset_state->svga.timer_xga = dev->svga.timer_xga;
-    reset_state->irq_timer      = dev->irq_timer;
+    dev->reset_state->svga.timer     = dev->svga.timer;
+    dev->reset_state->svga.timer_8514 = dev->svga.timer_8514;
+    dev->reset_state->svga.timer_xga = dev->svga.timer_xga;
+    dev->reset_state->irq_timer      = dev->irq_timer;
 }
 
 static void
@@ -6303,7 +6302,7 @@ s3_virge_reset(void *priv)
 {
     virge_t *dev = (virge_t *) priv;
 
-    if (reset_state != NULL) {
+    if (dev->reset_state != NULL) {
         /* Let both queues run dry first: the FIFO and render threads must
            not be in the middle of them when the state is put back. */
         s3_virge_wait_fifo_idle(dev);
@@ -6317,9 +6316,9 @@ s3_virge_reset(void *priv)
         dev->virge_busy       = 0;
         dev->fifo_write_idx   = 0;
         dev->fifo_read_idx    = 0;
-        reset_state->pci_slot = dev->pci_slot;
+        dev->reset_state->pci_slot = dev->pci_slot;
 
-        *dev = *reset_state;
+        *dev = *dev->reset_state;
     }
 }
 
@@ -6328,7 +6327,6 @@ s3_virge_init(const device_t *info)
 {
     const char *bios_fn = NULL;
     virge_t    *virge   = (virge_t *) calloc(1, sizeof(virge_t));
-    reset_state         = calloc(1, sizeof(virge_t));
     uint32_t    local   = info->local;
 
     if (local == S3_VIRGE_USE_CONFIG_BIOS)
@@ -6601,7 +6599,8 @@ s3_virge_init(const device_t *info)
 
     virge->local = local;
 
-    *reset_state = *virge;
+    virge->reset_state = malloc(sizeof(*virge->reset_state));
+    *virge->reset_state = *virge;
 
     return virge;
 }
@@ -6624,8 +6623,7 @@ s3_virge_close(void *priv)
     ddc_close(virge->ddc);
     i2c_gpio_close(virge->i2c);
 
-    free(reset_state);
-    reset_state = NULL;
+    free(virge->reset_state);
 
     free(virge);
 }

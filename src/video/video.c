@@ -468,6 +468,19 @@ video_blit_memtoscreen_monitor(int x, int y, int w, int h, monitor_t *monitor)
     MTR_END("video", "video_blit_memtoscreen");
 }
 
+/* The caller serializes with emulation while re-presenting a paused display. */
+void
+video_reblit_monitor(monitor_t *monitor)
+{
+    blit_data_t *data = monitor->mon_blit_data_ptr;
+    if (data->busy || data->w <= 0 || data->h <= 0)
+        return;
+
+    data->busy = 1;
+    data->buffer_in_use = 1;
+    thread_set_event(data->wake_blit_thread);
+}
+
 /* Character clocks from the selected HSYNC edge to the next line.
    Pass zero for sync start, or the effective pulse width for sync end. */
 int

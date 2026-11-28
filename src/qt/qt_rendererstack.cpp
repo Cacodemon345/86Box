@@ -126,7 +126,7 @@ RendererStack::RendererStack(QWidget *parent, monitor_t *monitor)
         connect(frameRateTimer, &QTimer::timeout, this, [this] {
             if (!m_monitor)
                 return;
-            this->setWindowTitle(QObject::tr("86Box Monitor #%1").arg(m_monitor_index + 1) + QString(" - ") + (m_monitor->mon_dpms ? tr("Monitor in sleep mode") : tr("%1 Hz").arg(QString::number(m_monitor->mon_actualrenderedframes.load()) + (m_monitor->mon_interlace ? "i" : ""))));
+            this->setWindowTitle(QObject::tr("86Box Monitor #%1").arg(video_monitor_id(m_monitor) + 1) + QString(" - ") + (m_monitor->mon_dpms ? tr("Monitor in sleep mode") : tr("%1 Hz").arg(QString::number(m_monitor->mon_actualrenderedframes.load()) + (m_monitor->mon_interlace ? "i" : ""))));
         });
         frameRateTimer->start(1000);
     }
@@ -192,6 +192,7 @@ RendererStack::~RendererStack()
 void
 RendererStack::stopRenderer()
 {
+    ++rendererGeneration;
     switchInProgress = true;
     if (current) {
         disconnect(this, &RendererStack::blitToRenderer, nullptr, nullptr);
@@ -208,6 +209,15 @@ RendererStack::stopRenderer()
     }
     mouse_clear_input_monitor(m_monitor);
     m_monitor = nullptr;
+}
+
+void
+RendererStack::bindMonitor(monitor_t *monitor)
+{
+    stopRenderer();
+    m_monitor = monitor;
+    if (monitor && m_monitor_index != 0)
+        setWindowTitle(tr("86Box Monitor #%1").arg(video_monitor_id(monitor) + 1));
 }
 
 bool
@@ -475,7 +485,7 @@ RendererStack::leaveEvent(QEvent *event)
 void
 RendererStack::switchRenderer(Renderer renderer)
 {
-    // startblit();
+    const unsigned generation = ++rendererGeneration;
     switchInProgress = true;
     if (current) {
         rendererWindow->finalize();
@@ -483,7 +493,10 @@ RendererStack::switchRenderer(Renderer renderer)
         disconnect(this, &RendererStack::blitToRenderer, nullptr, nullptr);
 
         /* Create new renderer only after previous is destroyed! */
-        connect(current.get(), &QObject::destroyed, this, [this, renderer](QObject *) { createRenderer(renderer); });
+        connect(current.get(), &QObject::destroyed, this, [this, renderer, generation] {
+            if (generation == rendererGeneration)
+                createRenderer(renderer);
+        });
 
         current.release()->deleteLater();
     } else {
@@ -496,6 +509,17 @@ RendererStack::createRenderer(Renderer renderer)
 {
     if (!m_monitor)
         return;
+
+    const unsigned generation = rendererGeneration;
+    const auto fallBackToSoftware = [this, generation] {
+        if (generation != rendererGeneration)
+            return;
+        imagebufs.clear();
+        QTimer::singleShot(0, this, [this, generation] {
+            if (generation == rendererGeneration)
+                switchRenderer(Renderer::Software);
+        });
+    };
 
     rendererTakesScreenshots = false;
     switch (renderer) {
@@ -516,17 +540,15 @@ RendererStack::createRenderer(Renderer renderer)
                 auto hw                        = new OpenGLRenderer(this, m_monitor);
                 rendererWindow                 = hw;
                 connect(this, &RendererStack::blitToRenderer, hw, &OpenGLRenderer::onBlit, Qt::QueuedConnection);
-                connect(hw, &OpenGLRenderer::initialized, [=]() {
+                connect(hw, &OpenGLRenderer::initialized, this, [this, generation] {
+                    if (generation != rendererGeneration)
+                        return;
                     /* Buffers are available only after initialization. */
                     imagebufs        = rendererWindow->getBuffers();
                     switchInProgress = false;
                     emit rendererChanged();
                 });
-                connect(hw, &OpenGLRenderer::errorInitializing, [=]() {
-                    /* Renderer not could initialize, fallback to software. */
-                    imagebufs = {};
-                    QTimer::singleShot(0, this, [this]() { switchRenderer(Renderer::Software); });
-                });
+                connect(hw, &OpenGLRenderer::errorInitializing, this, fallBackToSoftware);
                 current.reset(this->createWindowContainer(hw));
                 break;
             }
@@ -541,14 +563,15 @@ RendererStack::createRenderer(Renderer renderer)
                     auto msgBox = new QMessageBox(QMessageBox::Critical, QString(), tr("Failed to initialize Vulkan renderer.") + QStringLiteral("\n") + e.what() + QStringLiteral("\n") + tr("Falling back to software rendering."), QMessageBox::Ok);
                     msgBox->setAttribute(Qt::WA_DeleteOnClose);
                     msgBox->show();
-                    imagebufs = {};
-                    QTimer::singleShot(0, this, [this]() { switchRenderer(Renderer::Software); });
+                    fallBackToSoftware();
                     current.reset(nullptr);
                     break;
                 }
                 rendererWindow = hw;
                 connect(this, &RendererStack::blitToRenderer, hw, &VulkanWindowRenderer::onBlit, Qt::QueuedConnection);
-                connect(hw, &VulkanWindowRenderer::rendererInitialized, [=]() {
+                connect(hw, &VulkanWindowRenderer::rendererInitialized, this, [this, generation] {
+                    if (generation != rendererGeneration)
+                        return;
                     /* Buffers are available only after initialization. */
                     imagebufs        = rendererWindow->getBuffers();
                     switchInProgress = false;
@@ -556,16 +579,12 @@ RendererStack::createRenderer(Renderer renderer)
                     if (m_monitor_index != 0 && show_second_monitors)
                         this->show();
 
-                    QTimer::singleShot(1000, this, [this] {
-                        if (m_monitor_index != 0 && show_second_monitors)
+                    QTimer::singleShot(1000, this, [this, generation] {
+                        if (generation == rendererGeneration && m_monitor_index != 0 && show_second_monitors)
                             this->show();
                     });
                 });
-                connect(hw, &VulkanWindowRenderer::errorInitializing, [=]() {
-                    /* Renderer could not initialize, fallback to software. */
-                    imagebufs = {};
-                    QTimer::singleShot(0, this, [this]() { switchRenderer(Renderer::Software); });
-                });
+                connect(hw, &VulkanWindowRenderer::errorInitializing, this, fallBackToSoftware);
                 current.reset(this->createWindowContainer(hw));
                 break;
             }

@@ -909,11 +909,10 @@ load_video(void)
     vid_cga_comp_hue        = ini_section_get_int(cat, "vid_cga_comp_hue", 0);
     vid_cga_comp_saturation = ini_section_get_int(cat, "vid_cga_comp_saturation", 100);
 
-    // TODO
-    for (uint8_t i = 1; i < GFXCARD_MAX; i ++) {
-        p = ini_section_get_string(cat, "gfxcard_2", NULL);
-        if (!p)
-            p = "none";
+    for (int i = 1; i < GFXCARD_MAX; i++) {
+        char key[32];
+        snprintf(key, sizeof(key), "gfxcard_%d", i + 1);
+        p = ini_section_get_string(cat, key, "none");
         const device_t *gfx_dev = video_get_video_from_old_internal_name(p);
         if (gfx_dev == NULL)
             gfxcard[i] = config_known(video_get_video_from_internal_name(p), STRING_UNSUPPORTED_VIDEO, p);
@@ -4034,12 +4033,13 @@ save_video(void)
     else
         ini_section_set_int(cat, "da2", da2_standalone_enabled);
 
-    // TODO
-    for (uint8_t i = 1; i < GFXCARD_MAX; i ++) {
-        if (gfxcard[i] == 0)
-            ini_section_delete_var(cat, "gfxcard_2");
+    for (int i = 1; i < GFXCARD_MAX; i++) {
+        char key[32];
+        snprintf(key, sizeof(key), "gfxcard_%d", i + 1);
+        if (gfxcard[i] == VID_NONE)
+            ini_section_delete_var(cat, key);
         else
-            ini_section_set_string(cat, "gfxcard_2", video_get_internal_name(gfxcard[i]));
+            ini_section_set_string(cat, key, video_get_internal_name(gfxcard[i]));
     }
 
     if (show_second_monitors == 1)

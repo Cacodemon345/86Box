@@ -28,6 +28,7 @@ extern "C" {
 
 #    define thread_create_named                 plat_thread_create_named
 #    define thread_wait                         plat_thread_wait
+#    define thread_detach                       plat_thread_detach
 #    define thread_create_event                 plat_thread_create_event
 #    define thread_set_event                    plat_thread_set_event
 #    define thread_reset_event                  plat_thread_reset_event
@@ -49,6 +50,7 @@ typedef void mutex_t;
 #define thread_create(thread_func, param) thread_create_named((thread_func), (param), #thread_func)
 extern thread_t *thread_create_named(void (*thread_func)(void *param), void *param, const char *name);
 extern int       thread_wait(thread_t *arg);
+extern void      thread_detach(thread_t *arg);
 extern event_t  *thread_create_event(void);
 extern void      thread_set_event(event_t *arg);
 extern void      thread_reset_event(event_t *arg);

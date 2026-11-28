@@ -128,10 +128,7 @@ plat_resize_request(int w, int h, monitor_t *monitor)
 void
 plat_resize(int w, int h, monitor_t *monitor)
 {
-    if (monitor != video_primary_monitor)
-        main_window->resizeContentsMonitor(w, h, video_monitor_id(monitor));
-    else
-        main_window->resizeContents(w, h);
+    main_window->resizeContentsMonitor(w, h, video_monitor_id(monitor));
 }
 
 #if defined _WIN32

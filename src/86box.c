@@ -194,7 +194,7 @@ int      mcamem_type[MCAMEM_MAX]                = { 0, 0, 0, 0 }; /* (C) enable 
 int      isamem_type[ISAMEM_MAX]                = { 0, 0, 0, 0 }; /* (C) enable ISA mem cards */
 int      isarom_type[ISAROM_MAX]                = { 0, 0, 0, 0 }; /* (C) enable ISA ROM cards */
 int      isartc_type                            = 0;              /* (C) enable ISA RTC card */
-int      gfxcard[GFXCARD_MAX]                   = { 0, 0 };       /* (C) graphics/video card */
+int      gfxcard[GFXCARD_MAX]                   = { 0 };          /* (C) graphics/video card */
 int      show_second_monitors                   = 1;              /* (C) show non-primary monitors */
 int      sound_is_float                         = 1;              /* (C) sound uses FP values */
 char     sound_input_dev_name[512]              = { 0 };          /* (C) name of sound input device  */
@@ -1704,26 +1704,12 @@ pc_init_modules(void)
         }
     }
 
-    // TODO
-    for (uint8_t i = 1; i < GFXCARD_MAX; i ++) {
+    for (int i = 1; i < GFXCARD_MAX; i++) {
         if (!video_card_available(gfxcard[i])) {
             memset(tempc, 0, sizeof(tempc));
             device_get_name(video_card_getdevice(gfxcard[i]), 0, tempc);
             snprintf(temp, sizeof_w(temp), plat_get_string(STRING_HW_NOT_AVAILABLE_DEVICE), tempc);
             ui_msgbox_header(MBX_WARNING, plat_get_string(STRING_HW_NOT_AVAILABLE_TITLE), temp);
-            gfxcard[i] = 0;
-        }
-    }
-
-    /* A card that cannot drive a second monitor must not be initialised in a secondary
-       slot, even when an older configuration file still names one. */
-    for (uint8_t i = 1; i < GFXCARD_MAX; i++) {
-        if ((gfxcard[i] == VID_NONE) || (gfxcard[i] == VID_INTERNAL) || (gfxcard[i] == VID_EXTERNAL))
-            continue;
-        if (!video_card_is_secondary(machine, gfxcard[0], gfxcard[i])) {
-            memset(tempc, 0, sizeof(tempc));
-            device_get_name(video_card_getdevice(gfxcard[i]), 0, tempc);
-            pclog("Video card #%i \"%s\" cannot drive a secondary display, disabling it.\n", i + 1, tempc);
             gfxcard[i] = VID_NONE;
         }
     }

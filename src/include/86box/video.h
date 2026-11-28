@@ -282,7 +282,7 @@ extern int         video_is_mda(void);
 extern int         video_is_cga(void);
 extern int         video_card_get_flags(int card);
 extern int         video_get_primary_flags(int m, int card);
-extern int         video_card_is_secondary(int m, int primary_card, int secondary_card);
+extern int         video_card_can_select(int m, const int *cards, int slot, int card);
 /* Query the active video implementation before a memory transfer so
  * pin-level CPU cores can model READY without hardcoding a card. */
 extern unsigned    video_get_wait_states(uint32_t address, int write,
@@ -294,6 +294,7 @@ extern void video_setblit(void (*blit)(int, int, int, int, monitor_t *));
 extern void video_blend_monitor(int x, int y, monitor_t *monitor);
 extern void video_process_8_monitor(int x, int y, monitor_t *monitor);
 extern void video_blit_memtoscreen_monitor(int x, int y, int w, int h, monitor_t *monitor);
+extern void video_reblit_monitor(monitor_t *monitor);
 extern void video_blit_complete_monitor(monitor_t *monitor);
 extern void video_wait_for_blit_monitor(monitor_t *monitor);
 extern void video_wait_for_buffer_monitor(monitor_t *monitor);

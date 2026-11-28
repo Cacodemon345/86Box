@@ -186,6 +186,7 @@ static BMessageFilter *filter;
 #include <86box/cpu_events.h>
 
 extern void     qt_mouse_capture(int);
+extern "C" int startblit_timeout(int timeout_ms);
 extern "C" void qt_blit(int x, int y, int w, int h, monitor_t *monitor);
 
 extern MainWindow *main_window;
@@ -228,6 +229,12 @@ MainWindow::MainWindow(QWidget *parent)
     extern MainWindow *main_window;
     main_window = this;
     ui->setupUi(this);
+    ui->stackedWidget->monitor()->ui_data = ui->stackedWidget;
+    mainMonitorActions = new QActionGroup(this);
+    connect(mainMonitorActions, &QActionGroup::triggered, this, [this](QAction *action) {
+        setMainWindowMonitor(action->data().toInt());
+    });
+    updateMainMonitorMenu();
     updateMenuKeyboardState();
     status->setSoundMenu(ui->menuSound);
     midiOutGroup = new QActionGroup(this);
@@ -273,16 +280,20 @@ MainWindow::MainWindow(QWidget *parent)
     QTimer *frameRateTimer = new QTimer(this);
     frameRateTimer->setInterval(1000);
     frameRateTimer->setSingleShot(false);
-    connect(frameRateTimer, &QTimer::timeout, [hertz_label] {
-        if (video_primary_monitor->mon_dpms) {
+    connect(frameRateTimer, &QTimer::timeout, this, [this, hertz_label] {
+        const auto *monitor = ui->stackedWidget->monitor();
+        if (!monitor)
+            return;
+
+        if (monitor->mon_dpms) {
             hertz_label->setText(tr("Monitor in sleep mode"));
             hertz_label->setToolTip(tr("Monitor in sleep mode"));
         } else {
-            auto hz = video_primary_monitor->mon_actualrenderedframes.load();
+            auto hz = monitor->mon_actualrenderedframes.load();
 #ifdef SCREENSHOT_MODE
             hz = ((hz + 2) / 5) * 5;
 #endif
-            hertz_label->setText(tr("%1 Hz").arg(QString::number(hz) + (video_primary_monitor->mon_interlace ? "i" : "")));
+            hertz_label->setText(tr("%1 Hz").arg(QString::number(hz) + (monitor->mon_interlace ? "i" : "")));
             hertz_label->setToolTip(tr("Refresh rate"));
         }
     });
@@ -545,21 +556,32 @@ MainWindow::MainWindow(QWidget *parent)
         }
     });
 
-    connect(this, &MainWindow::resizeContentsMonitor, this, [this](int w, int h, int monitor_index) {
-        if (monitor_index >= static_cast<int>(renderers.size()) || !renderers[monitor_index])
+    connect(this, &MainWindow::resizeContentsMonitor, this, [this](int w, int h, int id) {
+        const auto *mainMonitor = ui->stackedWidget->monitor();
+        if (!mainMonitor)
+            return;
+        const int mainId = video_monitor_id(mainMonitor);
+        if (id == mainId) {
+            emit resizeContents(w, h);
+            return;
+        }
+
+        // When a secondary output is in the main window, its window shows monitor 1.
+        const int window = id == 0 ? mainId : id;
+        if (window < 0 || window >= static_cast<int>(renderers.size()) || !renderers[window])
+            return;
+        auto *renderer = renderers[window].get();
+        const auto *monitor = renderer->monitor();
+        if (!monitor || video_monitor_id(monitor) != id)
             return;
 
         if (!QApplication::platformName().contains("eglfs") && vid_resize != 1) {
-#ifdef QT_RESIZE_DEBUG
-            qDebug() << "Resize";
-#endif
             if (!dpi_scale) {
-                const qreal dpr = util::screenOfWidget(renderers[monitor_index].get())->devicePixelRatio();
+                const qreal dpr = util::screenOfWidget(renderer)->devicePixelRatio();
                 w = util::logicalSizeForPixels(w, dpr);
                 h = util::logicalSizeForPixels(h, dpr);
             }
-
-            renderers[monitor_index]->setFixedSize(w, h);
+            renderer->setFixedSize(w, h);
         }
     });
 
@@ -671,6 +693,9 @@ MainWindow::MainWindow(QWidget *parent)
                 }
 #endif
         }
+        if (vid_api == RENDERER_VNC)
+            setMainWindowMonitor(0);
+        updateMainMonitorMenu();
         ui->stackedWidget->switchRenderer(newVidApi);
         ui->menuOpenGL_input_scale->setEnabled(newVidApi == RendererStack::Renderer::OpenGL3);
         ui->menuOpenGL_input_stretch_mode->setEnabled(newVidApi == RendererStack::Renderer::OpenGL3);
@@ -684,6 +709,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(ui->stackedWidget, &RendererStack::rendererChanged, [this]() {
         ui->actionRenderer_options->setEnabled(ui->stackedWidget->hasOptions());
+        repaintPausedMonitor(ui->stackedWidget);
     });
 
     /* Trigger initial renderer switch */
@@ -1254,6 +1280,118 @@ MainWindow::resizeEvent(QResizeEvent *event)
 }
 
 void
+MainWindow::updateMainMonitorMenu()
+{
+    auto *menu = ui->menuMain_monitor;
+    menu->clear();
+    auto *monitor = ui->stackedWidget->monitor();
+    if (!monitor) {
+        menu->setEnabled(false);
+        return;
+    }
+
+    const int selected = video_monitor_id(monitor);
+    for (int id = 0; id < static_cast<int>(renderers.size()); id++) {
+        if (id != 0 && !renderers[id])
+            continue;
+        auto *action = menu->addAction(tr("Monitor #%1").arg(id + 1));
+        action->setData(id);
+        action->setCheckable(true);
+        mainMonitorActions->addAction(action);
+        action->setChecked(id == selected);
+    }
+    menu->setEnabled(menu->actions().size() > 1 && !vnc_enabled);
+}
+
+void
+MainWindow::updateSecondaryInput(RendererStack *renderer)
+{
+    const bool acceptsInput = renderer->acceptsGuestInput();
+    if (acceptsInput) {
+        renderer->addActions(actions());
+    } else {
+        for (auto *action : actions())
+            renderer->removeAction(action);
+    }
+    renderer->setWindowFlag(Qt::WindowDoesNotAcceptFocus, !acceptsInput);
+    renderer->setFocusPolicy(acceptsInput ? Qt::StrongFocus : Qt::NoFocus);
+}
+
+void
+MainWindow::repaintPausedMonitor(RendererStack *renderer)
+{
+    if (dopause && !is_quit && renderer->monitor() && startblit_timeout(1)) {
+        video_reblit_monitor(renderer->monitor());
+        endblit();
+    }
+}
+
+void
+MainWindow::setMainWindowMonitor(int id, int closingId)
+{
+    auto *mainRenderer = ui->stackedWidget;
+    auto *previous = mainRenderer->monitor();
+    if (!previous || id < 0 || id >= static_cast<int>(renderers.size()) ||
+        (id != 0 && !renderers[id]))
+        return;
+
+    const int previousId = video_monitor_id(previous);
+    if (id == previousId)
+        return;
+
+    auto *previousWindow = previousId == 0 ? nullptr : renderers[previousId].get();
+    auto *selectedWindow = id == 0 ? nullptr : renderers[id].get();
+    auto *selected = selectedWindow ? selectedWindow->monitor() : video_primary_monitor;
+    if (!selected)
+        return;
+    const auto rendererType = vid_api == RENDERER_VNC ? RendererStack::Renderer::Software
+                                                     : static_cast<RendererStack::Renderer>(vid_api);
+
+    if (mouse_capture)
+        plat_mouse_capture(0);
+
+    {
+        const std::lock_guard lock(monitorRoutingMutex);
+        const auto bind = [](RendererStack *window, monitor_t *monitor) {
+            window->bindMonitor(monitor);
+            if (monitor)
+                monitor->ui_data = window;
+        };
+
+        if (previousWindow) {
+            previous->ui_data = nullptr;
+            bind(previousWindow, previousId == closingId ? nullptr : previous);
+        }
+        if (selectedWindow)
+            bind(selectedWindow, video_primary_monitor);
+        bind(mainRenderer, selected);
+    }
+
+    for (auto *window : { previousWindow, selectedWindow }) {
+        if (!window || !window->monitor())
+            continue;
+        updateSecondaryInput(window);
+        if (!video_fullscreen)
+            plat_resize_request(window->monitor()->mon_scrnsz_x, window->monitor()->mon_scrnsz_y, window->monitor());
+        if (show_second_monitors)
+            window->switchRenderer(rendererType);
+    }
+    for (auto *action : mainMonitorActions->actions())
+        action->setChecked(action->data().toInt() == id);
+    refreshDisplayRatioActions();
+    if (!video_fullscreen)
+        plat_resize_request(selected->mon_scrnsz_x, selected->mon_scrnsz_y, selected);
+    mainRenderer->switchRenderer(rendererType);
+
+    if (show_second_monitors) {
+        for (auto *window : { previousWindow, selectedWindow }) {
+            if (window && window->monitor())
+                window->show();
+        }
+    }
+}
+
+void
 MainWindow::initRendererMonitorSlot(monitor_t *monitor)
 {
     const int monitor_index = video_monitor_id(monitor);
@@ -1265,8 +1403,12 @@ MainWindow::initRendererMonitorSlot(monitor_t *monitor)
     secondaryRenderer = std::make_unique<RendererStack>(nullptr, monitor);
     monitor->ui_data = secondaryRenderer.get();
     if (secondaryRenderer) {
-        connect(secondaryRenderer.get(), &RendererStack::rendererChanged, this, [this, monitor_index] {
-            this->renderers[monitor_index]->show();
+        auto *renderer = secondaryRenderer.get();
+        connect(renderer, &RendererStack::rendererChanged, this, [this, renderer] {
+            if (show_second_monitors) {
+                renderer->show();
+                repaintPausedMonitor(renderer);
+            }
         });
         secondaryRenderer->setWindowFlags(Qt::CustomizeWindowHint | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
         /* Without a maximize button, Windows maximizes the window over the taskbar. */
@@ -1274,12 +1416,7 @@ MainWindow::initRendererMonitorSlot(monitor_t *monitor)
         secondaryRenderer->setWindowTitle(QObject::tr("86Box Monitor #%1").arg(monitor_index + 1));
         secondaryRenderer->setContextMenuPolicy(Qt::PreventContextMenu);
 
-        if (secondaryRenderer->acceptsGuestInput()) {
-            secondaryRenderer->addActions(actions());
-        } else {
-            secondaryRenderer->setWindowFlag(Qt::WindowDoesNotAcceptFocus);
-            secondaryRenderer->setFocusPolicy(Qt::NoFocus);
-        }
+        updateSecondaryInput(secondaryRenderer.get());
 
         if (vid_resize == 2)
             secondaryRenderer->setFixedSize(fixed_size_x, fixed_size_y);
@@ -1309,15 +1446,22 @@ MainWindow::initRendererMonitorSlot(monitor_t *monitor)
             }
         }
     }
+    updateMainMonitorMenu();
 }
 
 void
 MainWindow::destroyRendererMonitorSlot(int monitor_index)
 {
     if (monitor_index == 0) {
+        const std::lock_guard lock(monitorRoutingMutex);
+        if (auto *monitor = ui->stackedWidget->monitor())
+            monitor->ui_data = nullptr;
         ui->stackedWidget->stopRenderer();
         return;
     }
+
+    if (auto *monitor = ui->stackedWidget->monitor(); monitor && video_monitor_id(monitor) == monitor_index)
+        setMainWindowMonitor(0, monitor_index);
 
     if (monitor_index < static_cast<int>(renderers.size()) && renderers[monitor_index]) {
         auto &settings = *config_get_monitor_settings(monitor_index);
@@ -1328,11 +1472,16 @@ MainWindow::destroyRendererMonitorSlot(int monitor_index)
             settings.mon_window_y = renderers[monitor_index]->geometry().y();
         }
         config_save();
-        auto renderer = std::move(renderers[monitor_index]);
-        renderer->monitor()->ui_data = nullptr;
-        renderer.reset();
+        {
+            const std::lock_guard lock(monitorRoutingMutex);
+            auto renderer = std::move(renderers[monitor_index]);
+            if (auto *monitor = renderer->monitor())
+                monitor->ui_data = nullptr;
+            renderer.reset();
+        }
         while (renderers.size() > 1 && !renderers.back())
             renderers.pop_back();
+        updateMainMonitorMenu();
     }
 }
 
@@ -1360,8 +1509,8 @@ MainWindow::showEvent(QShowEvent *event)
     if (vid_resize == 2) {
         setFixedSize(fixed_size_x, fixed_size_y + menuBar()->height() + (hide_status_bar ? 0 : statusBar()->height()) + (hide_tool_bar ? 0 : ui->toolBar->height()));
 
-        video_primary_monitor->mon_scrnsz_x = fixed_size_x;
-        video_primary_monitor->mon_scrnsz_y = fixed_size_y;
+        ui->stackedWidget->monitor()->mon_scrnsz_x = fixed_size_x;
+        ui->stackedWidget->monitor()->mon_scrnsz_y = fixed_size_y;
     }
     if (window_remember && vid_resize == 1) {
         ui->stackedWidget->setFixedSize(window_w, window_h);
@@ -1721,7 +1870,7 @@ MainWindow::on_actionFullscreen_triggered()
             ui->toolBar->show();
         fullscreen_ui_visible = 0;
         if (vid_resize != 1) {
-            emit resizeContents(vid_resize == 2 ? fixed_size_x : video_primary_monitor->mon_scrnsz_x, vid_resize == 2 ? fixed_size_y : video_primary_monitor->mon_scrnsz_y);
+            emit resizeContents(vid_resize == 2 ? fixed_size_x : ui->stackedWidget->monitor()->mon_scrnsz_x, vid_resize == 2 ? fixed_size_y : ui->stackedWidget->monitor()->mon_scrnsz_y);
         }
     } else {
         if ((mouse_type != MOUSE_TYPE_NONE) || machine_has_mouse())
@@ -2009,8 +2158,8 @@ MainWindow::refreshDisplayRatioActions()
     ui->actionForce_4_3_display_ratio->setChecked(force_43 > 0);
     ui->actionForce_device_aspect_ratio->setChecked(force_device_aspect > 0);
 
-    const int dev_x = video_primary_monitor->mon_device_aspect_x;
-    const int dev_y = video_primary_monitor->mon_device_aspect_y;
+    const int dev_x = ui->stackedWidget->monitor()->mon_device_aspect_x;
+    const int dev_y = ui->stackedWidget->monitor()->mon_device_aspect_y;
     const bool has_device_aspect = dev_x > 0 && dev_y > 0;
     ui->actionForce_device_aspect_ratio->setVisible(has_device_aspect);
     if (has_device_aspect) {
@@ -2102,13 +2251,9 @@ MainWindow::isMainWindowOrRendererActive() const
 void
 MainWindow::blitToWidget(int x, int y, int w, int h, monitor_t *monitor)
 {
-    if (monitor == video_primary_monitor) {
-        ui->stackedWidget->blit(x, y, w, h);
-        return;
-    }
-
+    const std::shared_lock lock(monitorRoutingMutex);
     auto *renderer = static_cast<RendererStack *>(monitor->ui_data);
-    if (renderer && renderer->isVisible())
+    if (renderer && (renderer == ui->stackedWidget || renderer->isVisible()))
         renderer->blit(x, y, w, h);
     else
         video_blit_complete_monitor(monitor);
@@ -2177,13 +2322,13 @@ MainWindow::on_actionResizable_window_triggered(bool checked)
             if (renderers[i]) {
                 renderers[i]->setWindowFlag(Qt::WindowMaximizeButtonHint, false);
                 renderers[i]->setWindowFlag(Qt::WindowFullscreenButtonHint, false);
-                emit resizeContentsMonitor(renderers[i]->monitor()->mon_scrnsz_x, renderers[i]->monitor()->mon_scrnsz_y, i);
+                emit resizeContentsMonitor(renderers[i]->monitor()->mon_scrnsz_x, renderers[i]->monitor()->mon_scrnsz_y, video_monitor_id(renderers[i]->monitor()));
             }
         }
     }
     show();
     ui->menuWindow_scale_factor->setEnabled(!checked);
-    emit resizeContents(video_primary_monitor->mon_scrnsz_x, video_primary_monitor->mon_scrnsz_y);
+    emit resizeContents(ui->stackedWidget->monitor()->mon_scrnsz_x, ui->stackedWidget->monitor()->mon_scrnsz_y);
     ui->stackedWidget->switchRenderer((RendererStack::Renderer) vid_api);
     for (int i = 1; i < static_cast<int>(renderers.size()); i++) {
         if (renderers[i] && show_second_monitors) {
@@ -2513,10 +2658,10 @@ MainWindow::on_actionHiDPI_scaling_triggered()
 {
     dpi_scale ^= 1;
     ui->actionHiDPI_scaling->setChecked(dpi_scale);
-    emit resizeContents(video_primary_monitor->mon_scrnsz_x, video_primary_monitor->mon_scrnsz_y);
+    emit resizeContents(ui->stackedWidget->monitor()->mon_scrnsz_x, ui->stackedWidget->monitor()->mon_scrnsz_y);
     for (int i = 1; i < static_cast<int>(renderers.size()); i++) {
         if (renderers[i])
-            emit resizeContentsMonitor(renderers[i]->monitor()->mon_scrnsz_x, renderers[i]->monitor()->mon_scrnsz_y, i);
+            emit resizeContentsMonitor(renderers[i]->monitor()->mon_scrnsz_x, renderers[i]->monitor()->mon_scrnsz_y, video_monitor_id(renderers[i]->monitor()));
     }
     config_save();
 }
@@ -2538,7 +2683,7 @@ MainWindow::on_actionHide_status_bar_triggered()
     } else {
         int vid_resize_orig = vid_resize;
         vid_resize          = 0;
-        emit resizeContents(vid_resize_orig ? w : video_primary_monitor->mon_scrnsz_x, vid_resize_orig ? h : video_primary_monitor->mon_scrnsz_y);
+        emit resizeContents(vid_resize_orig ? w : ui->stackedWidget->monitor()->mon_scrnsz_x, vid_resize_orig ? h : ui->stackedWidget->monitor()->mon_scrnsz_y);
         vid_resize = vid_resize_orig;
         if (vid_resize == 1)
             setFixedSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
@@ -2560,7 +2705,7 @@ MainWindow::on_actionHide_tool_bar_triggered()
     } else {
         int vid_resize_orig = vid_resize;
         vid_resize          = 0;
-        emit resizeContents(vid_resize_orig ? w : video_primary_monitor->mon_scrnsz_x, vid_resize_orig ? h : video_primary_monitor->mon_scrnsz_y);
+        emit resizeContents(vid_resize_orig ? w : ui->stackedWidget->monitor()->mon_scrnsz_x, vid_resize_orig ? h : ui->stackedWidget->monitor()->mon_scrnsz_y);
         vid_resize = vid_resize_orig;
         if (vid_resize == 1)
             setFixedSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
@@ -2914,8 +3059,8 @@ MainWindow::applyGlobalPreferences()
         /* A style can change the menu and tool bar heights. Resize the
            outer window to keep the display size unchanged. */
         if (vid_resize != 1) {
-            emit resizeContents(vid_resize == 2 ? fixed_size_x : video_primary_monitor->mon_scrnsz_x,
-                                vid_resize == 2 ? fixed_size_y : video_primary_monitor->mon_scrnsz_y);
+            emit resizeContents(vid_resize == 2 ? fixed_size_x : ui->stackedWidget->monitor()->mon_scrnsz_x,
+                                vid_resize == 2 ? fixed_size_y : ui->stackedWidget->monitor()->mon_scrnsz_y);
         } else {
             const int barsHeight = menuBar()->height()
                 + (statusBar()->height() * !hide_status_bar)
@@ -3055,7 +3200,6 @@ MainWindow::on_actionShow_non_primary_monitors_triggered()
                                                settings.mon_window_w > 2048 ? 2048 : settings.mon_window_w,
                                                settings.mon_window_h > 2048 ? 2048 : settings.mon_window_h);
             }
-            ui->stackedWidget->switchRenderer(static_cast<RendererStack::Renderer>(vid_api));
             secondaryRenderer->switchRenderer(static_cast<RendererStack::Renderer>(vid_api));
             secondaryRenderer->show();
         }

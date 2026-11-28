@@ -102,6 +102,7 @@ typedef struct vbe_mode_info_t {
 static video_timings_t timing_bochs  = { .type = VIDEO_PCI, .write_b = 2, .write_w = 2, .write_l = 1, .read_b = 20, .read_w = 20, .read_l = 21 };
 
 typedef struct bochs_vbe_t {
+    struct bochs_vbe_t *reset_state;
     svga_t        svga;
 
     uint8_t       pci_conf_status;
@@ -129,8 +130,6 @@ typedef struct bochs_vbe_t {
     void *        i2c;
     void *        ddc;
 } bochs_vbe_t;
-
-static bochs_vbe_t *reset_state = NULL;
 
 static void
 gen_mode_info(int hdisplay, int vdisplay, float vrefresh, vbe_mode_info_t* mode_info)
@@ -710,13 +709,13 @@ bochs_vbe_disable_handlers(bochs_vbe_t *dev)
     mem_mapping_disable(&dev->bios_rom.mapping);
 
     /* Save all the mappings and the timers because they are part of linked lists. */
-    reset_state->linear_mapping_2 = dev->linear_mapping_2;
-    reset_state->linear_mapping   = dev->linear_mapping;
-    reset_state->svga.mapping     = dev->svga.mapping;
-    reset_state->bios_rom.mapping = dev->bios_rom.mapping;
+    dev->reset_state->linear_mapping_2 = dev->linear_mapping_2;
+    dev->reset_state->linear_mapping   = dev->linear_mapping;
+    dev->reset_state->svga.mapping     = dev->svga.mapping;
+    dev->reset_state->bios_rom.mapping = dev->bios_rom.mapping;
 
-    reset_state->svga.timer       = dev->svga.timer;
-    reset_state->svga.timer_8514  = dev->svga.timer_8514;
+    dev->reset_state->svga.timer       = dev->svga.timer;
+    dev->reset_state->svga.timer_8514  = dev->svga.timer_8514;
 }
 
 static void
@@ -804,11 +803,11 @@ bochs_vbe_reset(void *priv)
 {
     bochs_vbe_t *dev = (bochs_vbe_t *) priv;
 
-    if (reset_state != NULL) {
+    if (dev->reset_state != NULL) {
         bochs_vbe_disable_handlers(dev);
-        reset_state->slot = dev->slot;
+        dev->reset_state->slot = dev->slot;
 
-        *dev = *reset_state;
+        *dev = *dev->reset_state;
     }
 }
 
@@ -816,7 +815,6 @@ static void *
 bochs_vbe_init(const device_t *info)
 {
     bochs_vbe_t *dev = calloc(1, sizeof(bochs_vbe_t));
-    reset_state = calloc(1, sizeof(bochs_vbe_t));
 
     dev->id5_val = device_get_config_int("revision");
     dev->vram_size = device_get_config_int("memory") * (1 << 20);
@@ -882,7 +880,8 @@ bochs_vbe_init(const device_t *info)
 
     pci_add_card(PCI_ADD_NORMAL, bochs_vbe_pci_read, bochs_vbe_pci_write, dev, &dev->slot);
 
-    *reset_state = *dev;
+    dev->reset_state = malloc(sizeof(*dev->reset_state));
+    *dev->reset_state = *dev;
 
     return dev;
 }
@@ -903,8 +902,7 @@ bochs_vbe_close(void *priv)
 
     svga_close(&dev->svga);
 
-    free(reset_state);
-    reset_state = NULL;
+    free(dev->reset_state);
 
     free(dev);
 }

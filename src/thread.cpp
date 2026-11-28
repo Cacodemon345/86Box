@@ -34,6 +34,16 @@ thread_wait(thread_t *arg)
     return 0;
 }
 
+void
+thread_detach(thread_t *arg)
+{
+    if (!arg)
+        return;
+    auto thread = static_cast<std::thread *>(arg);
+    thread->detach();
+    delete thread;
+}
+
 mutex_t *
 thread_create_mutex(void)
 {

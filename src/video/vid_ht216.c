@@ -41,6 +41,7 @@
 #include <86box/plat_unused.h>
 
 typedef struct ht216_t {
+    struct ht216_t *reset_state;
     svga_t svga;
 
     mem_mapping_t linear_mapping;
@@ -69,8 +70,6 @@ typedef struct ht216_t {
 
     uint8_t pos_regs[8];
 } ht216_t;
-
-static ht216_t *reset_state = NULL;
 
 #define HT_MISC_PAGE_SEL (1 << 5)
 
@@ -1817,10 +1816,10 @@ ht216_disable_handlers(ht216_t *ht216)
     mem_mapping_disable(&ht216->svga.mapping);
 
     /* Save all the mappings and the timers because they are part of linked lists. */
-    reset_state->linear_mapping   = ht216->linear_mapping;
-    reset_state->svga.mapping     = ht216->svga.mapping;
+    ht216->reset_state->linear_mapping   = ht216->linear_mapping;
+    ht216->reset_state->svga.mapping     = ht216->svga.mapping;
 
-    reset_state->svga.timer       = ht216->svga.timer;
+    ht216->reset_state->svga.timer       = ht216->svga.timer;
 
     memset(ht216->svga.vram, 0x00, ht216->svga.vram_max + 8);
     memset(ht216->svga.changedvram, 0x00, (ht216->svga.vram_max >> 12) + 1);
@@ -1831,13 +1830,13 @@ ht216_reset(void *priv)
 {
     ht216_t *ht216 = (ht216_t *) priv;
 
-    if (reset_state != NULL) {
+    if (ht216->reset_state != NULL) {
         ht216_disable_handlers(ht216);
         ht216_log("HT216 reset.\n");
         ht216->svga.bpp = 8;
         ht216->svga.miscout = 0;
         ht216->misc = ht216->svga.miscout;
-        *ht216 = *reset_state;
+        *ht216 = *ht216->reset_state;
     } else
         ht216_log("NULL reset.\n");
 }
@@ -1846,7 +1845,6 @@ void *
 ht216_init(const device_t *info, uint32_t mem_size, int has_rom)
 {
     ht216_t *ht216 = calloc(1, sizeof(ht216_t));
-    reset_state = calloc(1, sizeof(ht216_t));
     svga_t  *svga;
     const char *bios_ver = NULL;
     const char *fn = NULL;
@@ -2003,7 +2001,8 @@ ht216_init(const device_t *info, uint32_t mem_size, int has_rom)
     if (!ht216->mca)
         ht216_disable(ht216, 0x0102);
 
-    *reset_state = *ht216;
+    ht216->reset_state = malloc(sizeof(*ht216->reset_state));
+    *ht216->reset_state = *ht216;
 
     return ht216;
 }
@@ -2099,8 +2098,7 @@ ht216_close(void *priv)
 
     svga_close(&ht216->svga);
 
-    free(reset_state);
-    reset_state = NULL;
+    free(ht216->reset_state);
 
     free(ht216);
 }

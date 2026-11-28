@@ -76,7 +76,7 @@ SpecifyDimensions::on_SpecifyDimensions_accepted()
             if (main_window->renderers[i]) {
                 main_window->renderers[i]->setWindowFlag(Qt::WindowMaximizeButtonHint, false);
                 main_window->renderers[i]->setWindowFlag(Qt::MSWindowsFixedSizeDialogHint);
-                emit main_window->resizeContentsMonitor(fixed_size_x, fixed_size_y, i);
+                emit main_window->resizeContentsMonitor(fixed_size_x, fixed_size_y, video_monitor_id(main_window->renderers[i]->monitor()));
                 if (show_second_monitors) {
                     main_window->renderers[i]->show();
                     main_window->renderers[i]->switchRenderer((RendererStack::Renderer) vid_api);
@@ -98,7 +98,7 @@ SpecifyDimensions::on_SpecifyDimensions_accepted()
             if (main_window->renderers[i]) {
                 main_window->renderers[i]->setWindowFlag(Qt::WindowMaximizeButtonHint);
                 main_window->renderers[i]->setWindowFlag(Qt::MSWindowsFixedSizeDialogHint, false);
-                emit main_window->resizeContentsMonitor(ui->spinBoxWidth->value(), ui->spinBoxHeight->value(), i);
+                emit main_window->resizeContentsMonitor(ui->spinBoxWidth->value(), ui->spinBoxHeight->value(), video_monitor_id(main_window->renderers[i]->monitor()));
                 main_window->renderers[i]->setFixedSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
                 if (show_second_monitors) {
                     main_window->renderers[i]->show();

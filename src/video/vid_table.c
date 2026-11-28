@@ -546,22 +546,30 @@ video_reset(int card)
 
     video_load_font(FONT_IBM_MDA_437_PATH, FONT_FORMAT_MDA, LOAD_FONT_NO_OFFSET);
 
-    for (uint8_t i = 1; i < GFXCARD_MAX; i ++) {
+    int cards[GFXCARD_MAX] = { card };
+    for (int i = 1; i < GFXCARD_MAX; i++) {
+        if (video_card_can_select(machine, cards, i, gfxcard[i]))
+            cards[i] = gfxcard[i];
+        else {
+            pclog("VIDEO: skipping incompatible adapter '%s' in slot %d\n",
+                  video_get_internal_name(gfxcard[i]), i + 1);
+            gfxcard[i] = VID_NONE;
+        }
+    }
+
+    for (int i = 1; i < GFXCARD_MAX; i++) {
         /* None and Internal have no device to add here, and External is a placeholder
            for the machine's own output, so none of the three is a card for this loop. */
         if ((gfxcard[i] == VID_NONE) || (gfxcard[i] == VID_INTERNAL) || (gfxcard[i] == VID_EXTERNAL))
             continue;
 
-        if ((card != VID_NONE) && device_is_valid(video_card_getdevice(gfxcard[i]), machine) &&
-            (!machine_has_flags(machine, MACHINE_VIDEO_ONLY) || machine_has_flags(machine, MACHINE_VIDEO_EXT))) {
-            monitor_t *monitor = video_monitor_create(VIDEO_MONITOR_VIDEO);
-            video_inform_monitor(VIDEO_FLAG_TYPE_SPECIAL, &timing_default, monitor);
-            video_monitor_pending = monitor;
-            void *device = device_add_inst(video_cards[gfxcard[i]].device, i + 1);
-            video_monitor_pending = video_primary_monitor;
-            if (!device)
-                video_monitor_close(monitor);
-        }
+        monitor_t *monitor = video_monitor_create(VIDEO_MONITOR_VIDEO);
+        video_inform_monitor(VIDEO_FLAG_TYPE_SPECIAL, &timing_default, monitor);
+        video_monitor_pending = monitor;
+        void *device = device_add_inst(video_cards[gfxcard[i]].device, i + 1);
+        video_monitor_pending = video_primary_monitor;
+        if (!device)
+            video_monitor_close(monitor);
     }
 
     /* Do not initialize internal cards here, and the external entry is never a card. */
@@ -663,18 +671,71 @@ video_get_primary_flags(int m, int card)
     return VIDEO_FLAG_TYPE_NONE;
 }
 
-/* Check whether both adapters can coexist without overlapping video resources. */
-int
-video_card_is_secondary(int m, int primary_card, int secondary_card)
+static int
+video_cards_compatible(int m, int first, int second)
 {
-    int primary_flags   = video_get_primary_flags(m, primary_card);
-    int secondary_flags = video_card_get_flags(secondary_card);
+    const device_t *a = first == VID_INTERNAL ? machine_get_vid_device(m) : video_card_getdevice(first);
+    const device_t *b = video_card_getdevice(second);
+    const int a_bus = a ? a->flags : 0;
+    const int b_bus = b->flags;
+    const int a_type = video_get_primary_flags(m, first);
+    const int b_type = video_card_get_flags(second);
+    const int a_mono = a_type == VIDEO_FLAG_TYPE_MDA;
+    const int b_mono = b_type == VIDEO_FLAG_TYPE_MDA;
+    const int a_isa_color = (a_bus & (DEVICE_ISA | DEVICE_ISA16)) && !a_mono && a != &hd44780_device;
+    const int b_isa_color = (b_bus & (DEVICE_ISA | DEVICE_ISA16)) && !b_mono && b != &hd44780_device;
 
-    if (primary_flags == VIDEO_FLAG_TYPE_MDA)
-        return (secondary_flags == VIDEO_FLAG_TYPE_CGA);
+    /* ISA CGA, EGA and (S)VGA share legacy resources, even across different models. */
+    if ((a_isa_color && b_isa_color) ||
+        (a_isa_color && (b_bus & (DEVICE_PCI | DEVICE_AGP))) ||
+        (b_isa_color && (a_bus & (DEVICE_PCI | DEVICE_AGP))) ||
+        (a_bus & b_bus & DEVICE_AGP))
+        return 0;
 
-    return (secondary_flags == VIDEO_FLAG_TYPE_SEC) ||
-           ((secondary_flags == VIDEO_FLAG_TYPE_MDA) && (primary_flags != secondary_flags));
+    /* The Genius and WY-700 decode both monochrome and color resources. */
+    if ((a_mono && b_mono) ||
+        (b_mono && (a == &genius_device || a == &wy700_device)) ||
+        (a_mono && (b == &genius_device || b == &wy700_device)))
+        return 0;
+
+    return b_mono || b_type == VIDEO_FLAG_TYPE_SEC ||
+           ((b_type == VIDEO_FLAG_TYPE_CGA || b_isa_color) &&
+            (a_mono || a == &hd44780_device));
+}
+
+int
+video_card_can_select(int m, const int *cards, int slot, int card)
+{
+    const int primary = slot == 0 ? card : cards[0];
+
+    if (card == VID_NONE)
+        return slot != 0 || !machine_has_flags(m, MACHINE_VIDEO_ONLY);
+    if (card == VID_EXTERNAL)
+        return slot == 1 && primary == VID_INTERNAL && machine_has_flags(m, MACHINE_VIDEO_EXT);
+    if (card == VID_INTERNAL) {
+        if (slot != 0 || !machine_has_flags(m, MACHINE_VIDEO))
+            return 0;
+    } else if (!device_is_valid(video_card_getdevice(card), m) ||
+               (machine_has_flags(m, MACHINE_VIDEO_ONLY) &&
+                (slot == 0 || !machine_has_flags(m, MACHINE_VIDEO_EXT)))) {
+        return 0;
+    }
+
+    if (slot > 0 && primary == VID_NONE)
+        return 0;
+
+    for (int i = 0; i < GFXCARD_MAX; i++) {
+        if (i == slot || cards[i] == VID_NONE)
+            continue;
+        if (cards[i] == VID_EXTERNAL) {
+            if (primary != VID_INTERNAL)
+                return 0;
+            continue;
+        }
+        if (!video_cards_compatible(m, i < slot ? cards[i] : card, i < slot ? card : cards[i]))
+            return 0;
+    }
+    return 1;
 }
 
 const char *

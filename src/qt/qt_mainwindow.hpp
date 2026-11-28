@@ -11,6 +11,8 @@
 
 #include <memory>
 #include <vector>
+#include <shared_mutex>
+#include <mutex>
 #include <atomic>
 
 #include "qt_vmmanager_protocol.hpp"
@@ -193,6 +195,9 @@ private:
     std::shared_ptr<MediaMenu>     mm;
     QMenu                         *dynarecMenu  = nullptr;
     QActionGroup                  *midiOutGroup = nullptr;
+    QActionGroup                  *mainMonitorActions = nullptr;
+    // Blit workers read monitor-to-window bindings while the GUI can swap them.
+    std::shared_mutex             monitorRoutingMutex;
     MidiLcdWindow                 *midiLcd      = nullptr;
     class PcCardMenu              *pcCardMenu   = nullptr;
 
@@ -204,6 +209,10 @@ private:
     void updateMenuKeyboardState();
     void updatePowerOffAction();
     void refreshDisplayRatioActions();
+    void updateMainMonitorMenu();
+    void setMainWindowMonitor(int id, int closingId = -1);
+    void updateSecondaryInput(RendererStack *renderer);
+    void repaintPausedMonitor(RendererStack *renderer);
     bool isMainWindowOrRendererActive() const;
     void processKeyboardInput(bool down, uint32_t keycode);
 #ifdef Q_OS_MACOS
